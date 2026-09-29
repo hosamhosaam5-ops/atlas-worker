@@ -61,9 +61,11 @@ test('route.telegram: configured-secret path is exercised by dedicated handler t
   assert.equal((await post('/webhook/telegram', { update_id: 910002, message: { text: 'مرحبا' } })).status, 503);
 });
 
-test('route.telegram: malformed JSON -> 400', async () => {
+test('route.telegram: malformed JSON cannot bypass missing-secret gate', async () => {
   const r = await fetch(BASE + '/webhook/telegram', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json' });
-  assert.equal(r.status, 400);
+  assert.equal(r.status, 503);
+  const j = await r.json();
+  assert.equal(j.error, 'TELEGRAM_WEBHOOK_NOT_CONFIGURED');
 });
 
 test('route.order: fail closed when webhook secret is unset', async () => {
