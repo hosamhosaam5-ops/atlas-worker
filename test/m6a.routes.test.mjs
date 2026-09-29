@@ -74,9 +74,9 @@ test('route.order: fail closed when webhook secret is unset', async () => {
   assert.equal(j.error, 'ORDER_WEBHOOK_NOT_CONFIGURED');
 });
 
-test('route.order: rejects requests with incorrect webhook secret', async () => {
+test('route.order: rejects all public requests while secret is unset', async () => {
   // The first Wrangler instance deliberately has no ORDER_WEBHOOK_SECRET.
-  // Public route must fail closed rather than accept test-mode or customer orders.
+  // A supplied header cannot bypass the missing server-side configuration.
   const r = await post('/webhook/order', { client_email: 'nobody@example.com' }, {
     'x-atlas-order-webhook-secret': 'definitely-not-the-secret'
   });
