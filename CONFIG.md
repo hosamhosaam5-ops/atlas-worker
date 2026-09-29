@@ -9,8 +9,8 @@ No secret value is stored here or anywhere in source — names only.
 |---|---|---|---|
 | `DB` | D1 binding | everything | primary database |
 | `TELEGRAM_BOT_TOKEN` | secret | core/outbox.js (LIVE telegram) | real Telegram delivery; MOCK never sends |
-| `TELEGRAM_WEBHOOK_SECRET` | secret | index.ts webhook guard | rejects forged Telegram webhooks (403) |
-| `CHATGPT_BRIDGE_SECRET` | secret | bridges/chatgpt.js | 401 without it when set; UNSET = open locally only |
+| `TELEGRAM_WEBHOOK_SECRET` | secret | index.ts webhook guard | webhook is disabled (503) until configured; wrong key is rejected (403) |
+| `CHATGPT_BRIDGE_SECRET` | secret | bridges/chatgpt.js | bridge is disabled (503) until configured; wrong/missing key is rejected |
 | `FOUNDER_CHAT_ID` | var | crons/*.js | telegram alert destination (falls back to legacy id) |
 
 ## MOCK DEFAULT (ship as MOCK; LIVE needs a founder decision + secret)
