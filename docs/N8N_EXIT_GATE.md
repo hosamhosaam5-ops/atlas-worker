@@ -2,11 +2,12 @@
 
 This document is a fail-closed checklist. n8n must remain unchanged and operational until every REQUIRED gate is independently evidenced.
 
-## Current state (2026-09-29)
-- Latest repository CI baseline: GitHub Actions run 36602523347 completed SUCCESS on commit 040bcc8.
-- A newer validation run is pending after the importer mapping fix; its result must be checked before declaring the new commit green.
-- n8n archive reported by the operator: 27 workflows, 20 exported in full, 12 Data Tables, 23 credentials (secret values excluded).
-- Reported live n8n dependencies: Telegram CEO trigger, public ZATCA form, daily/revenue/Telegraph workflows, bridges.
+## Current state (2026-09-30)
+- Latest main commit before this documentation refresh: 94cc374.
+- GitHub Actions run 36604870770 completed SUCCESS on commit 94cc374.
+- A rollback branch was created at the same known-good baseline: n8n-exit-rollback-2026-09-30.
+- n8n archive reported by the operator: 27 workflows, 12 Data Tables, 23 credentials (secret values excluded).
+- The operator reports all 27 workflow definitions preserved in the n8n exit snapshot; this evidence is external to this repository and must remain retained.
 - Reported state requiring disposition: 281 execution-state rows, 25 CEO-memory rows, marketing/publication/watch data, quotes/test orders.
 - No production deployment or n8n shutdown is authorized by this file.
 
@@ -14,7 +15,7 @@ This document is a fail-closed checklist. n8n must remain unchanged and operatio
 1. **Archive integrity**: all 27 workflow inventories reconciled; full JSON/source retained; missing historical workflows explicitly listed.
 2. **Data inventory**: every one of the reported 12 Data Tables has an exact name, row count, export checksum, disposition, and migration/archive status.
 3. **Functional state**: active CEO state/agent/task/report semantics are either implemented in Worker or explicitly classified LEGACY_ONLY with preserved archive. No silent loss.
-4. **Migration proof**: schema migrations apply cleanly to empty D1; data imports are validated, deduplicated, idempotent, and count/checksum verified.
+4. **Migration proof**: schema migrations apply cleanly to empty D1; data imports are validated, deduplicated, idempotent, and count/checksum verified against the preserved source export.
 5. **Provider proof**: MOCK tests green; LIVE providers are not called unless explicitly approved. LIVE readiness is distinct from LIVE integration proof.
 6. **Telegram cutover proof**: webhook secret configured and one founder-approved real delivery confirms Worker outbox SENT. Do not claim this from MOCK.
 7. **Cron proof**: Worker schedules are present and handlers are idempotent; do not activate production until deployment approval.
