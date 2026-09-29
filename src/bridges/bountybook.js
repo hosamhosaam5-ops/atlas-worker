@@ -99,6 +99,9 @@ export async function handleBountyBookAuth(request, env) {
     catch { return failResponse(503, 'AUTH_STORAGE_UNAVAILABLE', 'Could not issue a fresh nonce.'); }
   }
   if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+  if (String(env.BOUNTYBOOK_PROVIDER || 'MOCK').toUpperCase() === 'LIVE' && env.BOUNTYBOOK_LIVE_VERIFIED !== '1') {
+    return failResponse(503, 'LIVE_AUTH_NOT_VERIFIED', 'Live BountyBook auth is locked until a real nonce/signature verification has been completed. No provider auth request executed.');
+  }
   let nonce = '', signature = '';
   const ct = request.headers.get('content-type') || '';
   try {
