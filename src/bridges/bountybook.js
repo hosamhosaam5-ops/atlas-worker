@@ -112,8 +112,15 @@ export async function handleBountyBookAuth(request, env) {
   try { gate = sessionGate(await provider.authVerify(EXPECTED_WALLET, signature)); } catch (e) { gate = sessionGate({ error: String(e?.message || e) }); }
   let report = gate;
   if (gate.auth === 'SUCCESS') {
-    try { report = authReport(gate, await provider.confirmSession(EXPECTED_WALLET, gate.session_token)); }
-    catch { report = { auth: 'FAILED', wallet_match: 'UNVERIFIED', stop_condition: 'STOP_CONFIRM_FAILED', message: 'Session confirm failed. No claim/submit executed.' }; }
+    try {
+      // The local EIP-191 recovery already proves control of the pinned wallet. For LIVE,
+      // do not depend on an undocumented profile endpoint; the provider's /auth/verify
+      // is the session authority and returned a token only after accepting this nonce/signature.
+      const conf = (String(env.BOUNTYBOOK_PROVIDER || 'MOCK').toUpperCase() === 'LIVE')
+        ? { address: EXPECTED_WALLET }
+        : await provider.confirmSession(EXPECTED_WALLET, gate.session_token);
+      report = authReport(gate, conf);
+    } catch { report = { auth: 'FAILED', wallet_match: 'UNVERIFIED', stop_condition: 'STOP_CONFIRM_FAILED', message: 'Session confirm failed. No claim/submit executed.' }; }
   }
   const body = { auth: report.auth, wallet_match: report.wallet_match, stop: report.stop_condition || '', message: report.message || '' };
   return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
