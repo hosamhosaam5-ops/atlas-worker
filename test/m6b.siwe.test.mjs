@@ -23,10 +23,10 @@ test('datapoint SIWE validator accepts fresh expected-wallet Base challenge', ()
   assert.equal(r.nonce,'abcdef123456');
 });
 test('datapoint SIWE validator rejects wrong chain', () => {
-  assert.equal(validateDatapointChallenge(msg('Chain ID: 1')).reason,'WRONG_CHAIN');
+  assert.equal(validateDatapointChallenge(msg().replace('Chain ID: 8453','Chain ID: 1')).reason,'WRONG_CHAIN');
 });
 test('datapoint SIWE validator rejects wrong URI', () => {
-  assert.equal(validateDatapointChallenge(msg('URI: https://evil.example')).reason,'WRONG_URI');
+  assert.equal(validateDatapointChallenge(msg().replace('URI: https://api.datapoint.market','URI: https://evil.example')).reason,'WRONG_URI');
 });
 test('datapoint SIWE validator rejects wrong wallet', () => {
   const m=msg().replace(EXPECTED_WALLET,'0x0000000000000000000000000000000000000001');
