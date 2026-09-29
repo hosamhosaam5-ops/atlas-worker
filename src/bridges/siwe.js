@@ -90,10 +90,29 @@ export function getDatapointProvider(env) {
   };
 }
 
+export function validateDatapointChallenge(message) {
+  const msg = String(message || '');
+  if (!msg) return { ok: false, reason: 'NO_MESSAGE' };
+  const lines = msg.split(/\\r?\\n/);
+  if (!lines[0] || !/wants you to sign in with your Ethereum account:/i.test(lines[0])) return { ok: false, reason: 'INVALID_SIWE_HEADER' };
+  if (String(lines[1] || '').trim().toLowerCase() !== EXPECTED_WALLET.toLowerCase()) return { ok: false, reason: 'WRONG_WALLET' };
+  const chain = msg.match(/^Chain ID:\\s*(\\d+)\\s*$/mi);
+  if (!chain || Number(chain[1]) !== 8453) return { ok: false, reason: 'WRONG_CHAIN' };
+  const uri = msg.match(/^URI:\\s*(.+)\\s*$/mi);
+  if (!uri || !/^https:\\/\\/api\\.datapoint\\.market(?:\\/|$)/i.test(uri[1].trim())) return { ok: false, reason: 'WRONG_URI' };
+  const nonce = msg.match(/^Nonce:\\s*(\\S+)\\s*$/mi);
+  if (!nonce || nonce[1].length < 8) return { ok: false, reason: 'INVALID_NONCE' };
+  const issued = msg.match(/^Issued At:\\s*(.+)\\s*$/mi);
+  if (!issued || Number.isNaN(Date.parse(issued[1].trim()))) return { ok: false, reason: 'INVALID_ISSUED_AT' };
+  if (Date.parse(issued[1].trim()) < Date.now() - 10 * 60 * 1000) return { ok: false, reason: 'STALE_CHALLENGE' };
+  return { ok: true, nonce: nonce[1], issuedAt: issued[1].trim() };
+}
+
 // Ported from backup "Build Signing Page": missing message is a hard error (never fake a page).
 export function buildSigningPage(challenge) {
   const msg = challenge && challenge.message;
-  if (!msg) throw new Error('no SIWE message from datapoint');
+  const validation = validateDatapointChallenge(msg);
+  if (!validation.ok) throw new Error('invalid datapoint SIWE challenge: ' + validation.reason);
   const msgJs = JSON.stringify(msg);
   return TPL.replace('__MSG_JS__', msgJs);
 }
