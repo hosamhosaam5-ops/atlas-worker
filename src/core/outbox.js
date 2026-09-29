@@ -1,9 +1,11 @@
 // M5 UNIFIED OUTBOX — single delivery engine for ALL channels (telegram + email).
 // One ruleset, one table (delivery_outbox), one taxonomy for every send:
 //   PENDING -> SENDING -> SENT | FAILED
-//   * Exactly-once claim: UNIQUE(dedupe_key) at DB level + atomic conditional transition
+//   * Concurrent claim safety: UNIQUE(dedupe_key) at DB level + atomic conditional transition
 //     (UPDATE ... WHERE status IN ('PENDING','FAILED')) — concurrent senders resolve to
-//     exactly ONE real provider call per dedupe key.
+//     exactly ONE provider-attempt winner per dedupe key. This does NOT claim global
+//     exactly-once delivery across a process crash after the provider accepts a message
+//     but before D1 is settled; such uncertain SENDING states require reconciliation.
 //   * SENT is written ONLY when the channel adapter returns { ok: true }.
 //     A throw, a falsy result, ok:false, or a malformed provider response all become
 //     FAILED with the error recorded — NEVER a SENT.
@@ -94,6 +96,7 @@ export function createOutbox(db) {
   //  - existing SENT       -> shouldSend:false (duplicate retry = zero provider calls)
   //  - existing SENDING    -> shouldSend:false (another runner owns it)
   //  - PENDING/FAILED      -> atomically transition to SENDING; winner sends
+  //  - SENDING            -> another runner may own the provider attempt; never send concurrently
   async function claim(dedupeKey, orderId, channel, recipient, subject, body, attachmentNames) {
     await db.prepare(
       "INSERT OR IGNORE INTO delivery_outbox (dedupe_key, order_id, channel, recipient, subject, body, attachment_names, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')"
