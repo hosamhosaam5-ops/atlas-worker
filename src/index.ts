@@ -113,19 +113,13 @@ export default {
       }
     }
 
-    // Dev-only inspection of order state (local tests)
-    if (url.pathname === '/dev/orders' && request.method === 'GET') {
-      await ensureOrderSchema(env.DB);
-      const { results } = await env.DB.prepare('SELECT * FROM order_ledger ORDER BY created_at DESC LIMIT 50').all();
-      const outbox = await env.DB.prepare('SELECT order_id, channel, status, attempts, last_error FROM delivery_outbox ORDER BY id DESC LIMIT 50').all();
-      return json({ ok: true, ledger: results, outbox: outbox.results });
-    }
-
     if (url.pathname === '/webhook/telegram' && request.method === 'POST') {
-      if (env.TELEGRAM_WEBHOOK_SECRET) {
-        const token = request.headers.get('x-telegram-bot-api-secret-token');
-        if (token !== env.TELEGRAM_WEBHOOK_SECRET) return json({ ok: false, error: 'forbidden' }, 403);
+      // Fail closed: Telegram webhook must have a configured secret in any deployed environment.
+      if (!env.TELEGRAM_WEBHOOK_SECRET) {
+        return json({ ok: false, error: 'TELEGRAM_WEBHOOK_NOT_CONFIGURED' }, 503);
       }
+      const token = request.headers.get('x-telegram-bot-api-secret-token');
+      if (token !== env.TELEGRAM_WEBHOOK_SECRET) return json({ ok: false, error: 'forbidden' }, 403);
 
       const t0 = Date.now();
       let update: any;
@@ -200,6 +194,14 @@ export default {
     if (url.pathname.startsWith('/dev/') && env.DEV_MODE !== '1') {
       return json({ ok: false, error: 'not found' }, 404);
     }
+    // Dev-only inspection of order state (local tests)
+    if (url.pathname === '/dev/orders' && request.method === 'GET') {
+      await ensureOrderSchema(env.DB);
+      const { results } = await env.DB.prepare('SELECT * FROM order_ledger ORDER BY created_at DESC LIMIT 50').all();
+      const outbox = await env.DB.prepare('SELECT order_id, channel, status, attempts, last_error FROM delivery_outbox ORDER BY id DESC LIMIT 50').all();
+      return json({ ok: true, ledger: results, outbox: outbox.results });
+    }
+
     if (url.pathname === '/dev/state' && request.method === 'GET') {
       const { results } = await env.DB.prepare('SELECT idempotency_key, record_kind, request_id, entity_type, entity_id, status, progress, error_code, delivery_state FROM execution_state LIMIT 200').all();
       return json({ ok: true, rows: results });
