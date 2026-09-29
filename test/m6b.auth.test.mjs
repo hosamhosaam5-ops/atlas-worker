@@ -62,3 +62,12 @@ test('bountybook auth: malformed signatures never reach provider', async () => {
   assert.equal((await r.json()).stop,'INVALID_SIGNATURE');
   assert.equal((await db.prepare('SELECT used_at FROM bountybook_auth_nonces WHERE nonce=?').bind(nonce).first()).used_at,null);
 });
+
+test('bountybook LIVE remains locked until real verification gate is explicitly set', async () => {
+  const db=makeD1();
+  const req=new Request('https://atlas.test/bridge/bountybook',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({nonce:'x',signature:'0x1234'})});
+  const r=await handleBountyBookAuth(req,{DB:db,BOUNTYBOOK_PROVIDER:'LIVE'});
+  const j=await r.json();
+  assert.equal(r.status,503);
+  assert.equal(j.stop,'LIVE_AUTH_NOT_VERIFIED');
+});
