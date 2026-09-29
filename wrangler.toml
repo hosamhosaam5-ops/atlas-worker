@@ -1,0 +1,44 @@
+name = "atlas-worker"
+main = "src/index.ts"
+compatibility_date = "2026-09-27"
+
+# M6A deployment file (item 7) — READY, NOT DEPLOYED.
+# `database_id` below is the local placeholder; the real one is created at deploy time
+# by the founder (`wrangler d1 create atlas_db`) and pasted here — never by the agent.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "atlas_db"
+database_id = "local-dev-only"
+
+# R2 binding is only needed when FILE_STORAGE=R2. Declared now, harmless unused.
+# [[r2_buckets]]
+# binding = "R2"
+# bucket_name = "atlas-order-files"
+
+# Cron entry points — ACTIVE ONLY AT DEPLOY (M5 handlers exist; the founder decides
+# when schedules go live). Schedules mirror the n8n cron workflows.
+# [triggers]
+# crons = [
+#   "0 6 * * *",    # Daily CEO Report (09:00 Asia/Riyadh ≈ 06:00 UTC)
+#   "*/30 * * * *", # Smart Revenue Watch (every 30 min)
+#   "*/15 * * * *", # Telegraph Monitor (every 15 min)
+# ]
+
+[vars]
+# M5/M6A defaults — every external provider starts MOCK; switching any to LIVE is a
+# founder decision and requires its secret (never stored here).
+AI_PROVIDER = "MOCK"
+BRAVE = "MOCK"
+TELEGRAM_PROVIDER = "MOCK"
+EMAIL_PROVIDER = "MOCK"
+PAYMENT_PROVIDER = "MOCK"
+FILE_STORAGE = "LOCAL"
+DATAPOINT_PROVIDER = "MOCK"
+BOUNTYBOOK_PROVIDER = "MOCK"
+# FOUNDER_CHAT_ID is a var (not secret) — set at deploy:
+# FOUNDER_CHAT_ID = "5246182877"
+
+# Secrets (founder enters via `wrangler secret put`, never in this file):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, OPENROUTER_API_KEY,
+#   BRAVE_API_KEY, RESEND_API_KEY, CHATGPT_BRIDGE_SECRET
