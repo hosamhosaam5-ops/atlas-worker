@@ -36,7 +36,7 @@ function T(name, cond, extra) {
   const html = buildSigningPage(ch);
   T('siwe.page contains message + expected wallet', html.includes('personal_sign') && html.includes('0xac2af2dd2343f4eaab2de64c89129b7b9283666f') && html.includes(JSON.stringify(ch.message).slice(1, 40)));
   let threw = false;
-  try { buildSigningPage({}); } catch (e) { threw = String(e.message).includes('no SIWE message'); }
+  try { buildSigningPage({}); } catch (e) { threw = String(e.message).includes('invalid datapoint SIWE challenge'); }
   T('siwe.missing message hard error (no fake page)', threw);
   const failProvider = getDatapointProvider({ DATAPOINT_PROVIDER: 'MOCK', DATAPOINT_MOCK_SCENARIO: 'no_message' });
   let threw2 = false;
