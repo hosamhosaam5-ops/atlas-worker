@@ -90,12 +90,14 @@ export const defaultAdapters = {
 };
 
 export async function handleChatGptBridge(request, env, adapters = defaultAdapters) {
+  // Fail closed: this bridge exposes internal state and must never be public by default.
   const secret = env.CHATGPT_BRIDGE_SECRET;
-  if (secret) {
-    const provided = request.headers.get('x-atlas-bridge-key');
-    if (provided !== secret) {
-      return new Response(JSON.stringify({ status: 'UNAUTHORIZED' }), { status: 401, headers: { 'content-type': 'application/json' } });
-    }
+  if (!secret) {
+    return new Response(JSON.stringify({ status: 'BRIDGE_NOT_CONFIGURED' }), { status: 503, headers: { 'content-type': 'application/json' } });
+  }
+  const provided = request.headers.get('x-atlas-bridge-key');
+  if (provided !== secret) {
+    return new Response(JSON.stringify({ status: 'UNAUTHORIZED' }), { status: 401, headers: { 'content-type': 'application/json' } });
   }
   let body = {};
   try { body = await request.json(); } catch (e) { body = {}; }
