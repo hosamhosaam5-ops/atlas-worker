@@ -16,15 +16,17 @@ import { createOutbox } from '../core/outbox.js';
 // ---------- Prepare Order Meta (verbatim port) ----------
 export function prepareOrderMeta(first, hasFile) {
   const fileKeys = hasFile ? [hasFile] : [];
-  const rawEmail = String(first.client_email || (fileKeys.length ? 'hosam_atlas@hotmail.com' : ''));
+  // Public callers must provide real order credentials. Test mode is explicit and is
+  // only intended for authenticated/internal callers; the public webhook never sets it.
+  const testMode = first.__test_mode === true;
+  const rawEmail = String(first.client_email || (testMode ? 'hosam_atlas@hotmail.com' : ''));
   // Normalize so case/whitespace variants of the same address resolve to the same founder quote row.
   const email = rawEmail.trim().toLowerCase();
-  const txHash = String(first.tx_hash || (fileKeys.length ? '0x' + '1'.repeat(64) : '')).trim();
+  const txHash = String(first.tx_hash || (testMode ? '0x' + '1'.repeat(64) : '')).trim();
   // Price NEVER comes from the client. A form field named expected_amount is deliberately ignored.
-  const testMode = !first.client_email && !!email;
   const missing = [];
-  if (!email) missing.push('client_email');
-  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) missing.push('tx_hash');
+  if (!email && !testMode) missing.push('client_email');
+  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash) && !testMode) missing.push('tx_hash');
   if (fileKeys.length === 0) missing.push('file_upload');
   const fname = first.__file_name || '';
   const ext = fname.toLowerCase().endsWith('.xlsx') ? 'xlsx' : (fname.toLowerCase().endsWith('.csv') ? 'csv' : 'unknown');
@@ -256,7 +258,12 @@ export async function deliverOrder(db, env, orderId, recipient, subject, text, a
 export async function processOrder(db, env, input) {
   const t0 = Date.now();
   const hasFile = input.__file_bytes ? 'data' : '';
-  const meta = prepareOrderMeta({ client_email: input.client_email, tx_hash: input.tx_hash, __file_name: input.__file_name }, hasFile);
+  const meta = prepareOrderMeta({
+    client_email: input.client_email,
+    tx_hash: input.tx_hash,
+    __file_name: input.__file_name,
+    __test_mode: input.__test_mode === true,
+  }, hasFile);
   if (input.__order_id) meta.order_id = String(input.__order_id); // stable id for idempotency tests
 
   // --- Input Valid gate (ports Reject Invalid Input branch) ---
