@@ -63,8 +63,8 @@ test('schema.race: outbox dedupe_key concurrent double-claim resolves to one row
 });
 
 // ---------- item 6: DATA MIGRATION TOOLING (fixtures only) ----------
-test('import.map: every n8n table has a D1 target mapping', () => {
-  const needed = ['atlas_execution_state','atlas_memory','atlas_order_quotes','atlas_order_ledger','atlas_bridge_audit','zatca_experiment_requests','acquisition_assets','channel_watch','publications'];
+test('import.map: every supported core n8n export has a D1 target mapping', () => {
+  const needed = ['atlas_execution_state','ceo_memory','atlas_memory','atlas_order_quotes','atlas_order_ledger','atlas_bridge_audit','zatca_experiment_requests','acquisition_assets','channel_watch','publications'];
   for (const n of needed) assert.ok(TABLE_MAP[n], 'no mapping for n8n table ' + n);
 });
 
@@ -131,4 +131,16 @@ test('import.execution_state: upsert preserves PK idempotency on re-import', asy
   assert.equal(row.status, 'SUCCEEDED');
   assert.equal(row.progress, 100);
   assert.equal(db.prepare("SELECT COUNT(*) c FROM execution_state WHERE idempotency_key='k1'").get().c, 1);
+});
+
+
+test('import.ceo_memory: exact n8n export name imports idempotently', async () => {
+  const db = freshDb();
+  await applyMigrations(db);
+  const rows = [{ category: 'goal', content: 'ATLAS test goal' }, { category: 'goal', content: 'ATLAS test goal' }];
+  const r1 = importRows.toTable(db, 'ceo_memory', rows);
+  const r2 = importRows.toTable(db, 'ceo_memory', rows);
+  assert.equal(r1.inserted, 1);
+  assert.equal(r2.inserted, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM ceo_memory').get().c, 1);
 });
