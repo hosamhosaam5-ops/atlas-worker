@@ -245,7 +245,8 @@ export default {
       // Conservative recovery: never replay payment claims or CEO AI work blindly.
       // Flag stale nonterminal rows for explicit reconciliation rather than claiming success.
       try {
-        const staleMinutes = Math.max(5, Number(env.RECOVERY_STALE_MINUTES || 30));
+        const configuredStaleMinutes = Number(env.RECOVERY_STALE_MINUTES ?? 30);
+        const staleMinutes = Number.isFinite(configuredStaleMinutes) ? Math.max(5, configuredStaleMinutes) : 30;
         const events = await env.DB.prepare("UPDATE event_log SET status='RECOVERY_REVIEW', error=COALESCE(error, 'Stale PENDING event requires safe review; automatic replay suppressed') WHERE status='PENDING' AND created_at < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
         const orders = await env.DB.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED', error=COALESCE(error, 'Stale PENDING order requires payment/provider reconciliation'), updated_at=datetime('now') WHERE status='PENDING' AND created_at < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
         results.recovery_sweep = { stale_minutes: staleMinutes, events_flagged: events.meta?.changes || 0, orders_flagged: orders.meta?.changes || 0 };
