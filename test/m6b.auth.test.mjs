@@ -1,0 +1,71 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { Wallet } from 'ethers';
+import { issueNonce, consumeNonce, handleBountyBookAuth, EXPECTED_WALLET } from '../src/bridges/bountybook.js';
+
+function makeD1() {
+  const db = new DatabaseSync(':memory:');
+  return {
+    prepare(sql) {
+      return { bind(...args) {
+        const s = db.prepare(sql);
+        return {
+          async run() { const r=s.run(...args); return {meta:{changes:r.changes,last_row_id:r.lastInsertRowid}}; },
+          async first() { return s.get(...args) ?? null; },
+          async all() { return {results:s.all(...args)}; },
+        };
+      }};
+    },
+  };
+}
+
+test('bountybook nonce: unique, expires, and single-use claim', async () => {
+  const db=makeD1();
+  const a=await issueNonce(db), b=await issueNonce(db);
+  assert.notEqual(a,b);
+  const c1=await consumeNonce(db,a);
+  const c2=await consumeNonce(db,a);
+  assert.equal(c1.ok,true);
+  assert.equal(c2.ok,false);
+  assert.equal(c2.reason,'NONCE_REPLAY');
+});
+
+test('bountybook auth: malformed signature is rejected before provider auth', async () => {
+  const db=makeD1();
+  const nonce=await issueNonce(db);
+  const req=new Request('https://atlas.test/bridge/bountybook',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({nonce,signature:'0x1234'})});
+  const r=await handleBountyBookAuth(req,{DB:db,BOUNTYBOOK_PROVIDER:'MOCK'});
+  const j=await r.json();
+  assert.equal(r.status,401);
+  assert.equal(j.stop,'INVALID_SIGNATURE');
+});
+
+test('bountybook auth: valid EIP-191 signature from another wallet is rejected', async () => {
+  const db=makeD1();
+  const nonce=await issueNonce(db);
+  const wallet=Wallet.createRandom();
+  const sig=await wallet.signMessage(nonce);
+  const req=new Request('https://atlas.test/bridge/bountybook',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({nonce,signature:sig})});
+  const r=await handleBountyBookAuth(req,{DB:db,BOUNTYBOOK_PROVIDER:'MOCK'});
+  const j=await r.json();
+  assert.equal(r.status,401);
+  assert.equal(j.stop,'WRONG_WALLET');
+  assert.equal(j.wallet_match,'UNVERIFIED');
+});
+
+test('bountybook auth: unknown and replayed nonces never reach provider', async () => {
+  const db=makeD1();
+  const calls=[];
+  const nonce=await issueNonce(db);
+  const wallet=Wallet.createRandom();
+  const sig=await wallet.signMessage(nonce);
+  const badReq=new Request('https://atlas.test/bridge/bountybook',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({nonce:'not-issued',signature:sig})});
+  const bad=await handleBountyBookAuth(badReq,{DB:db,BOUNTYBOOK_PROVIDER:'MOCK'});
+  assert.equal((await bad.json()).stop,'WRONG_WALLET');
+  assert.equal(calls.length,0);
+  await consumeNonce(db,nonce);
+  const replayReq=new Request('https://atlas.test/bridge/bountybook',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({nonce,signature:sig})});
+  const replay=await handleBountyBookAuth(replayReq,{DB:db,BOUNTYBOOK_PROVIDER:'MOCK'});
+  assert.equal((await replay.json()).stop,'WRONG_WALLET');
+});
