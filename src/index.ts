@@ -71,7 +71,7 @@ export default {
       // Fail closed: this endpoint handles paid orders and must never be public by
       // accident. A missing secret disables the endpoint rather than bypassing auth.
       if (!env.ORDER_WEBHOOK_SECRET) {
-        return json({ ok: false, error: 'order webhook not configured' }, 503);
+        return json({ ok: false, error: 'ORDER_WEBHOOK_NOT_CONFIGURED' }, 503);
       }
       const suppliedSecret = request.headers.get('x-atlas-order-webhook-secret');
       if (suppliedSecret !== env.ORDER_WEBHOOK_SECRET) {
