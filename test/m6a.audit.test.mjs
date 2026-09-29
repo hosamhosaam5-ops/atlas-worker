@@ -117,6 +117,13 @@ test('audit.price: expected_amount never read from client form input', () => {
   assert.ok(!/first\.expected_amount|input\.expected_amount|body\.expected_amount/.test(intake), 'client-controlled price detected');
 });
 
+test('audit.recovery: stale provider-ambiguous SENDING deliveries are quarantined, not replayed', () => {
+  const index = CODE[path.join(SRC, 'index.ts')];
+  assert.match(index, /status='REVIEW_REQUIRED'/);
+  assert.match(index, /WHERE status='SENDING'/);
+  assert.match(index, /automatic retry suppressed/);
+});
+
 test('audit.delivery: SENT written only through outbox settle on adapter ok:true', () => {
   const ob = CODE[path.join(SRC, 'core/outbox.js')];
   assert.match(ob, /res\.ok !== true/);            // malformed success rejected
