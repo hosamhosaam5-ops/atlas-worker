@@ -48,18 +48,17 @@ test('route.health: GET /health returns provider matrix all MOCK', async () => {
   for (const k of ['ai_provider', 'brave', 'telegram', 'email', 'payment']) assert.equal(j[k], 'MOCK');
 });
 
-test('route.telegram: missing update_id -> 400; non-message -> IGNORED', async () => {
-  assert.equal((await post('/webhook/telegram', {})).status, 400);
-  const j = await (await post('/webhook/telegram', { update_id: 910001 })).json();
-  assert.equal(j.status, 'IGNORED');
+test('route.telegram: missing webhook secret -> 503 fail closed', async () => {
+  const r = await post('/webhook/telegram', { update_id: 910001 });
+  assert.equal(r.status, 503);
+  const j = await r.json();
+  assert.equal(j.error, 'TELEGRAM_WEBHOOK_NOT_CONFIGURED');
 });
 
-test('route.telegram: message ACCEPTED then exact duplicate update_id -> DUPLICATE (idempotent)', async () => {
-  const u = { update_id: 910002, message: { text: 'مرحبا', chat: { id: '5246182877' }, message_id: 1 } };
-  const r1 = await (await post('/webhook/telegram', u)).json();
-  assert.equal(r1.status, 'ACCEPTED');
-  const r2 = await (await post('/webhook/telegram', u)).json();
-  assert.equal(r2.status, 'DUPLICATE');
+test('route.telegram: configured-secret path is exercised by dedicated handler tests', async () => {
+  // The local route instance intentionally has no secret, so public traffic stays fail-closed.
+  // Authenticated ACCEPTED/DUPLICATE behavior is covered by M5 handler-level tests.
+  assert.equal((await post('/webhook/telegram', { update_id: 910002, message: { text: 'مرحبا' } })).status, 503);
 });
 
 test('route.telegram: malformed JSON -> 400', async () => {
@@ -85,14 +84,11 @@ test('route.order: rejects all public requests while secret is unset', async () 
   assert.equal(j.error, 'ORDER_WEBHOOK_NOT_CONFIGURED');
 });
 
-test('route.bridges: chatgpt 200 health; wrong key -> 401 when secret set (unset locally)', async () => {
+test('route.bridges: chatgpt missing secret -> 503 fail closed', async () => {
   const r = await post('/bridge/chatgpt', { operation: 'health' });
   const j = await r.json();
-  assert.equal(j.status, 'SUCCESS');
-  assert.equal(j.data.service, 'ATLAS ChatGPT Bridge');
-  const r2 = await post('/bridge/chatgpt', { operation: 'drop_tables' });
-  const j2 = await r2.json();
-  assert.equal(j2.status, 'REJECTED'); // whitelist enforcement
+  assert.equal(r.status, 503);
+  assert.equal(j.status, 'BRIDGE_NOT_CONFIGURED');
 });
 
 test('route.bridges: siwe serves signing page (MOCK challenge), bountybook contract shape', async () => {
@@ -107,9 +103,11 @@ test('route.bridges: siwe serves signing page (MOCK challenge), bountybook contr
   assert.ok(!('session_token' in j)); // token never returned
 });
 
-test('route.dev-endpoints: 404 without DEV_MODE (production-safe), 200 with DEV_MODE=1', async () => {
-  const r = await fetch(BASE + '/dev/events');
-  assert.equal(r.status, 404); // guard active: DEV_MODE unset in this test env = production posture
+test('route.dev-endpoints: every /dev route is 404 without DEV_MODE, 200 with DEV_MODE=1', async () => {
+  for (const p of ['/dev/events', '/dev/orders', '/dev/state', '/dev/memory']) {
+    const r = await fetch(BASE + p);
+    assert.equal(r.status, 404, p + ' must be hidden without DEV_MODE');
+  } // guard active: DEV_MODE unset in this test env = production posture
   // With DEV_MODE=1 the same endpoint serves (local-test seam only).
   const proc2 = spawn('npx', ['wrangler', 'dev', '--local', '--port', '8798', '--persist-to', path.join(ROOT, '.wrangler-m6a'), '--var', 'DEV_MODE:1'], { cwd: ROOT, stdio: 'ignore', detached: true });
   proc2.unref();
