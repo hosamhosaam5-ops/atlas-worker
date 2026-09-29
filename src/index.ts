@@ -32,6 +32,7 @@ interface Env {
   AI_MOCK_SCENARIO?: string;
   OPENROUTER_API_KEY?: string;
   ORDER_WEBHOOK_SECRET?: string;
+  RECOVERY_STALE_MINUTES?: string;
   PROCESS_SYNC?: string; // '1' for local tests: run pipeline inline and return its result
   DEV_MODE?: string;     // '1' for local tests only: enables /dev/* inspection endpoints. NEVER set in production.
 }
@@ -241,6 +242,14 @@ export default {
     };
     const run = async () => {
       const results: Record<string, unknown> = {};
+      // Conservative recovery: never replay payment claims or CEO AI work blindly.
+      // Flag stale nonterminal rows for explicit reconciliation rather than claiming success.
+      try {
+        const staleMinutes = Math.max(5, Number(env.RECOVERY_STALE_MINUTES || 30));
+        const events = await env.DB.prepare("UPDATE event_log SET status='RECOVERY_REVIEW', error=COALESCE(error, 'Stale PENDING event requires safe review; automatic replay suppressed') WHERE status='PENDING' AND created_at < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
+        const orders = await env.DB.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED', error=COALESCE(error, 'Stale PENDING order requires payment/provider reconciliation'), updated_at=datetime('now') WHERE status='PENDING' AND created_at < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
+        results.recovery_sweep = { stale_minutes: staleMinutes, events_flagged: events.meta?.changes || 0, orders_flagged: orders.meta?.changes || 0 };
+      } catch (e: any) { results.recovery_sweep = { error: String(e?.message || e) }; }
       for (const [name, fn] of [
         ['daily_report', () => runDailyReport(env, undefined, alertAdapter)],
         ['revenue_watch', () => runRevenueWatch(env, undefined, alertAdapter)],
