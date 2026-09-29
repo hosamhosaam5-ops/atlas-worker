@@ -76,6 +76,12 @@ export async function handleBountyBookAuth(request, env) {
     try { const j = await request.json(); signature = String((j && j.signature) || '').trim(); } catch (e2) { signature = ''; }
   }
 
+  // LIVE auth is disabled until nonce/challenge verification and replay protection
+  // are implemented against a documented provider contract. No live request is sent.
+  if ((env.BOUNTYBOOK_PROVIDER || 'MOCK').toUpperCase() === 'LIVE') {
+    return new Response(JSON.stringify({ auth: 'FAILED', wallet_match: 'UNVERIFIED', stop: 'LIVE_AUTH_NOT_HARDENED', message: 'Live BountyBook auth disabled pending nonce/signature verification and replay protection. No provider request or claim executed.' }), { status: 503, headers: { 'content-type': 'application/json' } });
+  }
+
   const provider = getBountyBookProvider(env);
   let gate;
   try {
