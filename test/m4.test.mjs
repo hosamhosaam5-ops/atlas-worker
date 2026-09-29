@@ -2,7 +2,7 @@
 // D1 = node:sqlite shim (same surface as M3 tests). All payment receipts are SYNTHETIC
 // fixtures (PAYMENT_PROVIDER=MOCK) — they prove gate logic only, never a real Base tx.
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import {
   prepareOrderMeta, applyResolvedPrice, applyTestPrepay, cleanAndQA,
   extractCSV, extractXLSX, buildCleanCSV, processOrder, deliverOrder,
@@ -303,7 +303,12 @@ async function addQuote(db, email, amount) {
 
 // ================= Automated diff: markers backup vs port =================
 (function () {
-  const backup = readFileSync(new URL('../src/workflows/atlas-order-intake.workflow.ts', import.meta.url).pathname, 'utf8');
+  const backupPath = new URL('../src/workflows/atlas-order-intake.workflow.ts', import.meta.url).pathname;
+  if (!existsSync(backupPath)) {
+    console.log('SKIP  M4 legacy n8n diff: source backup is not present in this repository');
+    return;
+  }
+  const backup = readFileSync(backupPath, 'utf8');
   const port = readFileSync(new URL('../src/orders/intake.js', import.meta.url).pathname, 'utf8')
     + readFileSync(new URL('../src/orders/payment.js', import.meta.url).pathname, 'utf8');
   const markers = [
