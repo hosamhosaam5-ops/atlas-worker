@@ -16,6 +16,7 @@ export function getBountyBookProvider(env) {
   if (mode === 'MOCK') {
     const scenario = env.BOUNTYBOOK_MOCK_SCENARIO || 'ok';
     return {
+      async getNonce(address) { return makeNonce(); },
       async authVerify(address, signature) {
         if (scenario === 'fail_401') return { error: 'invalid signature' };
         if (scenario === 'fail_429') return { error: 'HTTP 429 rate limit' };
@@ -30,6 +31,12 @@ export function getBountyBookProvider(env) {
   }
   // LIVE scaffold — unused in M3.
   return {
+    async getNonce(address) {
+      const res = await fetch('https://api.bountybook.ai/auth/nonce?address=' + encodeURIComponent(address), { method: 'GET', signal: AbortSignal.timeout(15000) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.nonce) throw new Error('BountyBook nonce request failed: HTTP ' + res.status);
+      return String(data.nonce);
+    },
     async authVerify(address, signature) {
       const res = await fetch('https://api.bountybook.ai/auth/verify', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -68,9 +75,9 @@ export async function ensureBountyBookNonceSchema(db) {
   await db.prepare(`CREATE TABLE IF NOT EXISTS bountybook_auth_nonces (nonce TEXT PRIMARY KEY, wallet TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT)`).bind().run();
 }
 export function makeNonce() { const bytes = new Uint8Array(24); crypto.getRandomValues(bytes); return 'atlas-bb-' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); }
-export async function issueNonce(db) {
+export async function issueNonce(db, provider) {
   await ensureBountyBookNonceSchema(db);
-  const nonce = makeNonce(); const expires = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const nonce = provider ? await provider.getNonce(EXPECTED_WALLET) : makeNonce(); const expires = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   await db.prepare('INSERT INTO bountybook_auth_nonces (nonce, wallet, expires_at) VALUES (?, ?, ?)').bind(nonce, EXPECTED_WALLET.toLowerCase(), expires).run();
   return nonce;
 }
