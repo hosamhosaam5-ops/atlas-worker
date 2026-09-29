@@ -166,8 +166,11 @@ async function addQuote(db, email, amount) {
   const env = (s, es = 'success') => ({ PAYMENT_PROVIDER: 'MOCK', PAYMENT_MOCK_SCENARIO: s, EMAIL_PROVIDER: 'MOCK', EMAIL_MOCK_SCENARIO: es, FILE_STORAGE: 'LOCAL' });
 
   // no quote
-  let r = await processOrder(db, env('valid'), baseInput({ client_email: 'noquote@example.com' }));
+  const noQuoteTx = '0x' + '99'.repeat(32);
+  let r = await processOrder(db, env('valid'), baseInput({ client_email: 'noquote@example.com', tx_hash: noQuoteTx }));
   T('e2e.NO_QUOTE reject (no gate reached)', r.order_status === 'NO_QUOTE');
+  const noQuoteClaim = await db.prepare("SELECT COUNT(*) c FROM order_ledger WHERE tx_hash = ?").bind(noQuoteTx).first();
+  T('e2e.NO_QUOTE does not reserve tx_hash before quote exists', noQuoteClaim.c === 0);
 
   // multiple quotes
   await addQuote(db, 'multi@example.com', 1); await addQuote(db, 'multi@example.com', 2);
