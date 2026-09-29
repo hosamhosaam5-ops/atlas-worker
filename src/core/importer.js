@@ -20,7 +20,7 @@ export const TABLE_MAP = {
       ON CONFLICT(idempotency_key) DO UPDATE SET status=excluded.status, progress=excluded.progress, payload_json=excluded.payload_json, error_code=excluded.error_code, updated_at=datetime('now')`,
     values: r => [r.idempotency_key ?? null, r.record_kind ?? null, r.correlation_id ?? null, r.request_id ?? null, r.entity_type ?? null, r.entity_id ?? null, r.action_id ?? null, r.tool ?? null, r.status ?? null, numOrNull(r.progress), r.payload_json ?? null, r.error_code ?? null, r.attempt_count ?? 0, r.delivery_state ?? null, r.message_key ?? null, r.expires_at ?? null, r.created_at ?? null, r.updated_at ?? null],
   },
-  atlas_memory: {
+  ceo_memory: {
     table: 'ceo_memory',
     key: r => (r.category || 'fact') + '|' + String(r.content || '').trim().toLowerCase(),
     existsSql: "SELECT 1 FROM ceo_memory WHERE category = ? AND content = ? LIMIT 1",
@@ -30,6 +30,7 @@ export const TABLE_MAP = {
     values: r => [String(r.category || 'fact').toLowerCase(), String(r.content), r.created_at ?? null],
     dedupeSelect: 'SELECT category, content FROM ceo_memory',
   },
+  atlas_memory: { table: 'ceo_memory', key: r => (r.category || 'fact') + '|' + String(r.content || '').trim().toLowerCase(), existsSql: "SELECT 1 FROM ceo_memory WHERE category = ? AND content = ? LIMIT 1", existsParams: r => [String(r.category || 'fact').toLowerCase(), String(r.content)], required: ['content'], insert: `INSERT INTO ceo_memory (category, content, created_at) VALUES (?,?,COALESCE(?, datetime('now')))`, values: r => [String(r.category || 'fact').toLowerCase(), String(r.content), r.created_at ?? null], dedupeSelect: 'SELECT category, content FROM ceo_memory' },
   atlas_order_quotes: {
     table: 'order_quotes',
     key: r => String(r.client_email || '').trim().toLowerCase() + '|' + String(r.agreed_amount),
