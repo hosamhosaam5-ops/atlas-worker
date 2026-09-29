@@ -66,7 +66,7 @@ async function addQuote(db, email, amount) {
   T('meta.email trim+lowercase', m.client_email === 'foo@bar.com');
   T('meta.expected_amount=0 UNRESOLVED (client price ignored)', m.expected_amount === 0 && m.price_source === 'UNRESOLVED');
   T('meta.test_mode false on form path', m.test_mode === false);
-  const t = prepareOrderMeta({ __file_name: 'a.csv' }, 'data');
+  const t = prepareOrderMeta({ __file_name: 'a.csv', __test_mode: true }, 'data');
   T('meta.test_mode true on founder path + override 75', t.test_mode === true && t.test_price_override === 75);
   const bad = prepareOrderMeta({ client_email: '', tx_hash: 'nope' }, '');
   T('meta.invalid_input flags all missing', bad.invalid_input && bad.invalid_reason.includes('client_email') && bad.invalid_reason.includes('tx_hash') && bad.invalid_reason.includes('file_upload'));
@@ -303,7 +303,7 @@ async function addQuote(db, email, amount) {
 
 // ================= Automated diff: markers backup vs port =================
 (function () {
-  const backup = readFileSync(new URL('../../src/workflows/atlas-order-intake.workflow.ts', import.meta.url).pathname, 'utf8');
+  const backup = readFileSync(new URL('../src/workflows/atlas-order-intake.workflow.ts', import.meta.url).pathname, 'utf8');
   const port = readFileSync(new URL('../src/orders/intake.js', import.meta.url).pathname, 'utf8')
     + readFileSync(new URL('../src/orders/payment.js', import.meta.url).pathname, 'utf8');
   const markers = [
