@@ -12,14 +12,14 @@ function T(name, cond, extra) {
 const read = (p) => readFileSync(new URL(p, import.meta.url).pathname, 'utf8');
 
 const backup = {
-  order: read('../../src/workflows/atlas-order-intake.workflow.ts'),
-  ceo: read('../../src/workflows/my-workflow.workflow.ts'),
-  chatgpt: read('../../src/workflows/atlas-chatgpt-bridge.workflow.ts'),
-  siwe: read('../../src/workflows/atlas-siwe-signing-bridge.workflow.ts'),
-  bounty: read('../../src/workflows/atlas-bountybook-session-auth-n8n-ui-webhook.workflow.ts'),
-  daily: read('../../src/workflows/atlas-daily-ceo-report.workflow.ts'),
-  watch: read('../../src/workflows/atlas-smart-revenue-watch-read-only.workflow.ts'),
-  telegraph: read('../../src/workflows/atlas-telegraph-acquisition-monitor.workflow.ts'),
+  order: read('../src/workflows/atlas-order-intake.workflow.ts'),
+  ceo: read('../src/workflows/my-workflow.workflow.ts'),
+  chatgpt: read('../src/workflows/atlas-chatgpt-bridge.workflow.ts'),
+  siwe: read('../src/workflows/atlas-siwe-signing-bridge.workflow.ts'),
+  bounty: read('../src/workflows/atlas-bountybook-session-auth-n8n-ui-webhook.workflow.ts'),
+  daily: read('../src/workflows/atlas-daily-ceo-report.workflow.ts'),
+  watch: read('../src/workflows/atlas-smart-revenue-watch-read-only.workflow.ts'),
+  telegraph: read('../src/workflows/atlas-telegraph-acquisition-monitor.workflow.ts'),
 };
 const port = {
   intake: read('../src/orders/intake.js') + read('../src/orders/payment.js') + read('../src/orders/schema.js'),
