@@ -31,6 +31,7 @@ interface Env {
   AI_PROVIDER?: string;
   AI_MOCK_SCENARIO?: string;
   OPENROUTER_API_KEY?: string;
+  ORDER_WEBHOOK_SECRET?: string;
   PROCESS_SYNC?: string; // '1' for local tests: run pipeline inline and return its result
   DEV_MODE?: string;     // '1' for local tests only: enables /dev/* inspection endpoints. NEVER set in production.
 }
@@ -66,6 +67,15 @@ export default {
 
     // ---- M4 Order Intake (ports the n8n Form Trigger; multipart/form-data with file upload) ----
     if (url.pathname === '/webhook/order' && request.method === 'POST') {
+      // Fail closed: this endpoint handles paid orders and must never be public by
+      // accident. A missing secret disables the endpoint rather than bypassing auth.
+      if (!env.ORDER_WEBHOOK_SECRET) {
+        return json({ ok: false, error: 'order webhook not configured' }, 503);
+      }
+      const suppliedSecret = request.headers.get('x-atlas-order-webhook-secret');
+      if (suppliedSecret !== env.ORDER_WEBHOOK_SECRET) {
+        return json({ ok: false, error: 'forbidden' }, 403);
+      }
       const t0 = Date.now();
       await ensureOrderSchema(env.DB);
       let input: any = {};
