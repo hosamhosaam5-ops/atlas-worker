@@ -25,6 +25,7 @@ No secret value is stored here or anywhere in source — names only.
 | `FILE_STORAGE` | `LOCAL` | `R2` | R2 bucket binding |
 | `DATAPOINT_PROVIDER` | `MOCK` | `LIVE` | none (public endpoint) |
 | `BOUNTYBOOK_PROVIDER` | `MOCK` | `LIVE` | none (session token at runtime) |
+| `BOUNTYBOOK_LIVE_VERIFIED` | unset | `1` only after real nonce/signature smoke verification | no secret; explicit founder readiness gate |
 
 ## OPTIONAL (tuning / test seams)
 
