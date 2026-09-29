@@ -67,14 +67,14 @@ export function authReport(gate, conf) {
 export async function ensureBountyBookNonceSchema(db) {
   await db.prepare(`CREATE TABLE IF NOT EXISTS bountybook_auth_nonces (nonce TEXT PRIMARY KEY, wallet TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT)`).bind().run();
 }
-function makeNonce() { const bytes = new Uint8Array(24); crypto.getRandomValues(bytes); return 'atlas-bb-' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); }
-async function issueNonce(db) {
+export function makeNonce() { const bytes = new Uint8Array(24); crypto.getRandomValues(bytes); return 'atlas-bb-' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); }
+export async function issueNonce(db) {
   await ensureBountyBookNonceSchema(db);
   const nonce = makeNonce(); const expires = new Date(Date.now() + 5 * 60 * 1000).toISOString();
   await db.prepare('INSERT INTO bountybook_auth_nonces (nonce, wallet, expires_at) VALUES (?, ?, ?)').bind(nonce, EXPECTED_WALLET.toLowerCase(), expires).run();
   return nonce;
 }
-async function consumeNonce(db, nonce) {
+export async function consumeNonce(db, nonce) {
   await ensureBountyBookNonceSchema(db);
   const row = await db.prepare('SELECT nonce, wallet, expires_at, used_at FROM bountybook_auth_nonces WHERE nonce = ?').bind(nonce).first();
   if (!row) return { ok: false, reason: 'NONCE_UNKNOWN' };
