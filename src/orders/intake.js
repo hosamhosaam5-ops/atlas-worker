@@ -295,23 +295,6 @@ export async function processOrder(db, env, input) {
     return { order_id: meta.order_id, order_status: 'REJECTED', reason: 'Could not parse uploaded file: ' + extractError, audit: a, latency_ms: Date.now() - t0 };
   }
 
-  // --- Race-safe payment claim (production only): claim tx_hash FIRST via the DB's
-  // UNIQUE(tx_hash) index with a PENDING row. Two concurrent orders with the same tx:
-  // the loser gets a UNIQUE violation here and is rejected as DUPLICATE_TX — no reliance
-  // on the later code-level check alone.
-  if (!meta.test_mode) {
-    try {
-      await db.prepare("INSERT INTO order_ledger (order_id, client_email, tx_hash, status, payment_status) VALUES (?, ?, ?, 'PENDING', 'NOT_CHECKED')")
-        .bind(meta.order_id, meta.client_email, meta.tx_hash).run();
-    } catch (e) {
-      if (String(e?.message || e).toLowerCase().includes('unique')) {
-        const a = await audit(db, 'order', meta.order_id, meta, 'DUPLICATE_TX', 'tx_hash claimed concurrently (DB UNIQUE)');
-        return { order_id: meta.order_id, order_status: 'DUPLICATE_TX', message: 'This payment transaction was already used or is being processed. Order rejected.', audit: a, latency_ms: Date.now() - t0 };
-      }
-      throw e;
-    }
-  }
-
   let gate;   // the node-that-actually-ran payment result (Evaluate Payment or Apply Test Prepay)
   let priceMeta = meta;
 
@@ -331,6 +314,20 @@ export async function processOrder(db, env, input) {
       });
       const a = await audit(db, 'order', meta.order_id, meta, status, priceMeta.invalid_reason);
       return { order_id: meta.order_id, order_status: status, message: priceMeta.invalid_reason, audit: a, latency_ms: Date.now() - t0 };
+    }
+
+    // --- Race-safe payment claim (production only): reserve tx_hash only AFTER a valid
+    // founder quote exists. A no-quote request must not consume a customer's payment hash.
+    // The DB UNIQUE(tx_hash) constraint remains the concurrency authority.
+    try {
+      await db.prepare("INSERT INTO order_ledger (order_id, client_email, tx_hash, status, payment_status) VALUES (?, ?, ?, 'PENDING', 'NOT_CHECKED')")
+        .bind(meta.order_id, meta.client_email, meta.tx_hash).run();
+    } catch (e) {
+      if (String(e?.message || e).toLowerCase().includes('unique')) {
+        const a = await audit(db, 'order', meta.order_id, meta, 'DUPLICATE_TX', 'tx_hash claimed concurrently (DB UNIQUE)');
+        return { order_id: meta.order_id, order_status: 'DUPLICATE_TX', message: 'This payment transaction was already used or is being processed. Order rejected.', audit: a, latency_ms: Date.now() - t0 };
+      }
+      throw e;
     }
 
     // --- Check Tx Already Used (DB-level + code-level duplicate protection) ---
