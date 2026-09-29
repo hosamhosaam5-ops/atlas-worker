@@ -88,6 +88,18 @@ test('audit.async: no floating promise from db.prepare without await/return', ()
   assert.deepEqual(bad, [], 'floating db.prepare: ' + bad.join(' | '));
 });
 
+
+test('audit.auth: security-sensitive HTTP surfaces fail closed when secrets are absent', () => {
+  const index = CODE[path.join(SRC, 'index.ts')];
+  const bridge = CODE[path.join(SRC, 'bridges/chatgpt.js')];
+  assert.match(index, /TELEGRAM_WEBHOOK_NOT_CONFIGURED/);
+  assert.match(index, /if \(url\.pathname\.startsWith\('\/dev\/'\) && env\.DEV_MODE !== '1'\)/);
+  assert.match(bridge, /BRIDGE_NOT_CONFIGURED/);
+  assert.match(bridge, /if \(!secret\)/);
+  // /dev/orders must occur after the common /dev guard, not before it.
+  assert.ok(index.indexOf("if (url.pathname.startsWith('/dev/')") < index.indexOf("url.pathname === '/dev/orders'"), 'dev/orders bypasses common guard');
+});
+
 test('audit.payment-config: pinned production USDC values are present and exact', () => {
   const pay = CODE[path.join(SRC, 'orders/payment.js')];
   assert.match(pay, /0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F/);
