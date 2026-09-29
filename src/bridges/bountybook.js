@@ -100,8 +100,18 @@ export async function handleBountyBookAuth(request, env) {
   }
   if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
   let nonce = '', signature = '';
-  try { const fd = await request.formData(); nonce = String(fd.get('nonce') || '').trim(); signature = String(fd.get('signature') || '').trim(); }
-  catch { try { const j = await request.json(); nonce = String(j?.nonce || '').trim(); signature = String(j?.signature || '').trim(); } catch {} }
+  const ct = request.headers.get('content-type') || '';
+  try {
+    if (ct.includes('application/json')) {
+      const j = await request.json();
+      nonce = String(j?.nonce || '').trim();
+      signature = String(j?.signature || '').trim();
+    } else {
+      const fd = await request.formData();
+      nonce = String(fd.get('nonce') || '').trim();
+      signature = String(fd.get('signature') || '').trim();
+    }
+  } catch { return failResponse(400, 'INVALID_INPUT', 'Could not parse nonce and signature.'); }
   if (!nonce || !signature) return failResponse(400, 'INVALID_INPUT', 'nonce and signature are required.');
   let recovered;
   try { recovered = await verifyMessage(nonce, signature); } catch { return failResponse(401, 'INVALID_SIGNATURE', 'Signature is invalid. No provider request executed.'); }
