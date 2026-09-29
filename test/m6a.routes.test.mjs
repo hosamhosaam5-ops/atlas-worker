@@ -67,28 +67,22 @@ test('route.telegram: malformed JSON -> 400', async () => {
   assert.equal(r.status, 400);
 });
 
-test('route.order: missing fields -> REJECTED (validation), no crash', async () => {
+test('route.order: fail closed when webhook secret is unset', async () => {
   const r = await post('/webhook/order', { client_email: 'nobody@example.com' });
+  assert.equal(r.status, 503);
   const j = await r.json();
-  assert.equal(j.order_status, 'REJECTED');
-  assert.match(j.reason, /tx_hash|file_upload/);
+  assert.equal(j.error, 'ORDER_WEBHOOK_NOT_CONFIGURED');
 });
 
-test('route.order: full E2E — quote + valid mock payment + real CSV -> DELIVERED', async () => {
-  // seed a quote directly via the importer path? No — quotes are founder data; use dev reset
-  // is destructive. Instead use a fresh client email with a quote inserted via SQL is not
-  // exposed; the E2E below uses the founder test seam (no client_email -> test_mode).
-  const csv = 'name,value\nalpha,1\nbeta,2\n,,\nalpha,1\n';
-  const fd = new FormData();
-  fd.append('client_email', '');
-  fd.append('tx_hash', '0x' + '2'.repeat(64));
-  fd.append('file_upload', new Blob([csv], { type: 'text/csv' }), 'e2e.csv');
-  const r = await fetch(BASE + '/webhook/order', { method: 'POST', body: fd });
+test('route.order: rejects requests with incorrect webhook secret', async () => {
+  // The first Wrangler instance deliberately has no ORDER_WEBHOOK_SECRET.
+  // Public route must fail closed rather than accept test-mode or customer orders.
+  const r = await post('/webhook/order', { client_email: 'nobody@example.com' }, {
+    'x-atlas-order-webhook-secret': 'definitely-not-the-secret'
+  });
+  assert.equal(r.status, 503);
   const j = await r.json();
-  assert.equal(j.order_status, 'DELIVERED');
-  assert.equal(j.rows_in, 4);
-  assert.equal(j.rows_out, 2);
-  assert.equal(j.delivery.delivery_status, 'SENT'); // MOCK adapter success
+  assert.equal(j.error, 'ORDER_WEBHOOK_NOT_CONFIGURED');
 });
 
 test('route.bridges: chatgpt 200 health; wrong key -> 401 when secret set (unset locally)', async () => {
