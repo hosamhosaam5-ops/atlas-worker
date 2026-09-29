@@ -2,9 +2,8 @@ name = "atlas-worker"
 main = "src/index.ts"
 compatibility_date = "2026-09-27"
 
-# M6A deployment file (item 7) — READY, NOT DEPLOYED.
-# `database_id` below is the local placeholder; the real one is created at deploy time
-# by the founder (`wrangler d1 create atlas_db`) and pasted here — never by the agent.
+# M6A deployment configuration. A database ID is configured, but account ownership,
+# migrations, secrets, and deployment status must be verified separately.
 
 [[d1_databases]]
 binding = "DB"
@@ -16,8 +15,7 @@ database_id = "a5a75faa-e800-4112-b67a-3c53d7b0d8d4"
 # binding = "R2"
 # bucket_name = "atlas-order-files"
 
-# Cron entry points — ACTIVE ONLY AT DEPLOY (M5 handlers exist; the founder decides
-# when schedules go live). Schedules mirror the n8n cron workflows.
+# Cron schedules are configured here; they run only after this Worker is deployed.
 [triggers]
 crons = [
   "0 21 * * *",    # Daily CEO Report (00:00 Asia/Riyadh)
