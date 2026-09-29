@@ -64,7 +64,7 @@ export function getProvider(env) {
             body: JSON.stringify({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
             signal: ctrl.signal,
           });
-          if (!res.ok) { const e = new Error('openrouter http ' + res.status); e.code = 'AI_PROVIDER_ERROR'; throw e; }
+          if (!res.ok) { const e = new Error('openrouter http ' + res.status); e.code = res.status === 429 ? 'AI_RATE_LIMIT' : 'AI_PROVIDER_ERROR'; throw e; }
           const data = await res.json();
           return { content: data?.choices?.[0]?.message?.content || '' };
         } finally { clearTimeout(t); }
