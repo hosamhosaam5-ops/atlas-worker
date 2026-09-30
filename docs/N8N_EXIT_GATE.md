@@ -3,8 +3,8 @@
 This document is a fail-closed checklist. n8n must remain unchanged and operational until every REQUIRED gate is independently evidenced.
 
 ## Current state (2026-09-30)
-- Latest main commit before this documentation refresh: 94cc374.
-- GitHub Actions run 36604870770 completed SUCCESS on commit 94cc374.
+- Latest main commit: a5f6e26.
+- GitHub Actions run 36640377807 (run 42) completed SUCCESS on commit a5f6e26.
 - A rollback branch was created at the same known-good baseline: n8n-exit-rollback-2026-09-30.
 - n8n archive reported by the operator: 27 workflows, 12 Data Tables, 23 credentials (secret values excluded).
 - The operator reports all 27 workflow definitions preserved in the n8n exit snapshot; this evidence is external to this repository and must remain retained.
