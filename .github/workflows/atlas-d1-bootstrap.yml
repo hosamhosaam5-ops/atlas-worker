@@ -38,30 +38,14 @@ jobs:
       - name: Resolve Cloudflare account
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
-          npx wrangler whoami --json > /tmp/whoami.json
-          node <<'NODE'
-          const fs = require('fs');
-          const x = JSON.parse(fs.readFileSync('/tmp/whoami.json','utf8'));
-          const found = [];
-          function walk(v, path='') {
-            if (!v || typeof v !== 'object') return;
-            if (Array.isArray(v)) return v.forEach((x,i)=>walk(x,path+'['+i+']'));
-            for (const [k,val] of Object.entries(v)) {
-              if (k === 'id' && typeof val === 'string' && /^[a-f0-9]{32}$/i.test(val)) found.push(val);
-              walk(val, path ? path+'.'+k : k);
-            }
-          }
-          walk(x);
-          const id = found[0];
-          if (!id) {
-            console.error('Could not resolve a 32-hex Cloudflare account ID from wrangler whoami.');
-            process.exit(1);
-          }
-          fs.appendFileSync(process.env.GITHUB_ENV, 'CLOUDFLARE_ACCOUNT_ID='+id+'\\n');
-          console.log('Resolved Cloudflare account ID.');
-          NODE
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          printf 'CLOUDFLARE_ACCOUNT_ID=%s\\n' "$CLOUDFLARE_ACCOUNT_ID" >> "$GITHUB_ENV"
+          npx wrangler d1 info atlas_db --json > /tmp/d1-info.json
+          node -e "const x=require('/tmp/d1-info.json'); console.log(JSON.stringify({database_id:x?.result?.database_id??x?.database_id??null,name:x?.result?.name??x?.name??null},null,2))"
 
       - name: Inspect D1 before schema
         env:
