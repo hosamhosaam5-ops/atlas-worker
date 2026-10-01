@@ -59,12 +59,12 @@ jobs:
               "$API/accounts?per_page=50" > /tmp/accounts.json
 
             node <<'NODE'
-            const fs = require('fs');
-            const accounts = JSON.parse(fs.readFileSync('/tmp/accounts.json','utf8'));
-            if (!accounts.success || !Array.isArray(accounts.result)) throw new Error('Cloudflare account listing failed.');
-            console.log(`Accessible Cloudflare accounts: ${accounts.result.length}`);
-            fs.writeFileSync('/tmp/account_ids.json', JSON.stringify(accounts.result.map(a => ({id:a.id,name:a.name}))));
-            NODE
+const fs = require('fs');
+const accounts = JSON.parse(fs.readFileSync('/tmp/accounts.json','utf8'));
+if (!accounts.success || !Array.isArray(accounts.result)) throw new Error('Cloudflare account listing failed.');
+console.log(`Accessible Cloudflare accounts: ${accounts.result.length}`);
+fs.writeFileSync('/tmp/account_ids.json', JSON.stringify(accounts.result.map(a => ({id:a.id,name:a.name}))));
+NODE
 
             MATCH=""
             while IFS=$'\t' read -r ACCOUNT_ID ACCOUNT_NAME; do
