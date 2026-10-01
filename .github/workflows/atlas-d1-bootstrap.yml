@@ -117,3 +117,5 @@ jobs:
 
       - name: Verify deployed Worker health
         run: curl --fail --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/health
+
+# Triggered after CLOUDFLARE_API_TOKEN repository secret setup.
