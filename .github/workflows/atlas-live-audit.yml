@@ -1,0 +1,77 @@
+name: atlas-live-audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/atlas-live-audit.yml"
+      - "wrangler.toml"
+      - "src/**"
+      - "schema*.sql"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-live-audit
+  cancel-in-progress: false
+
+jobs:
+  live-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-package-lock --ignore-scripts
+
+      - name: Resolve Cloudflare account
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          printf 'CLOUDFLARE_ACCOUNT_ID=%s\n' 'c46718094ced1f5f75492f4c67c7d390' >> "$GITHUB_ENV"
+
+      - name: D1 read-only schema and row audit
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler d1 info atlas_db --json
+          npx wrangler d1 execute atlas_db --remote --yes --command="SELECT name, type FROM sqlite_master WHERE type IN ('table','index') ORDER BY type, name;"
+          npx wrangler d1 execute atlas_db --remote --yes --command="SELECT 'event_log' table_name, COUNT(*) rows FROM event_log UNION ALL SELECT 'execution_state', COUNT(*) FROM execution_state UNION ALL SELECT 'ceo_memory', COUNT(*) FROM ceo_memory UNION ALL SELECT 'order_ledger', COUNT(*) FROM order_ledger UNION ALL SELECT 'delivery_outbox', COUNT(*) FROM delivery_outbox UNION ALL SELECT 'bridge_audit', COUNT(*) FROM bridge_audit;"
+          npx wrangler d1 execute atlas_db --remote --yes --command="PRAGMA index_list('execution_state');"
+          npx wrangler d1 execute atlas_db --remote --yes --command="PRAGMA index_list('delivery_outbox');"
+          npx wrangler d1 execute atlas_db --remote --yes --command="PRAGMA index_list('order_ledger');"
+
+      - name: D1 Time Travel read-only bookmark
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler d1 time-travel info atlas_db --json
+
+      - name: Public Worker smoke and fail-closed auth checks
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/health
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/dev/state)" = "404"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/telegram -H 'content-type: application/json' -d '{"update_id":1,"message":{"text":"smoke"}}')" = "503"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/order -H 'content-type: application/json' -d '{}')" = "503"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/bridge/chatgpt -H 'content-type: application/json' -d '{"operation":"health"}')" = "503"
+
+      - name: Deployment inventory
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deployments list
