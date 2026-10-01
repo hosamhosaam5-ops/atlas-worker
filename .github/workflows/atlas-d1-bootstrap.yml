@@ -84,11 +84,14 @@ jobs:
           node <<'NODE'
           const { execFileSync } = require('child_process');
           const env = process.env;
-          const run = (args) => {
-            const out = execFileSync('npx', ['wrangler', ...args], { env, encoding: 'utf8' });
-            return JSON.parse(out);
+          const run = (args) => execFileSync('npx', ['wrangler', ...args], { env, encoding: 'utf8' });
+          const runJson = (args) => {
+            const out = run([...args, '--json']);
+            const firstObject = out.indexOf('{');
+            if (firstObject < 0) throw new Error('Wrangler JSON output missing.');
+            return JSON.parse(out.slice(firstObject));
           };
-          const q = run(['d1','execute','atlas_db','--remote','--yes','--json','--command',"PRAGMA table_info(order_ledger);"]);
+          const q = runJson(['d1','execute','atlas_db','--remote','--yes','--command',"PRAGMA table_info(order_ledger);"]);
           const rows = q?.result?.[0]?.results || q?.result?.results || [];
           const have = new Set(rows.map(r => r.name));
           const required = [
