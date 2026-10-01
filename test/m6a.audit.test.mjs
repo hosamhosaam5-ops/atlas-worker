@@ -139,3 +139,18 @@ test('audit.error-taxonomy: 18 explicit codes exist and classifyError never inve
     assert.ok(uniq.has(need), 'missing code ' + need);
   }
 });
+
+
+test('audit.migration: execution_state importer fails closed before dedupe/upsert', async () => {
+  const { importRows } = await import('../src/core/importer.js');
+  const db = { prepare() { throw new Error('DB MUST NOT BE TOUCHED'); } };
+  const rows = [
+    { idempotency_key: 'req|safe', status: 'SUCCEEDED' },
+    { idempotency_key: 'req|safe', status: 'SUCCEEDED' },
+    { idempotency_key: '', status: 'BLOCKED' },
+  ];
+  assert.throws(
+    () => importRows.toTable(db, 'atlas_execution_state', rows),
+    /FAIL_CLOSED_EXECUTION_STATE_IMPORT.*missing_keys=1.*duplicate_keys=req\|safe\(2\)/,
+  );
+});
