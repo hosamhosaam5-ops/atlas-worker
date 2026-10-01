@@ -43,9 +43,48 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-          printf 'CLOUDFLARE_ACCOUNT_ID=%s\\n' "$CLOUDFLARE_ACCOUNT_ID" >> "$GITHUB_ENV"
-          npx wrangler d1 info atlas_db --json > /tmp/d1-info.json
-          node -e "const x=require('/tmp/d1-info.json'); console.log(JSON.stringify({database_id:x?.result?.database_id??x?.database_id??null,name:x?.result?.name??x?.name??null},null,2))"
+          DB_ID="a5a75faa-e800-4112-b67a-3c53d7b0d8d4"
+          API="https://api.cloudflare.com/client/v4"
+
+          if npx wrangler d1 info atlas_db --json > /tmp/d1-info.json 2>/tmp/d1-error.log; then
+            node -e "const x=require('/tmp/d1-info.json'); console.log(JSON.stringify({database_id:x?.result?.database_id??x?.database_id??null,name:x?.result?.name??x?.name??null},null,2))"
+            printf 'CLOUDFLARE_ACCOUNT_ID=%s\n' "$CLOUDFLARE_ACCOUNT_ID" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          if grep -q 'code: 7003' /tmp/d1-error.log; then
+            echo "Configured Cloudflare Account ID does not own atlas_db; discovering the owner account."
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "$API/accounts?per_page=50" > /tmp/accounts.json
+
+            node <<'NODE'
+            const fs = require('fs');
+            const accounts = JSON.parse(fs.readFileSync('/tmp/accounts.json','utf8'));
+            if (!accounts.success || !Array.isArray(accounts.result)) throw new Error('Cloudflare account listing failed.');
+            console.log(`Accessible Cloudflare accounts: ${accounts.result.length}`);
+            fs.writeFileSync('/tmp/account_ids.json', JSON.stringify(accounts.result.map(a => ({id:a.id,name:a.name}))));
+            NODE
+
+            MATCH=""
+            while IFS=$'\t' read -r ACCOUNT_ID ACCOUNT_NAME; do
+              CODE=$(curl --silent --show-error -o "/tmp/d1-$ACCOUNT_ID.json" -w "%{http_code}" \
+                -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                "$API/accounts/$ACCOUNT_ID/d1/database/$DB_ID" || true)
+              if [ "$CODE" = "200" ] && node -e "const x=require('/tmp/d1-$ACCOUNT_ID.json'); process.exit(x.success && x.result?.uuid===process.argv[1] ? 0 : 1)" "$DB_ID"; then
+                MATCH="$ACCOUNT_ID"
+                echo "Matched atlas_db to an accessible Cloudflare account."
+                break
+              fi
+            done < <(node -e "for (const a of require('/tmp/account_ids.json')) console.log(a.id+'\\t'+a.name)")
+
+            test -n "$MATCH"
+            printf 'CLOUDFLARE_ACCOUNT_ID=%s\n' "$MATCH" >> "$GITHUB_ENV"
+            echo "Cloudflare account resolution succeeded."
+          else
+            cat /tmp/d1-error.log
+            exit 1
+          fi
 
       - name: Inspect D1 before schema
         env:
