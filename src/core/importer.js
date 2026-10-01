@@ -115,6 +115,9 @@ export function checksumRows(rows) {
 
 export const importRows = {
   // Collapse exact duplicates by the table's natural key (first wins).
+  // NOTE: atlas_execution_state is fail-closed and is intentionally excluded from
+  // this generic dedupe behavior by toTable() below. Historical execution state
+  // must never lose or overwrite a source row during migration.
   dedupe(tableName, rows) {
     const map = TABLE_MAP[tableName];
     if (!map) return rows || [];
@@ -133,6 +136,29 @@ export const importRows = {
     const map = TABLE_MAP[tableName];
     if (!map) throw new Error('no mapping for table ' + tableName);
     const { valid, errors } = validateRows(tableName, rows);
+
+    // M6A migration safety: execution_state is the only table whose historical
+    // export is known to contain missing/duplicate natural keys. Never let the
+    // generic dedupe/upsert path silently discard the duplicate or overwrite a
+    // prior row. A production import must stop before any DB mutation.
+    if (tableName === 'atlas_execution_state') {
+      const missing = (rows || []).reduce((n, r) => n + (!r || r.idempotency_key === undefined || r.idempotency_key === null || r.idempotency_key === '' ? 1 : 0), 0);
+      const counts = new Map();
+      for (const r of rows || []) {
+        if (r && r.idempotency_key !== undefined && r.idempotency_key !== null && r.idempotency_key !== '') {
+          const k = String(r.idempotency_key);
+          counts.set(k, (counts.get(k) || 0) + 1);
+        }
+      }
+      const duplicates = [...counts.entries()].filter(([, count]) => count > 1);
+      if (missing || duplicates.length) {
+        throw new Error(`FAIL_CLOSED_EXECUTION_STATE_IMPORT: missing_keys=${missing}; duplicate_keys=${duplicates.map(([k, c]) => `${k}(${c})`).join(',') || 'none'}; no rows imported`);
+      }
+      if (errors.length) {
+        throw new Error(`FAIL_CLOSED_EXECUTION_STATE_IMPORT: rejected_rows=${errors.length}; no rows imported`);
+      }
+    }
+
     const deduped = this.dedupe(tableName, valid);
     let inserted = 0, skipped = 0;
     const stmt = db.prepare(map.insert);
