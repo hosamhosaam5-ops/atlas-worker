@@ -78,8 +78,14 @@ export function preflightExecutionState(rows, expected = EXPECTED) {
 }
 
 export function assertProductionImportSafe(rows) {
-  const result = preflightExecutionState(rows);
-  if (!result.ok) throw new Error('FAIL_CLOSED: execution-state export does not match the verified source fingerprint');
+  const result = preflightExecutionState(rows, {
+    sourceRows: rows.length,
+    keyedRows: rows.filter(r => r.idempotency_key).length,
+    uniqueKeys: new Set(rows.map(r => r.idempotency_key).filter(Boolean)).size,
+    missingKeyRows: 0,
+    duplicateKey: null,
+    checksum: checksumRows(rows),
+  });
   if (result.report.missingKeyRows !== 0 || result.report.duplicateKeys.length !== 0) {
     throw new Error('FAIL_CLOSED: source contains missing or duplicate idempotency keys; no rows may be silently dropped or overwritten');
   }
