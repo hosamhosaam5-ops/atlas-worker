@@ -84,16 +84,7 @@ jobs:
           node <<'NODE'
           const { execFileSync } = require('child_process');
           const env = process.env;
-          const run = (args) => execFileSync('npx', ['wrangler', ...args], { env, encoding: 'utf8' });
-          const runJson = (args) => {
-            const out = run([...args, '--json']);
-            const firstObject = out.indexOf('{');
-            if (firstObject < 0) throw new Error('Wrangler JSON output missing.');
-            return JSON.parse(out.slice(firstObject));
-          };
-          const q = runJson(['d1','execute','atlas_db','--remote','--yes','--command',"PRAGMA table_info(order_ledger);"]);
-          const rows = q?.result?.[0]?.results || q?.result?.results || [];
-          const have = new Set(rows.map(r => r.name));
+          const run = (args) => execFileSync('npx', ['wrangler', ...args], { env, encoding: 'utf8', stdio: ['ignore','pipe','pipe'] });
           const required = [
             ['qa_status','TEXT'],['qa_report','TEXT'],['payment_status','TEXT'],
             ['amount_paid','REAL'],['price_source','TEXT'],['expected_amount','REAL'],
@@ -101,13 +92,19 @@ jobs:
             ['delivery_channel','TEXT'],['delivery_status','TEXT']
           ];
           for (const [name,type] of required) {
-            if (!have.has(name)) {
-              const ident = '"' + name.replaceAll('"','""') + '"';
+            const ident = '"' + name.replaceAll('"','""') + '"';
+            try {
               run(['d1','execute','atlas_db','--remote','--yes','--command',`ALTER TABLE order_ledger ADD COLUMN ${ident} ${type}`]);
-              console.log('Added missing M4 column:', name);
+              console.log('Ensured M4 column:', name);
+            } catch (e) {
+              const msg = String(e.stderr || e.stdout || e.message || '');
+              if (/duplicate column name/i.test(msg)) {
+                console.log('M4 column already exists:', name);
+              } else {
+                throw e;
+              }
             }
           }
-          NODE
 
       - name: Apply M5 schema
         env:
