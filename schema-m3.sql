@@ -51,5 +51,15 @@ CREATE TABLE IF NOT EXISTS publications (
   publication_time TEXT
 );
 
+-- BountyBook session nonces (runtime also calls ensureBountyBookNonceSchema()).
+-- Declaring it in the schema makes the production D1 inventory complete before
+-- the first live auth request and preserves the same fail-closed nonce contract.
+CREATE TABLE IF NOT EXISTS bountybook_auth_nonces (
+  nonce TEXT PRIMARY KEY,
+  wallet TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_zatca_req_time ON zatca_experiment_requests(submitted_at);
 CREATE INDEX IF NOT EXISTS idx_bridge_audit_ts ON bridge_audit(timestamp);
