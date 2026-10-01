@@ -50,7 +50,10 @@ jobs:
           set -euo pipefail
           npx wrangler d1 info atlas_db --json
           npx wrangler d1 execute atlas_db --remote --yes --command="SELECT name, type FROM sqlite_master WHERE type IN ('table','index') ORDER BY type, name;"
-          npx wrangler d1 execute atlas_db --remote --yes --command="SELECT 'event_log' table_name, COUNT(*) rows FROM event_log UNION ALL SELECT 'execution_state', COUNT(*) FROM execution_state UNION ALL SELECT 'ceo_memory', COUNT(*) FROM ceo_memory UNION ALL SELECT 'order_ledger', COUNT(*) FROM order_ledger UNION ALL SELECT 'delivery_outbox', COUNT(*) FROM delivery_outbox UNION ALL SELECT 'bridge_audit', COUNT(*) FROM bridge_audit;"
+          for table in event_log execution_state ceo_memory order_ledger delivery_outbox bridge_audit bountybook_auth_nonces; do
+            echo "COUNT $table"
+            npx wrangler d1 execute atlas_db --remote --yes --command="SELECT COUNT(*) AS rows FROM $table;"
+          done
           npx wrangler d1 execute atlas_db --remote --yes --command="PRAGMA index_list('execution_state');"
           npx wrangler d1 execute atlas_db --remote --yes --command="PRAGMA index_list('delivery_outbox');"
           npx wrangler d1 execute atlas_db --remote --yes --command="PRAGMA index_list('order_ledger');"
