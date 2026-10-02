@@ -29,6 +29,8 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-package-lock --ignore-scripts
+      - name: Validate Worker bundle
+        run: npx wrangler deploy --dry-run
       - run: npm test
       - name: Deploy Worker
         env:
