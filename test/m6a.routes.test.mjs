@@ -52,6 +52,25 @@ test('route.health: GET /health returns current configured provider matrix', asy
   assert.equal(j.payment, 'MOCK');
 });
 
+test('route.mcp: Streamable HTTP initialize and tools/list work locally', async () => {
+  const headers = { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-03-26' };
+  const init = await fetch(BASE + '/mcp', { method: 'POST', headers, body: JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+  }) });
+  assert.equal(init.status, 200);
+  const ij = await init.json();
+  assert.equal(ij.result.serverInfo.name, 'ATLAS Cloudflare');
+  const tools = await fetch(BASE + '/mcp', { method: 'POST', headers, body: JSON.stringify({
+    jsonrpc: '2.0', id: 2, method: 'tools/list', params: {}
+  }) });
+  assert.equal(tools.status, 200);
+  const tj = await tools.json();
+  const names = tj.result.tools.map(x => x.name);
+  assert.ok(names.includes('health'));
+  assert.ok(names.includes('read_state'));
+});
+ 
 test('route.telegram: missing webhook secret -> 503 fail closed', async () => {
   const r = await post('/webhook/telegram', { update_id: 910001 });
   assert.equal(r.status, 503);
