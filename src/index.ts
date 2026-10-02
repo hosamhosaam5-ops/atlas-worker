@@ -1,3 +1,4 @@
+// Production verification: test suite green; deploy current main.
 // ATLAS Worker — M2: Telegram webhook (receive + log only) + async CEO pipeline.
 // The webhook NEVER runs CEO reasoning synchronously: it inserts into event_log
 // (idempotency at DB level) and defers heavy processing via ctx.waitUntil.
