@@ -84,13 +84,17 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/order -H 'content-type: application/json' -d '{}')" = "503"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/bridge/chatgpt -H 'content-type: application/json' -d '{"operation":"health"}')" = "503"
           curl -sS -D /tmp/atlas_mcp_headers -o /tmp/atlas_mcp_init -X POST https://atlas-worker.hosamhosaam5.workers.dev/mcp -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"atlas-live-audit","version":"1.0"}}}'
-          cat /tmp/atlas_mcp_headers
-          cat /tmp/atlas_mcp_init
+          echo "INIT_HEADER_BYTES=$(wc -c < /tmp/atlas_mcp_headers)"
+          echo "INIT_BODY_BYTES=$(wc -c < /tmp/atlas_mcp_init)"
+          sed -n '1,30p' /tmp/atlas_mcp_headers || true
+          sed -n '1,10p' /tmp/atlas_mcp_init || true
           grep -q '200' /tmp/atlas_mcp_headers
           grep -q 'ATLAS Cloudflare' /tmp/atlas_mcp_init
           curl -sS -D /tmp/atlas_mcp_tools_headers -o /tmp/atlas_mcp_tools -X POST https://atlas-worker.hosamhosaam5.workers.dev/mcp -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-03-26' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-          cat /tmp/atlas_mcp_tools_headers
-          cat /tmp/atlas_mcp_tools
+          echo "TOOLS_HEADER_BYTES=$(wc -c < /tmp/atlas_mcp_tools_headers)"
+          echo "TOOLS_BODY_BYTES=$(wc -c < /tmp/atlas_mcp_tools)"
+          sed -n '1,30p' /tmp/atlas_mcp_tools_headers || true
+          sed -n '1,20p' /tmp/atlas_mcp_tools || true
           grep -q '200' /tmp/atlas_mcp_tools_headers
           grep -q '"health"' /tmp/atlas_mcp_tools
           grep -q '"read_state"' /tmp/atlas_mcp_tools
