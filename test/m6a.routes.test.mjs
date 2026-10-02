@@ -29,7 +29,7 @@ before(async () => {
   for (const f of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql']) {
     execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file ./${f}`, { cwd: ROOT, stdio: 'ignore', detached: true });
   }
-  proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist], { cwd: ROOT, stdio: 'ignore', detached: true });
+  proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'AI_PROVIDER:WORKERS_AI', '--var', 'TELEGRAM_PROVIDER:LIVE'], { cwd: ROOT, stdio: 'ignore', detached: true });
   proc.unref();
   await waitUp();
 });
