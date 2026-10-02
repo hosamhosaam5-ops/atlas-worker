@@ -89,6 +89,7 @@ async function handleAtlasMcp(request: Request, env: Env, _ctx?: ExecutionContex
 }
 
 const mcpOAuth = new OAuthProvider({
+  resourceMetadata: { resource: "https://atlas-worker.hosamhosaam5.workers.dev/mcp" },
   apiHandler: { fetch: handleAtlasMcp },
   apiRoute: "/mcp",
   authorizeEndpoint: "/authorize",
