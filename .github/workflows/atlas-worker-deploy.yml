@@ -49,4 +49,4 @@ jobs:
           npx wrangler deploy
 # Deployment trigger: deploy current main, including commit 32bea5f8a473b461db3096c8cfc5784aa1e560f7
 # Force deployment after Workers AI migration: 2026-10-02
-# Verified source refresh trigger: pipeline/provider/index current on main.
+# Verified source refresh trigger: pipeline/provider/index/current MCP OAuth tests on main.
