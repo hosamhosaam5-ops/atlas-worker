@@ -47,6 +47,58 @@ export function makeMockProvider(scenario) {
 export function getProvider(env) {
   const kind = String(env.AI_PROVIDER || 'MOCK').toUpperCase();
   if (kind === 'MOCK') return makeMockProvider(env.AI_MOCK_SCENARIO);
+  if (kind === 'WORKERS_AI') {
+    return {
+      name: 'workers-ai',
+      async chat({ model, system, user }) {
+        if (!env.AI || typeof env.AI.run !== 'function') {
+          const e = new Error('Workers AI binding AI is not configured');
+          e.code = 'AI_PROVIDER_ERROR';
+          throw e;
+        }
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), AI_TIMEOUT_MS);
+        try {
+          const result = await env.AI.run(
+            model || env.AI_MODEL || '@cf/zai-org/glm-4.7-flash',
+            {
+              messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: user },
+              ],
+              temperature: 0.2,
+            },
+            { rejectIfBusy: true },
+          );
+          const content =
+            result?.response ??
+            result?.choices?.[0]?.message?.content ??
+            result?.result?.response ??
+            '';
+          if (typeof content !== 'string' || !content.trim()) {
+            const e = new Error('Workers AI returned empty/malformed response');
+            e.code = 'AI_PROVIDER_ERROR';
+            throw e;
+          }
+          return { content };
+        } catch (e) {
+          if (e?.name === 'AbortError' || ctrl.signal.aborted) {
+            const x = new Error('Workers AI request timeout');
+            x.code = 'AI_TIMEOUT';
+            throw x;
+          }
+          if (e?.status === 429 || e?.code === 3040) {
+            const x = new Error('Workers AI capacity/rate limit');
+            x.code = 'AI_RATE_LIMIT';
+            throw x;
+          }
+          throw e;
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+    };
+  }
   if (kind === 'OPENROUTER') {
     // Not used in M2. Implemented structurally only — real use requires OPENROUTER_API_KEY
     // secret set by the founder, and explicit approval. Zero quota consumed in M2.
