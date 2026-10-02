@@ -83,11 +83,15 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/telegram -H 'content-type: application/json' -d '{"update_id":1,"message":{"text":"smoke"}}')" = "503"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/order -H 'content-type: application/json' -d '{}')" = "503"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/bridge/chatgpt -H 'content-type: application/json' -d '{"operation":"health"}')" = "503"
-          MCP_INIT=$(curl --fail --silent --show-error -X POST https://atlas-worker.hosamhosaam5.workers.dev/mcp -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"atlas-live-audit","version":"1.0"}}}')
+          MCP_INIT=$(curl --silent --show-error -w '\nHTTP_STATUS:%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/mcp -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"atlas-live-audit","version":"1.0"}}}')
           echo "$MCP_INIT"
+          echo "$MCP_INIT"
+          echo "$MCP_INIT" | grep -q 'HTTP_STATUS:200'
           echo "$MCP_INIT" | grep -q 'ATLAS Cloudflare'
-          MCP_TOOLS=$(curl --fail --silent --show-error -X POST https://atlas-worker.hosamhosaam5.workers.dev/mcp -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+          MCP_TOOLS=$(curl --silent --show-error -w '\nHTTP_STATUS:%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/mcp -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
           echo "$MCP_TOOLS"
+          echo "$MCP_TOOLS"
+          echo "$MCP_TOOLS" | grep -q 'HTTP_STATUS:200'
           echo "$MCP_TOOLS" | grep -q '"health"'
           echo "$MCP_TOOLS" | grep -q '"read_state"'
 
