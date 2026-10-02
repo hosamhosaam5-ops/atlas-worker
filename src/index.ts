@@ -47,128 +47,57 @@ interface Env {
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 
-async function handleAtlasMcp(request: Request, env: Env) {
+async function handleAtlasMcp(request: Request, env: Env, _ctx?: ExecutionContext) {
   const json = (data: unknown, status = 200, headers: Record<string,string> = {}) =>
-    new Response(JSON.stringify(data), {
-      status,
-      headers: { "content-type": "application/json", ...headers },
-    });
-
-  // MCP is remote and exposes state-changing tools, so fail closed behind the
-  // same secret already provisioned for the ChatGPT bridge.
-  const secret = env.CHATGPT_BRIDGE_SECRET;
-  const auth = request.headers.get("authorization") || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  const supplied = bearer || request.headers.get("x-atlas-mcp-key") || request.headers.get("x-atlas-bridge-key") || "";
-  const digest = async (value: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  const [a,b] = await Promise.all([digest(String(supplied)), digest(String(secret || ""))]);
-  const aa = new Uint8Array(a), bb = new Uint8Array(b);
-  let diff = secret ? 0 : 1;
-  for (let i = 0; i < aa.length; i++) diff |= aa[i] ^ bb[i];
-  if (diff !== 0) {
-    return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "Unauthorized" } }, 401, { "WWW-Authenticate": "Bearer" });
-  }
-
-  if (request.method !== "POST") {
-    return json({ jsonrpc: "2.0", error: { code: -32000, message: "Method Not Allowed" } }, 405, { Allow: "POST" });
-  }
-
-  let msg: any;
-  try { msg = await request.json(); }
-  catch { return json({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" } }, 400); }
-
-  const id = msg && Object.prototype.hasOwnProperty.call(msg, "id") ? msg.id : null;
-  const result = (payload: any) =>
-    json({ jsonrpc: "2.0", id, ...payload }, 200, { "MCP-Protocol-Version": "2025-03-26" });
-
-  if (!msg || msg.jsonrpc !== "2.0") return result({ error: { code: -32600, message: "Invalid Request" } });
-  if (msg.method === "initialize") return result({
-    result: {
-      protocolVersion: "2025-03-26",
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "ATLAS Cloudflare", version: "2.0.0" },
-    },
-  });
-  if (msg.method === "notifications/initialized") return new Response(null, { status: 202 });
-  if (msg.method === "ping") return result({ result: {} });
-
-  if (msg.method === "tools/list") return result({
-    result: {
-      tools: [
-        { name: "health", description: "Read ATLAS Worker health and provider status.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-        { name: "read_state", description: "Read ATLAS execution state from D1.", inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 200 } }, additionalProperties: false } },
-        { name: "read_tables", description: "Read ATLAS CEO memory and operational table counts.", inputSchema: { type: "object", properties: { memory_limit: { type: "integer", minimum: 1, maximum: 100 } }, additionalProperties: false } },
-        { name: "read_workflow_metadata", description: "Read ATLAS Worker and MCP metadata.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-        { name: "write_state", description: "Upsert up to 100 validated execution-state rows.", inputSchema: { type: "object", properties: { rows: { type: "array", maxItems: 100 } }, required: ["rows"], additionalProperties: false } },
-        { name: "write_memory", description: "Append up to 100 validated CEO memory rows.", inputSchema: { type: "object", properties: { rows: { type: "array", maxItems: 100 } }, required: ["rows"], additionalProperties: false } },
-        { name: "execute_ceo", description: "Execute an ATLAS CEO request through the authenticated production bridge.", inputSchema: { type: "object", properties: { founder_message: { type: "string", minLength: 1, maxLength: 20000 }, chat_id: { type: ["string","number"] }, message_id: { type: "integer" } }, required: ["founder_message","chat_id","message_id"], additionalProperties: false } },
-      ],
-    },
-  });
-
-  if (msg.method !== "tools/call") return result({ error: { code: -32601, message: "Method not found" } });
-  const name = msg.params?.name;
-  const args = msg.params?.arguments || {};
-  let out: any;
-
+    new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...headers } });
+  if (request.method !== "POST") return json({ jsonrpc:"2.0", error:{code:-32000,message:"Method Not Allowed"} },405,{Allow:"POST"});
+  let msg:any; try { msg=await request.json(); } catch { return json({jsonrpc:"2.0",error:{code:-32700,message:"Parse error"}},400); }
+  const id=msg&&Object.prototype.hasOwnProperty.call(msg,"id")?msg.id:null;
+  const result=(payload:any)=>json({jsonrpc:"2.0",id,...payload},200,{"MCP-Protocol-Version":"2025-03-26"});
+  if(!msg||msg.jsonrpc!=="2.0") return result({error:{code:-32600,message:"Invalid Request"}});
+  if(msg.method==="initialize") return result({result:{protocolVersion:"2025-03-26",capabilities:{tools:{listChanged:false}},serverInfo:{name:"ATLAS Cloudflare",version:"2.1.0"}}});
+  if(msg.method==="notifications/initialized") return new Response(null,{status:202});
+  if(msg.method==="ping") return result({result:{}});
+  if(msg.method==="tools/list") return result({result:{tools:[
+    {name:"health",description:"Read ATLAS Worker health and provider status.",inputSchema:{type:"object",properties:{},additionalProperties:false}},
+    {name:"read_state",description:"Read ATLAS execution state from D1.",inputSchema:{type:"object",properties:{limit:{type:"integer",minimum:1,maximum:200}},additionalProperties:false}},
+    {name:"read_tables",description:"Read ATLAS CEO memory and operational table counts.",inputSchema:{type:"object",properties:{memory_limit:{type:"integer",minimum:1,maximum:100}},additionalProperties:false}},
+    {name:"read_workflow_metadata",description:"Read ATLAS Worker and MCP metadata.",inputSchema:{type:"object",properties:{},additionalProperties:false}},
+    {name:"write_state",description:"Upsert up to 100 validated execution-state rows.",inputSchema:{type:"object",properties:{rows:{type:"array",maxItems:100}},required:["rows"],additionalProperties:false}},
+    {name:"write_memory",description:"Append up to 100 validated CEO memory rows.",inputSchema:{type:"object",properties:{rows:{type:"array",maxItems:100}},required:["rows"],additionalProperties:false}},
+    {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
+  ]}});
+  if(msg.method!=="tools/call") return result({error:{code:-32601,message:"Method not found"}});
+  const name=msg.params?.name,args=msg.params?.arguments||{}; let out:any;
   try {
-    if (name === "health") {
-      let db = "unknown";
-      try { await env.DB.prepare("SELECT 1").first(); db = "ok"; } catch {}
-      out = { ok: db === "ok", service: "atlas-worker", db, ai_provider: env.AI_PROVIDER || "MOCK", ai_model: env.AI_MODEL || null, telegram: env.TELEGRAM_PROVIDER || "MOCK", brave: env.BRAVE || "MOCK", email: env.EMAIL_PROVIDER || "MOCK", payment: env.PAYMENT_PROVIDER || "MOCK" };
-    } else if (name === "read_state") {
-      const limit = Math.min(200, Math.max(1, Number(args.limit || 50)));
-      const q = await env.DB.prepare("SELECT idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,error_code,attempt_count,delivery_state,message_key,expires_at,created_at,updated_at FROM execution_state ORDER BY updated_at DESC LIMIT ?").bind(limit).all();
-      out = { rows: q.results || [] };
-    } else if (name === "read_tables") {
-      const limit = Math.min(100, Math.max(1, Number(args.memory_limit || 20)));
-      const memory = await env.DB.prepare("SELECT id,category,content,created_at FROM ceo_memory ORDER BY id DESC LIMIT ?").bind(limit).all();
-      const counts: Record<string, number|null> = {};
-      for (const table of ["event_log","execution_state","ceo_memory","delivery_outbox","bridge_audit"]) {
-        try { const row: any = await env.DB.prepare("SELECT COUNT(*) AS count FROM " + table).first(); counts[table] = Number(row?.count || 0); } catch { counts[table] = null; }
-      }
-      out = { counts, ceo_memory: memory.results || [] };
-    } else if (name === "read_workflow_metadata") {
-      out = { service: "ATLAS Cloudflare Worker", bridge: "/bridge/chatgpt", mcp: "/mcp", mcp_mode: "READ_WRITE_EXECUTE", mcp_transport: "Streamable HTTP", write_execute_via_mcp: true };
-    } else if (name === "write_state") {
-      if (!Array.isArray(args.rows) || args.rows.length > 100) throw new Error("INVALID_STATE_ROWS");
-      let written = 0;
-      for (const row of args.rows) {
-        if (!row || typeof row !== "object" || !row.idempotency_key) throw new Error("INVALID_STATE_ROW");
-        const payload = row.payload_json !== undefined ? String(row.payload_json) : JSON.stringify(row.payload ?? {});
-        await env.DB.prepare("INSERT INTO execution_state (idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,payload_json,error_code,attempt_count,delivery_state,message_key,chunk_index,expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(idempotency_key) DO UPDATE SET record_kind=excluded.record_kind,correlation_id=excluded.correlation_id,request_id=excluded.request_id,entity_type=excluded.entity_type,entity_id=excluded.entity_id,action_id=excluded.action_id,tool=excluded.tool,status=excluded.status,progress=excluded.progress,payload_json=excluded.payload_json,error_code=excluded.error_code,attempt_count=excluded.attempt_count,delivery_state=excluded.delivery_state,message_key=excluded.message_key,chunk_index=excluded.chunk_index,expires_at=excluded.expires_at,updated_at=datetime('now')").bind(String(row.idempotency_key),row.record_kind??null,row.correlation_id??null,row.request_id??null,row.entity_type??null,row.entity_id??null,row.action_id??null,row.tool??null,row.status??null,row.progress??null,payload,row.error_code??null,row.attempt_count??0,row.delivery_state??null,row.message_key??null,row.chunk_index??null,row.expires_at??null).run();
-        written++;
-      }
-      out = { written };
-    } else if (name === "write_memory") {
-      if (!Array.isArray(args.rows) || args.rows.length > 100) throw new Error("INVALID_MEMORY_ROWS");
-      for (const row of args.rows) {
-        if (!row || typeof row !== "object" || !String(row.content || "").trim()) throw new Error("INVALID_MEMORY_ROW");
-        await env.DB.prepare("INSERT INTO ceo_memory (category,content) VALUES (?,?)").bind(String(row.category || "fact"),String(row.content)).run();
-      }
-      out = { written: args.rows.length };
-    } else if (name === "execute_ceo") {
-      const bridgeReq = new Request(new URL("/bridge/chatgpt", request.url), {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-atlas-bridge-key": secret },
-        body: JSON.stringify({ operation: "execute_ceo", founder_message: args.founder_message, chat_id: args.chat_id, message_id: Number(args.message_id) }),
-      });
-      const bridgeResp = await handleChatGptBridge(bridgeReq, env);
-      const bridgeBody = await bridgeResp.json();
-      if (!bridgeResp.ok) throw new Error(String(bridgeBody?.status || "EXECUTE_CEO_FAILED"));
-      out = bridgeBody;
-    } else {
-      return result({ error: { code: -32602, message: "Unknown tool" } });
-    }
-  } catch (e: any) {
-    return result({ result: { isError: true, content: [{ type: "text", text: String(e?.message || e).slice(0, 2000) }] } });
-  }
-
-  return result({ result: { content: [{ type: "text", text: JSON.stringify(out) }], structuredContent: out } });
+    if(name==="health"){let db="unknown";try{await env.DB.prepare("SELECT 1").first();db="ok";}catch{}out={ok:db==="ok",service:"atlas-worker",db,ai_provider:env.AI_PROVIDER||"MOCK",ai_model:env.AI_MODEL||null,telegram:env.TELEGRAM_PROVIDER||"MOCK",brave:env.BRAVE||"MOCK",email:env.EMAIL_PROVIDER||"MOCK",payment:env.PAYMENT_PROVIDER||"MOCK"};}
+    else if(name==="read_state"){const limit=Math.min(200,Math.max(1,Number(args.limit||50)));const q=await env.DB.prepare("SELECT idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,error_code,attempt_count,delivery_state,message_key,expires_at,created_at,updated_at FROM execution_state ORDER BY updated_at DESC LIMIT ?").bind(limit).all();out={rows:q.results||[]};}
+    else if(name==="read_tables"){const limit=Math.min(100,Math.max(1,Number(args.memory_limit||20)));const memory=await env.DB.prepare("SELECT id,category,content,created_at FROM ceo_memory ORDER BY id DESC LIMIT ?").bind(limit).all();const counts:any={};for(const table of ["event_log","execution_state","ceo_memory","delivery_outbox","bridge_audit"]){try{const row:any=await env.DB.prepare("SELECT COUNT(*) AS count FROM "+table).first();counts[table]=Number(row?.count||0);}catch{counts[table]=null;}}out={counts,ceo_memory:memory.results||[]};}
+    else if(name==="read_workflow_metadata") out={service:"ATLAS Cloudflare Worker",bridge:"/bridge/chatgpt",mcp:"/mcp",mcp_mode:"READ_WRITE_EXECUTE",mcp_transport:"Streamable HTTP",auth:"OAuth 2.1 via Cloudflare Access",write_execute_via_mcp:true};
+    else if(name==="write_state"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_STATE_ROWS");let written=0;for(const row of args.rows){if(!row||typeof row!=="object"||!row.idempotency_key)throw new Error("INVALID_STATE_ROW");const payload=row.payload_json!==undefined?String(row.payload_json):JSON.stringify(row.payload??{});await env.DB.prepare("INSERT INTO execution_state (idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,payload_json,error_code,attempt_count,delivery_state,message_key,chunk_index,expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(idempotency_key) DO UPDATE SET record_kind=excluded.record_kind,correlation_id=excluded.correlation_id,request_id=excluded.request_id,entity_type=excluded.entity_type,entity_id=excluded.entity_id,action_id=excluded.action_id,tool=excluded.tool,status=excluded.status,progress=excluded.progress,payload_json=excluded.payload_json,error_code=excluded.error_code,attempt_count=excluded.attempt_count,delivery_state=excluded.delivery_state,message_key=excluded.message_key,chunk_index=excluded.chunk_index,expires_at=excluded.expires_at,updated_at=datetime('now')").bind(String(row.idempotency_key),row.record_kind??null,row.correlation_id??null,row.request_id??null,row.entity_type??null,row.entity_id??null,row.action_id??null,row.tool??null,row.status??null,row.progress??null,payload,row.error_code??null,row.attempt_count??0,row.delivery_state??null,row.message_key??null,row.chunk_index??null,row.expires_at??null).run();written++;}out={written};}
+    else if(name==="write_memory"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_MEMORY_ROWS");for(const row of args.rows){if(!row||typeof row!=="object"||!String(row.content||"").trim())throw new Error("INVALID_MEMORY_ROW");await env.DB.prepare("INSERT INTO ceo_memory (category,content) VALUES (?,?)").bind(String(row.category||"fact"),String(row.content)).run();}out={written:args.rows.length};}
+    else if(name==="execute_ceo"){const secret=env.CHATGPT_BRIDGE_SECRET;if(!secret)throw new Error("CHATGPT_BRIDGE_NOT_CONFIGURED");const bridgeReq=new Request(new URL("/bridge/chatgpt",request.url),{method:"POST",headers:{"content-type":"application/json","x-atlas-bridge-key":secret},body:JSON.stringify({operation:"execute_ceo",founder_message:args.founder_message,chat_id:args.chat_id,message_id:Number(args.message_id)})});const bridgeResp=await handleChatGptBridge(bridgeReq,env);const bridgeBody=await bridgeResp.json();if(!bridgeResp.ok)throw new Error(String(bridgeBody?.status||"EXECUTE_CEO_FAILED"));out=bridgeBody;}
+    else return result({error:{code:-32602,message:"Unknown tool"}});
+  } catch(e:any){return result({result:{isError:true,content:[{type:"text",text:String(e?.message||e).slice(0,2000)}]}});}
+  return result({result:{content:[{type:"text",text:JSON.stringify(out)}],structuredContent:out}});
 }
+
+
+const mcpOAuth = new OAuthProvider({
+  apiHandler: { fetch: handleAtlasMcp },
+  apiRoute: "/mcp",
+  authorizeEndpoint: "/authorize",
+  clientRegistrationEndpoint: "/register",
+  defaultHandler: { fetch: handleAccessRequest as any },
+  tokenEndpoint: "/token",
+});
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const pathname = new URL(request.url).pathname;
+    if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token" || pathname.startsWith("/.well-known/oauth-")) {
+      return mcpOAuth.fetch(request, env, ctx);
+    }
     const url = new URL(request.url);
 
     if (url.pathname === '/health' && request.method === 'GET') {
