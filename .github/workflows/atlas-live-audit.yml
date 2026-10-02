@@ -82,11 +82,11 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/dev/state)" = "404"
           TG_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/telegram -H 'content-type: application/json' -d '{"update_id":1,"message":{"text":"smoke"}}')"
           echo "telegram unauthenticated status=$TG_STATUS"
-          test "$TG_STATUS" = "401" || test "$TG_STATUS" = "403"
+          case "$TG_STATUS" in 401|403) ;; *) echo "unexpected telegram status=$TG_STATUS"; exit 1 ;; esac
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/order -H 'content-type: application/json' -d '{}')" = "503"
           GPT_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/bridge/chatgpt -H 'content-type: application/json' -d '{"operation":"health"}')"
           echo "chatgpt unauthenticated status=$GPT_STATUS"
-          test "$GPT_STATUS" = "401" || test "$GPT_STATUS" = "403"
+          case "$GPT_STATUS" in 401|403) ;; *) echo "unexpected chatgpt status=$GPT_STATUS"; exit 1 ;; esac
 
       - name: MCP remote probe (non-blocking)
         continue-on-error: true
