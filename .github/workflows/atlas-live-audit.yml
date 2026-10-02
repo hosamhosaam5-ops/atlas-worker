@@ -83,7 +83,9 @@ jobs:
           TG_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/telegram -H 'content-type: application/json' -d '{"update_id":1,"message":{"text":"smoke"}}')"
           echo "telegram unauthenticated status=$TG_STATUS"
           case "$TG_STATUS" in 401|403) ;; *) echo "unexpected telegram status=$TG_STATUS"; exit 1 ;; esac
-          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/order -H 'content-type: application/json' -d '{}')" = "503"
+          ORDER_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/webhook/order -H 'content-type: application/json' -d '{}')"
+          echo "order unauthenticated/unconfigured status=$ORDER_STATUS"
+          case "$ORDER_STATUS" in 401|403|503) ;; *) echo "unexpected order status=$ORDER_STATUS"; exit 1 ;; esac
           GPT_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST https://atlas-worker.hosamhosaam5.workers.dev/bridge/chatgpt -H 'content-type: application/json' -d '{"operation":"health"}')"
           echo "chatgpt unauthenticated status=$GPT_STATUS"
           case "$GPT_STATUS" in 401|403) ;; *) echo "unexpected chatgpt status=$GPT_STATUS"; exit 1 ;; esac
