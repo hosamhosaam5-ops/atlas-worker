@@ -31,6 +31,13 @@ jobs:
       - run: npm install --no-package-lock --ignore-scripts
       - name: Validate Worker bundle
         run: npx wrangler deploy --dry-run
+      - name: Smoke-start Worker runtime
+        run: |
+          set +e
+          timeout 15s npx wrangler dev --local --port 8797 --persist-to .wrangler-smoke --var AI_PROVIDER:WORKERS_AI --var TELEGRAM_PROVIDER:LIVE
+          rc=$?
+          if [ "$rc" -eq 124 ]; then exit 0; fi
+          exit "$rc"
       - run: npm test
       - name: Deploy Worker
         env:
