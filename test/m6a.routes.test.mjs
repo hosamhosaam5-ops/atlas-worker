@@ -45,7 +45,11 @@ test('route.health: GET /health returns current configured provider matrix', asy
   const j = await r.json();
   assert.equal(r.status, 200);
   assert.equal(j.ok, true);
-  assert.equal(j.ai_provider, 'WORKERS_AI');\n  assert.equal(j.brave, 'MOCK');\n  assert.equal(j.telegram, 'LIVE');\n  assert.equal(j.email, 'MOCK');\n  assert.equal(j.payment, 'MOCK');
+  assert.equal(j.ai_provider, 'WORKERS_AI');
+  assert.equal(j.brave, 'MOCK');
+  assert.equal(j.telegram, 'LIVE');
+  assert.equal(j.email, 'MOCK');
+  assert.equal(j.payment, 'MOCK');
 });
 
 test('route.telegram: missing webhook secret -> 503 fail closed', async () => {
