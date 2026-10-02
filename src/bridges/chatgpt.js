@@ -40,11 +40,16 @@ async function writeMemory(env, rows) {
 async function executeCeo(env, body, requestId) {
   const message=String(body.founder_message||'').trim(), chatId=String(body.chat_id||'').trim(), messageId=Number(body.message_id);
   if (!message || !chatId || !Number.isInteger(messageId)) throw new Error('INVALID_CEO_REQUEST');
-  const update={update_id:requestId,message:{message_id:messageId,chat:{id:chatId},text:message}};
-  const inserted=await env.DB.prepare('INSERT INTO event_log (source, external_id, payload_json, status) VALUES (?,?,?,"QUEUED") ON CONFLICT(source, external_id) DO NOTHING').bind('chatgpt',requestId,JSON.stringify(update)).run();
-  const row=await env.DB.prepare('SELECT id,status FROM event_log WHERE source=? AND external_id=?').bind('chatgpt',requestId).first();
+  // Deterministic identity: retries of the same ChatGPT request must not create a new event.
+  const externalId='chatgpt|' + chatId + '|' + String(messageId);
+  const update={update_id:externalId,message:{message_id:messageId,chat:{id:chatId},text:message}};
+  const inserted=await env.DB.prepare('INSERT INTO event_log (source, external_id, payload_json, status) VALUES (?,?,?,"QUEUED") ON CONFLICT(source, external_id) DO NOTHING').bind('chatgpt',externalId,JSON.stringify(update)).run();
+  const row=await env.DB.prepare('SELECT id,status FROM event_log WHERE source=? AND external_id=?').bind('chatgpt',externalId).first();
   if(!row?.id) throw new Error('EVENT_LOG_INSERT_FAILED');
-  if(inserted.meta?.changes===0 && row.status==='PROCESSED') return {outcome:'DUPLICATE_REJECTED',request_id:requestId};
+  if(inserted.meta?.changes===0) {
+    if(row.status==='PROCESSED' || row.status==='PROCESSED_DUPLICATE_REUSED') return {outcome:'DUPLICATE_REJECTED',request_id:requestId};
+    return {outcome:'DUPLICATE_IN_PROGRESS',request_id:requestId,status:row.status};
+  }
   const timings={};
   return await processUpdate(env,update,row.id,timings);
 }
