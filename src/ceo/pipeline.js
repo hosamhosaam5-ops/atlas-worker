@@ -144,7 +144,7 @@ export async function processUpdate(env, update, eventPk, timings) {
     return { outcome: 'DUPLICATE_REUSED', request_id: requestId, deliveries };
   }
 
-  const model = 'nex-agi/nex-n2.5-pro:free'; // same default as backup Parse Founder Message
+  const model = env.AI_MODEL || '@cf/zai-org/glm-4.7-flash';
   const provider = getProvider(env); // AI_PROVIDER=MOCK default
 
   // ---- AI1 ----
