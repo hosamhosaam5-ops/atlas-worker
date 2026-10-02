@@ -24,6 +24,8 @@ import { runRevenueWatch } from './crons/revenueWatch.js';
 import { runTelegraphMonitor } from './crons/telegraphMonitor.js';
 // @ts-ignore
 import { getTelegramProvider } from './core/outbox.js';
+import OAuthProvider from '@cloudflare/workers-oauth-provider';
+import { handleAccessRequest } from './mcp/access-handler.js';
 
 interface Env {
   DB: D1Database;
@@ -42,6 +44,12 @@ interface Env {
   RECOVERY_STALE_MINUTES?: string;
   PROCESS_SYNC?: string; // '1' for local tests: run pipeline inline and return its result
   DEV_MODE?: string;     // '1' for local tests only: enables /dev/* inspection endpoints. NEVER set in production.
+  OAUTH_KV: KVNamespace;
+  ACCESS_CLIENT_ID: string;
+  ACCESS_CLIENT_SECRET: string;
+  ACCESS_TOKEN_URL: string;
+  ACCESS_AUTHORIZATION_URL: string;
+  ACCESS_JWKS_URL: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -108,13 +116,6 @@ export default {
         db = 'error';
       }
       return json({ ok: true, service: 'atlas-worker', phase: 'M6', db, ai_provider: env.AI_PROVIDER || 'MOCK', brave: env.BRAVE || 'MOCK', telegram: env.TELEGRAM_PROVIDER || 'MOCK', email: env.EMAIL_PROVIDER || 'MOCK', payment: env.PAYMENT_PROVIDER || 'MOCK' });
-    }
-
-    // ---- MCP: stateless Streamable HTTP, read-only until authenticated authorization is added ----
-    // Construct per request so the server factory closes over the current Worker env/D1 binding.
-    // This endpoint intentionally exposes no write/execute tools.
-    if (url.pathname === '/mcp') {
-      return handleAtlasMcp(request, env);
     }
 
     // ---- M3 bridges (same contracts as backup workflows; MOCK adapters by default) ----
