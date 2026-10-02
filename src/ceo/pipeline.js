@@ -1,4 +1,5 @@
 // CEO PIPELINE — async orchestration for one Telegram update.
+// Production redeploy trigger: Workers AI model resolution verified on main.
 // Runs OUTSIDE the webhook request (webhook only logs + enqueues).
 // Mirrors the n8n flow: Format Memory → dup precheck → Build Prompt → AI1 → Parse
 // → Risk Engine → (tools) → AI2 → persist state/memory → deliver via outbox.
