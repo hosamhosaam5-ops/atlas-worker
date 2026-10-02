@@ -103,7 +103,32 @@ const mcpOAuth = new OAuthProvider({
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const pathname = new URL(request.url).pathname;
-    if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token" || pathname.startsWith("/.well-known/oauth-")) return mcpOAuth.fetch(request, env, ctx);
+    const origin = new URL(request.url).origin;
+    if (request.method === "GET" && pathname === "/.well-known/oauth-authorization-server") {
+      return new Response(JSON.stringify({
+        issuer: origin,
+        authorization_endpoint: origin + "/authorize",
+        token_endpoint: origin + "/token",
+        registration_endpoint: origin + "/register",
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code","refresh_token"],
+        token_endpoint_auth_methods_supported: ["none"],
+        code_challenge_methods_supported: ["S256"],
+        scopes_supported: ["mcp:read","mcp:write","mcp:execute"],
+        protected_resources: [origin + "/mcp"],
+        client_id_metadata_document_supported: true
+      }), { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store", "access-control-allow-origin": "*" } });
+    }
+    if (request.method === "GET" && (pathname === "/.well-known/oauth-protected-resource" || pathname === "/.well-known/oauth-protected-resource/mcp")) {
+      return new Response(JSON.stringify({
+        resource: "https://atlas-worker.hosamhosaam5.workers.dev/mcp",
+        authorization_servers: [origin],
+        scopes_supported: ["mcp:read","mcp:write","mcp:execute"],
+        bearer_methods_supported: ["header"],
+        resource_name: "ATLAS MCP"
+      }), { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store", "access-control-allow-origin": "*" } });
+    }
+    if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token") return mcpOAuth.fetch(request, env, ctx);
     const url = new URL(request.url);
 
     if (url.pathname === '/health' && request.method === 'GET') {
