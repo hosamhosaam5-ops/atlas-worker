@@ -52,31 +52,24 @@ test('route.health: GET /health returns current configured provider matrix', asy
   assert.equal(j.payment, 'MOCK');
 });
 
-test('route.mcp: Streamable HTTP initialize and tools/list work locally', async () => {
+test('route.mcp: OAuth discovery is available and unauthenticated MCP is rejected', async () => {
+  const authz = await fetch(BASE + '/.well-known/oauth-authorization-server');
+  assert.equal(authz.status, 200);
+  const aj = await authz.json();
+  assert.ok(aj.authorization_endpoint);
+  assert.ok(aj.token_endpoint);
+  const resource = await fetch(BASE + '/.well-known/oauth-protected-resource');
+  assert.equal(resource.status, 200);
+  const rj = await resource.json();
+  assert.equal(rj.resource, 'https://atlas-worker.hosamhosaam5.workers.dev/mcp');
   const headers = { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-03-26' };
-  const init = await fetch(BASE + '/mcp', { method: 'POST', headers, body: JSON.stringify({
+  const mcp = await fetch(BASE + '/mcp', { method: 'POST', headers, body: JSON.stringify({
     jsonrpc: '2.0', id: 1, method: 'initialize',
-    params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+    params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'unauthenticated-test', version: '1' } }
   }) });
-  assert.equal(init.status, 200);
-  const ij = await init.json();
-  assert.equal(ij.result.serverInfo.name, 'ATLAS Cloudflare');
-  const tools = await fetch(BASE + '/mcp', { method: 'POST', headers, body: JSON.stringify({
-    jsonrpc: '2.0', id: 2, method: 'tools/list', params: {}
-  }) });
-  assert.equal(tools.status, 200);
-  const tj = await tools.json();
-  const names = tj.result.tools.map(x => x.name);
-  assert.ok(names.includes('health'));
-  assert.ok(names.includes('read_state'));
+  assert.equal(mcp.status, 401);
 });
- 
-test('route.telegram: missing webhook secret -> 503 fail closed', async () => {
-  const r = await post('/webhook/telegram', { update_id: 910001 });
-  assert.equal(r.status, 503);
-  const j = await r.json();
-  assert.equal(j.error, 'TELEGRAM_WEBHOOK_NOT_CONFIGURED');
-});
+
 
 test('route.telegram: configured-secret path is exercised by dedicated handler tests', async () => {
   // The local route instance intentionally has no secret, so public traffic stays fail-closed.
