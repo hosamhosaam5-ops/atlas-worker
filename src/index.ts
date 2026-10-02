@@ -89,13 +89,15 @@ async function handleAtlasMcp(request: Request, env: Env, _ctx?: ExecutionContex
 }
 
 const mcpOAuth = new OAuthProvider({
-  resourceMetadata: { resource: "https://atlas-worker.hosamhosaam5.workers.dev/mcp" },
+  resourceMetadata: { resource: "https://atlas-worker.hosamhosaam5.workers.dev/mcp", authorization_servers: ["https://atlas-worker.hosamhosaam5.workers.dev"], scopes_supported: ["mcp:read","mcp:write","mcp:execute"], bearer_methods_supported: ["header"], resource_name: "ATLAS MCP" },
   apiHandler: { fetch: handleAtlasMcp },
   apiRoute: "/mcp",
   authorizeEndpoint: "/authorize",
   clientRegistrationEndpoint: "/register",
   defaultHandler: { fetch: handleAccessRequest as any },
   tokenEndpoint: "/token",
+  scopesSupported: ["mcp:read","mcp:write","mcp:execute"],
+  clientIdMetadataDocumentEnabled: true,
 });
 
 export default {
