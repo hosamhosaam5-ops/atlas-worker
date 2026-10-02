@@ -44,3 +44,7 @@ BOUNTYBOOK_PROVIDER = "MOCK"
 # Secrets (founder enters via `wrangler secret put`, never in this file):
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, OPENROUTER_API_KEY,
 #   BRAVE_API_KEY, RESEND_API_KEY, CHATGPT_BRIDGE_SECRET
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "096e1625b3114787aa89cb8a45b65a8a"
