@@ -40,12 +40,12 @@ after(async () => {
 
 const post = (p, body, headers = {}) => fetch(BASE + p, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
-test('route.health: GET /health returns provider matrix all MOCK', async () => {
+test('route.health: GET /health returns current configured provider matrix', async () => {
   const r = await fetch(BASE + '/health');
   const j = await r.json();
   assert.equal(r.status, 200);
   assert.equal(j.ok, true);
-  for (const k of ['ai_provider', 'brave', 'telegram', 'email', 'payment']) assert.equal(j[k], 'MOCK');
+  assert.equal(j.ai_provider, 'WORKERS_AI');\n  assert.equal(j.brave, 'MOCK');\n  assert.equal(j.telegram, 'LIVE');\n  assert.equal(j.email, 'MOCK');\n  assert.equal(j.payment, 'MOCK');
 });
 
 test('route.telegram: missing webhook secret -> 503 fail closed', async () => {
