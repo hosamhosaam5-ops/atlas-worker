@@ -1,75 +1,124 @@
-import { McpServer } from "@modelcontextprotocol/server";
-import { z } from "zod";
+export async function handleAtlasMcp(request, env) {
+  const json = (data, status = 200, headers = {}) =>
+    new Response(JSON.stringify(data), {
+      status,
+      headers: { "content-type": "application/json", ...headers },
+    });
 
-export function createAtlasMcpServer(env) {
-  const server = new McpServer({
-    name: "ATLAS Cloudflare",
-    version: "1.0.0",
-  });
+  if (request.method !== "POST") {
+    return json(
+      { jsonrpc: "2.0", error: { code: -32000, message: "Method Not Allowed" } },
+      405,
+      { Allow: "POST" },
+    );
+  }
 
-  server.registerTool(
-    "health",
-    {
-      description: "Read-only ATLAS Worker health and provider configuration status. Never returns secrets.",
-      inputSchema: {},
-    },
-    async () => {
+  let msg;
+  try {
+    msg = await request.json();
+  } catch {
+    return json({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" } }, 400);
+  }
+
+  const id = msg && Object.prototype.hasOwnProperty.call(msg, "id") ? msg.id : null;
+  const result = (payload) =>
+    json(
+      { jsonrpc: "2.0", id, ...payload },
+      200,
+      { "MCP-Protocol-Version": "2025-03-26" },
+    );
+
+  if (!msg || msg.jsonrpc !== "2.0") {
+    return result({ error: { code: -32600, message: "Invalid Request" } });
+  }
+
+  if (msg.method === "initialize") {
+    return result({
+      result: {
+        protocolVersion: "2025-03-26",
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: "ATLAS Cloudflare", version: "1.0.0" },
+      },
+    });
+  }
+
+  if (msg.method === "notifications/initialized") return new Response(null, { status: 202 });
+  if (msg.method === "ping") return result({ result: {} });
+
+  if (msg.method === "tools/list") {
+    return result({
+      result: {
+        tools: [
+          {
+            name: "health",
+            description: "Read-only ATLAS Worker health and provider status; never returns secrets.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          },
+          {
+            name: "read_state",
+            description: "Read ATLAS execution state from D1. Read-only.",
+            inputSchema: {
+              type: "object",
+              properties: { limit: { type: "integer", minimum: 1, maximum: 200 } },
+              additionalProperties: false,
+            },
+          },
+          {
+            name: "read_tables",
+            description: "Read ATLAS CEO memory and operational table counts. Read-only.",
+            inputSchema: {
+              type: "object",
+              properties: { memory_limit: { type: "integer", minimum: 1, maximum: 100 } },
+              additionalProperties: false,
+            },
+          },
+          {
+            name: "read_workflow_metadata",
+            description: "Read ATLAS Worker and MCP metadata. Read-only.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
+      },
+    });
+  }
+
+  if (msg.method !== "tools/call") {
+    return result({ error: { code: -32601, message: "Method not found" } });
+  }
+
+  const name = msg.params?.name;
+  const args = msg.params?.arguments || {};
+  let out;
+
+  try {
+    if (name === "health") {
       let db = "unknown";
       try {
         await env.DB.prepare("SELECT 1").first();
         db = "ok";
-      } catch {
-        db = "error";
-      }
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            ok: db === "ok",
-            service: "atlas-worker",
-            db,
-            ai_provider: env.AI_PROVIDER || "MOCK",
-            ai_model: env.AI_MODEL || null,
-            telegram: env.TELEGRAM_PROVIDER || "MOCK",
-            brave: env.BRAVE || "MOCK",
-            email: env.EMAIL_PROVIDER || "MOCK",
-            payment: env.PAYMENT_PROVIDER || "MOCK",
-          }),
-        }],
+      } catch {}
+      out = {
+        ok: db === "ok",
+        service: "atlas-worker",
+        db,
+        ai_provider: env.AI_PROVIDER || "MOCK",
+        ai_model: env.AI_MODEL || null,
+        telegram: env.TELEGRAM_PROVIDER || "MOCK",
+        brave: env.BRAVE || "MOCK",
+        email: env.EMAIL_PROVIDER || "MOCK",
+        payment: env.PAYMENT_PROVIDER || "MOCK",
       };
-    },
-  );
-
-  server.registerTool(
-    "read_state",
-    {
-      description: "Read ATLAS execution state from D1. Read-only; secrets are not returned.",
-      inputSchema: {
-        limit: z.number().int().min(1).max(200).optional(),
-      },
-    },
-    async ({ limit = 50 }) => {
-      const { results } = await env.DB.prepare(
-        "SELECT idempotency_key, record_kind, correlation_id, request_id, entity_type, entity_id, action_id, tool, status, progress, error_code, attempt_count, delivery_state, message_key, expires_at, created_at, updated_at FROM execution_state ORDER BY updated_at DESC LIMIT ?"
+    } else if (name === "read_state") {
+      const limit = Math.min(200, Math.max(1, Number(args.limit || 50)));
+      const q = await env.DB.prepare(
+        "SELECT idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,error_code,attempt_count,delivery_state,message_key,expires_at,created_at,updated_at FROM execution_state ORDER BY updated_at DESC LIMIT ?",
       ).bind(limit).all();
-      return {
-        content: [{ type: "text", text: JSON.stringify({ rows: results || [] }) }],
-      };
-    },
-  );
-
-  server.registerTool(
-    "read_tables",
-    {
-      description: "Read ATLAS CEO memory and key operational table counts. Read-only; secrets are not returned.",
-      inputSchema: {
-        memory_limit: z.number().int().min(1).max(100).optional(),
-      },
-    },
-    async ({ memory_limit = 20 }) => {
+      out = { rows: q.results || [] };
+    } else if (name === "read_tables") {
+      const limit = Math.min(100, Math.max(1, Number(args.memory_limit || 20)));
       const memory = await env.DB.prepare(
-        "SELECT id, category, content, created_at FROM ceo_memory ORDER BY id DESC LIMIT ?"
-      ).bind(memory_limit).all();
+        "SELECT id,category,content,created_at FROM ceo_memory ORDER BY id DESC LIMIT ?",
+      ).bind(limit).all();
       const counts = {};
       for (const table of ["event_log", "execution_state", "ceo_memory", "delivery_outbox", "bridge_audit"]) {
         try {
@@ -79,36 +128,32 @@ export function createAtlasMcpServer(env) {
           counts[table] = null;
         }
       }
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({ counts, ceo_memory: memory.results || [] }),
-        }],
+      out = { counts, ceo_memory: memory.results || [] };
+    } else if (name === "read_workflow_metadata") {
+      out = {
+        service: "ATLAS Cloudflare Worker",
+        bridge: "/bridge/chatgpt",
+        mcp: "/mcp",
+        mcp_mode: "READ_ONLY",
+        mcp_transport: "Streamable HTTP",
+        write_execute_via_mcp: false,
       };
-    },
-  );
+    } else {
+      return result({ error: { code: -32602, message: "Unknown tool" } });
+    }
+  } catch (e) {
+    return result({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: String(e?.message || e) }],
+      },
+    });
+  }
 
-  server.registerTool(
-    "read_workflow_metadata",
-    {
-      description: "Read ATLAS Cloudflare Worker metadata and exposed MCP capabilities. Read-only.",
-      inputSchema: {},
+  return result({
+    result: {
+      content: [{ type: "text", text: JSON.stringify(out) }],
+      structuredContent: out,
     },
-    async () => ({
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          service: "ATLAS Cloudflare Worker",
-          bridge: "/bridge/chatgpt",
-          mcp: "/mcp",
-          mcp_mode: "READ_ONLY",
-          mcp_transport: "Streamable HTTP",
-          write_execute_via_mcp: false,
-          note: "Write/execute MCP tools are intentionally withheld until authenticated authorization is implemented.",
-        }),
-      }],
-    }),
-  );
-
-  return server;
+  });
 }
