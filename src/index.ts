@@ -23,6 +23,10 @@ import { runRevenueWatch } from './crons/revenueWatch.js';
 import { runTelegraphMonitor } from './crons/telegraphMonitor.js';
 // @ts-ignore
 import { getTelegramProvider } from './core/outbox.js';
+// @ts-ignore
+import { createMcpHandler } from 'agents/mcp/server';
+// @ts-ignore
+import { createAtlasMcpServer } from './mcp/server.js';
 
 interface Env {
   DB: D1Database;
@@ -32,6 +36,10 @@ interface Env {
   AI_PROVIDER?: string;
   AI_MODEL?: string;
   AI_MOCK_SCENARIO?: string;
+  BRAVE?: string;
+  TELEGRAM_PROVIDER?: string;
+  EMAIL_PROVIDER?: string;
+  PAYMENT_PROVIDER?: string;
   OPENROUTER_API_KEY?: string;
   ORDER_WEBHOOK_SECRET?: string;
   RECOVERY_STALE_MINUTES?: string;
@@ -55,6 +63,17 @@ export default {
         db = 'error';
       }
       return json({ ok: true, service: 'atlas-worker', phase: 'M5', db, ai_provider: env.AI_PROVIDER || 'MOCK', brave: env.BRAVE || 'MOCK', telegram: env.TELEGRAM_PROVIDER || 'MOCK', email: env.EMAIL_PROVIDER || 'MOCK', payment: env.PAYMENT_PROVIDER || 'MOCK' });
+    }
+
+    // ---- MCP: stateless Streamable HTTP, read-only until authenticated authorization is added ----
+    // Construct per request so the server factory closes over the current Worker env/D1 binding.
+    // This endpoint intentionally exposes no write/execute tools.
+    if (url.pathname === '/mcp') {
+      const mcpHandler = createMcpHandler(() => createAtlasMcpServer(env), {
+        route: '/mcp',
+        allowedHostnames: ['atlas-worker.hosamhosaam5.workers.dev'],
+      });
+      return mcpHandler(request, env, ctx);
     }
 
     // ---- M3 bridges (same contracts as backup workflows; MOCK adapters by default) ----
