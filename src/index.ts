@@ -101,10 +101,6 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const pathname = new URL(request.url).pathname;
     if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token" || pathname.startsWith("/.well-known/oauth-")) return mcpOAuth.fetch(request, env, ctx);
-    const pathname = new URL(request.url).pathname;
-    if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token" || pathname.startsWith("/.well-known/oauth-")) {
-      return mcpOAuth.fetch(request, env, ctx);
-    }
     const url = new URL(request.url);
 
     if (url.pathname === '/health' && request.method === 'GET') {
