@@ -1,6 +1,7 @@
 name = "atlas-worker"
 main = "src/index.ts"
 compatibility_date = "2026-09-27"
+compatibility_flags = ["global_fetch_strictly_public"]
 
 # M6A deployment configuration. A database ID is configured, but account ownership,
 # migrations, secrets, and deployment status must be verified separately.
