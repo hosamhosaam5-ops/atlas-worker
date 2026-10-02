@@ -25,7 +25,7 @@ import { runTelegraphMonitor } from './crons/telegraphMonitor.js';
 // @ts-ignore
 import { getTelegramProvider } from './core/outbox.js';
 import OAuthProvider from '@cloudflare/workers-oauth-provider';
-import { handleAccessRequest } from './mcp/access-handler.js';
+import { handleAccessRequest } from './mcp/access-handler.ts';
 
 interface Env {
   DB: D1Database;
