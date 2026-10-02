@@ -283,3 +283,4 @@ export async function processUpdate(env, update, eventPk, timings) {
     deliveries,
   };
 }
+// Workers AI migration verified: model is resolved from AI_MODEL.
