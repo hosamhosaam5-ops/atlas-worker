@@ -26,9 +26,11 @@ import { getTelegramProvider } from './core/outbox.js';
 
 interface Env {
   DB: D1Database;
+  AI: Ai;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
   AI_PROVIDER?: string;
+  AI_MODEL?: string;
   AI_MOCK_SCENARIO?: string;
   OPENROUTER_API_KEY?: string;
   ORDER_WEBHOOK_SECRET?: string;
