@@ -7,7 +7,10 @@
     "typescript": "^5.5.0",
     "wrangler": "^4.0.0",
     "xlsx": "^0.18.5",
-    "ethers": "^6.15.0"
+    "ethers": "^6.15.0",
+    "agents": "^0.3.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.1.0"
   },
   "engines": {
     "node": ">=22"
