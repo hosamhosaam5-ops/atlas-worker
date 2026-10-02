@@ -24,9 +24,7 @@ import { runTelegraphMonitor } from './crons/telegraphMonitor.js';
 // @ts-ignore
 import { getTelegramProvider } from './core/outbox.js';
 // @ts-ignore
-import { createMcpHandler } from 'agents/mcp/server';
-// @ts-ignore
-import { createAtlasMcpServer } from './mcp/server.js';
+import { handleAtlasMcp } from './mcp/server.js';
 
 interface Env {
   DB: D1Database;
@@ -69,11 +67,7 @@ export default {
     // Construct per request so the server factory closes over the current Worker env/D1 binding.
     // This endpoint intentionally exposes no write/execute tools.
     if (url.pathname === '/mcp') {
-      const mcpHandler = createMcpHandler(() => createAtlasMcpServer(env), {
-        route: '/mcp',
-        allowedHostnames: ['atlas-worker.hosamhosaam5.workers.dev'],
-      });
-      return mcpHandler(request, env, ctx);
+      return handleAtlasMcp(request, env);
     }
 
     // ---- M3 bridges (same contracts as backup workflows; MOCK adapters by default) ----
