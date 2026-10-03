@@ -6,7 +6,7 @@ import { ensureCommercialSchema, upsertProduct, createQuote } from './control.js
 import { processOrder, deliverOrder } from '../orders/intake.js';
 import { ensureOrderSchema } from '../orders/schema.js';
 
-const csvBytes = new TextEncoder().encode('name,value\\n alpha , 10 \\n alpha ,10\\n beta,20\\n,,\\n');
+const csvBytes = new TextEncoder().encode('name,value\n alpha , 10 \n alpha ,10\n beta,20\n,,\n');
 
 function envForTest(env, paymentScenario='valid', emailScenario='success') {
   return { ...env, PAYMENT_PROVIDER:'MOCK', PAYMENT_MOCK_SCENARIO:paymentScenario, PAYMENT_MOCK_AMOUNT_USDC:'75', EMAIL_PROVIDER:'MOCK', EMAIL_MOCK_SCENARIO:emailScenario };
