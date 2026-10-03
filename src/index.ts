@@ -28,7 +28,7 @@ import { runRevenueWatch } from './crons/revenueWatch.js';
 import { runTelegraphMonitor } from './crons/telegraphMonitor.js';
 // @ts-ignore
 import { getTelegramProvider } from './core/outbox.js';
-import OAuthProvider from '@cloudflare/workers-oauth-provider';
+import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { handleAccessRequest } from './mcp/access-handler.ts';
 
 interface Env {
@@ -61,12 +61,22 @@ interface Env {
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 
-async function handleAtlasMcp(request: Request, env: Env, _ctx?: ExecutionContext) {
+async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext & { readonly auth?: { scope?: string[]; audience?: string } }) {
   const json=(data:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json",...headers}});
   if(request.method!=="POST")return json({jsonrpc:"2.0",error:{code:-32000,message:"Method Not Allowed"}},405,{Allow:"POST"});
   let msg:any;try{msg=await request.json();}catch{return json({jsonrpc:"2.0",error:{code:-32700,message:"Parse error"}},400);}
   const id=msg&&Object.prototype.hasOwnProperty.call(msg,"id")?msg.id:null;const result=(payload:any)=>json({jsonrpc:"2.0",id,...payload},200,{"MCP-Protocol-Version":"2025-03-26"});
   if(!msg||msg.jsonrpc!=="2.0")return result({error:{code:-32600,message:"Invalid Request"}});
+  const authScopes=Array.isArray(ctx?.auth?.scope)?ctx.auth.scope:[];
+  const requireScope=(scope:string)=>{
+    if(authScopes.includes(scope)) return null;
+    if(ctx?.auth?.audience) return insufficientScope(ctx.auth as any,[scope]);
+    return json({jsonrpc:"2.0",id,error:{code:-32001,message:"insufficient_scope",required_scope:scope}},403,{"WWW-Authenticate":`Bearer error="insufficient_scope", scope="${scope}"`});
+  };
+  if(msg.method==="tools/list"){
+    const denied=requireScope("mcp:read"); if(denied) return denied;
+  }
+
   if(msg.method==="initialize")return result({result:{protocolVersion:"2025-03-26",capabilities:{tools:{listChanged:false}},serverInfo:{name:"ATLAS Cloudflare",version:"2.1.0"}}});
   if(msg.method==="notifications/initialized")return new Response(null,{status:202});
   if(msg.method==="ping")return result({result:{}});
@@ -88,6 +98,17 @@ async function handleAtlasMcp(request: Request, env: Env, _ctx?: ExecutionContex
   ]}});
   if(msg.method!=="tools/call")return result({error:{code:-32601,message:"Method not found"}});
   const name=msg.params?.name,args=msg.params?.arguments||{};let out:any;
+  const requiredScopeByTool:any={
+    health:"mcp:read",read_state:"mcp:read",read_tables:"mcp:read",read_workflow_metadata:"mcp:read",
+    list_products:"mcp:read",list_financial_approvals:"mcp:read",
+    write_state:"mcp:write",write_memory:"mcp:write",upsert_product:"mcp:write",create_quote:"mcp:write",
+    request_financial_approval:"mcp:write",decide_financial_approval:"mcp:write",
+    run_commercial_integration:"mcp:execute",execute_ceo:"mcp:execute"
+  };
+  const requiredScope=requiredScopeByTool[name];
+  if(!requiredScope)return result({error:{code:-32602,message:"Unknown tool"}});
+  const denied=requiredScope==="mcp:read"?requireScope("mcp:read"):requireScope(requiredScope);
+  if(denied)return denied;
   try{
    if(name==="health"){let db="unknown";try{await env.DB.prepare("SELECT 1").first();db="ok";}catch{}out={ok:db==="ok",service:"atlas-worker",db,ai_provider:env.AI_PROVIDER||"MOCK",ai_model:env.AI_MODEL||null,telegram:env.TELEGRAM_PROVIDER||"MOCK"};}
    else if(name==="read_state"){const limit=Math.min(200,Math.max(1,Number(args.limit||50)));const q=await env.DB.prepare("SELECT idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,error_code,attempt_count,delivery_state,message_key,expires_at,created_at,updated_at FROM execution_state ORDER BY updated_at DESC LIMIT ?").bind(limit).all();out={rows:q.results||[]};}
