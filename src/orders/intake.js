@@ -318,16 +318,21 @@ export async function processOrder(db, env, input) {
 
     // --- Race-safe payment claim (production only): reserve tx_hash only AFTER a valid
     // founder quote exists. A no-quote request must not consume a customer's payment hash.
-    // The DB UNIQUE(tx_hash) constraint remains the concurrency authority.
-    try {
-      await db.prepare("INSERT INTO order_ledger (order_id, client_email, tx_hash, status, payment_status) VALUES (?, ?, ?, 'PENDING', 'NOT_CHECKED')")
-        .bind(meta.order_id, meta.client_email, meta.tx_hash).run();
-    } catch (e) {
-      if (String(e?.message || e).toLowerCase().includes('unique')) {
-        const a = await audit(db, 'order', meta.order_id, meta, 'DUPLICATE_TX', 'tx_hash claimed concurrently (DB UNIQUE)');
-        return { order_id: meta.order_id, order_status: 'DUPLICATE_TX', message: 'This payment transaction was already used or is being processed. Order rejected.', audit: a, latency_ms: Date.now() - t0 };
-      }
-      throw e;
+    // D1 is single-threaded and the UNIQUE(tx_hash) index is the concurrency authority.
+    // Use INSERT OR IGNORE so a concurrent duplicate becomes a normal business result
+    // rather than an uncaught UNIQUE exception; the follow-up read identifies the winner.
+    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, status, payment_status) VALUES (?, ?, ?, 'PENDING', 'NOT_CHECKED')")
+      .bind(meta.order_id, meta.client_email, meta.tx_hash).run();
+
+    const claimed = await db.prepare(
+      "SELECT order_id, status FROM order_ledger WHERE tx_hash = ? LIMIT 1"
+    ).bind(meta.tx_hash).first();
+    if (!claimed) {
+      throw new Error('PAYMENT_CLAIM_FAILED: tx_hash was not persisted');
+    }
+    if (String(claimed.order_id) !== String(meta.order_id)) {
+      const a = await audit(db, 'order', meta.order_id, meta, 'DUPLICATE_TX', 'tx_hash already claimed by ' + String(claimed.order_id));
+      return { order_id: meta.order_id, order_status: 'DUPLICATE_TX', message: 'This payment transaction was already used or is being processed. Order rejected.', audit: a, latency_ms: Date.now() - t0 };
     }
 
     // --- Check Tx Already Used (DB-level + code-level duplicate protection) ---
