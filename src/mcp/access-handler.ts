@@ -28,13 +28,16 @@ export async function handleAccessRequest(request:Request,env:OAuthEnv,_ctx:Exec
   const raw=await env.OAUTH_KV.get("oauth:state:"+state);if(!raw)return new Response("Invalid or expired OAuth state",{status:400});
   const saved=JSON.parse(raw) as {oauthReqInfo:AuthRequest;codeVerifier:string};
   const redirectUri=new URL("/callback",request.url).href;
-  const form=new URLSearchParams({client_id:env.ACCESS_CLIENT_ID,client_secret:env.ACCESS_CLIENT_SECRET,code,grant_type:"authorization_code",redirect_uri:redirectUri,code_verifier:saved.codeVerifier});
-  // Cloudflare Access SaaS OIDC accepts client_secret_post and client_secret_basic.
-  // Try the documented post form first, then basic auth as a compatibility fallback.
-  let tr=await fetch(env.ACCESS_TOKEN_URL,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:form.toString()});
+  const base={code,grant_type:"authorization_code",redirect_uri:redirectUri,code_verifier:saved.codeVerifier};
+  // Cloudflare Access permits PKCE without a client secret when the SaaS app enables it.
+  // Try the public-client PKCE exchange first; retain secret-based fallbacks for compatibility.
+  let tr=await fetch(env.ACCESS_TOKEN_URL,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({...base,client_id:env.ACCESS_CLIENT_ID}).toString()});
+  if(!tr.ok){
+    tr=await fetch(env.ACCESS_TOKEN_URL,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({...base,client_id:env.ACCESS_CLIENT_ID,client_secret:env.ACCESS_CLIENT_SECRET}).toString()});
+  }
   if(!tr.ok){
     const basic=btoa(env.ACCESS_CLIENT_ID+":"+env.ACCESS_CLIENT_SECRET);
-    tr=await fetch(env.ACCESS_TOKEN_URL,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded","authorization":"Basic "+basic},body:new URLSearchParams({code,grant_type:"authorization_code",redirect_uri:redirectUri,code_verifier:saved.codeVerifier}).toString()});
+    tr=await fetch(env.ACCESS_TOKEN_URL,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded","authorization":"Basic "+basic},body:new URLSearchParams(base).toString()});
   }
   if(!tr.ok){
     let detail="upstream_token_exchange_failed";
@@ -43,7 +46,8 @@ export async function handleAccessRequest(request:Request,env:OAuthEnv,_ctx:Exec
   }
   const tokens=await tr.json() as any;if(!tokens.id_token)return new Response("Missing Access ID token",{status:502});
   const claims=await verifyIdToken(env,tokens.id_token);
-  await env.OAUTH_KV.delete("oauth:state:"+state);\n  const {redirectTo}=await env.OAUTH_PROVIDER.completeAuthorization({metadata:{label:String(claims.name||claims.email||claims.sub||"ATLAS user")},props:{email:String(claims.email||""),name:String(claims.name||claims.email||"ATLAS user"),login:String(claims.sub||"")},request:saved.oauthReqInfo,scope:saved.oauthReqInfo.scope,userId:String(claims.sub||claims.email||"atlas-user")});
+  await env.OAUTH_KV.delete("oauth:state:"+state);
+  const {redirectTo}=await env.OAUTH_PROVIDER.completeAuthorization({metadata:{label:String(claims.name||claims.email||claims.sub||"ATLAS user")},props:{email:String(claims.email||""),name:String(claims.name||claims.email||"ATLAS user"),login:String(claims.sub||"")},request:saved.oauthReqInfo,scope:saved.oauthReqInfo.scope,userId:String(claims.sub||claims.email||"atlas-user")});
   return Response.redirect(redirectTo,302);
  }
  return new Response("Not Found",{status:404});
