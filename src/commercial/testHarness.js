@@ -26,7 +26,7 @@ export async function runCommercialIntegration(db, env) {
   const quote=await createQuote(db,{client_email:email,agreed_amount:75,note:'synthetic integration test',product_id:productId});
 
   const order=await processOrder(db,envForTest(env,'valid','success'),{
-    client_email:email,tx_hash:tx('1'),__order_id:'INT-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
+    client_email:email,tx_hash:tx('1'+suffix),__order_id:'INT-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
   });
   const duplicate=await processOrder(db,envForTest(env,'valid','success'),{
     client_email:email,tx_hash:tx('1'),__order_id:'INT-DUP-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
@@ -35,7 +35,7 @@ export async function runCommercialIntegration(db, env) {
   const failEmail='atlas.recovery.'+suffix+'@example.invalid';
   const recoveryQuote=await createQuote(db,{client_email:failEmail,agreed_amount:75,note:'synthetic recovery test',product_id:productId});
   const failedDelivery=await processOrder(db,envForTest(env,'valid','fail'),{
-    client_email:failEmail,tx_hash:tx('2'),__order_id:'REC-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
+    client_email:failEmail,tx_hash:tx('2'+suffix),__order_id:'REC-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
   });
   const recoveredDelivery=await deliverOrder(db,envForTest(env,'valid','success'),'REC-'+suffix,failEmail,
     'ATLAS recovery verification','Synthetic recovery resend.',['clean_csv','qa_report']);
@@ -47,7 +47,7 @@ export async function runCommercialIntegration(db, env) {
   const stressEmail='atlas.stress.'+suffix+'@example.invalid';
   await createQuote(db,{client_email:stressEmail,agreed_amount:75,note:'synthetic concurrency test',product_id:productId});
   const calls=Array.from({length:8},(_,i)=>processOrder(db,envForTest(env,'valid','success'),{
-    client_email:stressEmail,tx_hash:tx('3'),__order_id:'STRESS-'+suffix+'-'+i,__file_name:'input.csv',__file_bytes:csvBytes
+    client_email:stressEmail,tx_hash:tx('3'+suffix),__order_id:'STRESS-'+suffix+'-'+i,__file_name:'input.csv',__file_bytes:csvBytes
   }));
   const stress=await Promise.all(calls);
 
