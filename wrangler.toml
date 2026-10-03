@@ -49,3 +49,7 @@ BOUNTYBOOK_PROVIDER = "MOCK"
 [[kv_namespaces]]
 binding = "OAUTH_KV"
 id = "096e1625b3114787aa89cb8a45b65a8a"
+
+# Production error monitoring; enabled for new traffic after deploy.
+[observability.issues]
+enabled = true
