@@ -14,7 +14,7 @@ const csvBytes = new TextEncoder().encode('name,value
 ');
 
 function envForTest(env, paymentScenario='valid', emailScenario='success') {
-  return { ...env, PAYMENT_PROVIDER:'MOCK', PAYMENT_MOCK_SCENARIO:paymentScenario, EMAIL_PROVIDER:'MOCK', EMAIL_MOCK_SCENARIO:emailScenario };
+  return { ...env, PAYMENT_PROVIDER:'MOCK', PAYMENT_MOCK_SCENARIO:paymentScenario, PAYMENT_MOCK_AMOUNT_USDC:'75', EMAIL_PROVIDER:'MOCK', EMAIL_MOCK_SCENARIO:emailScenario };
 }
 
 function tx(seed) {
