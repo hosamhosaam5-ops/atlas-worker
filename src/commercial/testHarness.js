@@ -6,7 +6,12 @@ import { ensureCommercialSchema, upsertProduct, createQuote } from './control.js
 import { processOrder, deliverOrder } from '../orders/intake.js';
 import { ensureOrderSchema } from '../orders/schema.js';
 
-const csvBytes = new TextEncoder().encode('name,value\n alpha , 10 \n alpha ,10\n beta,20\n,,\n');
+const csvBytes = new TextEncoder().encode('name,value
+ alpha , 10 
+ alpha ,10
+ beta,20
+,,
+');
 
 function envForTest(env, paymentScenario='valid', emailScenario='success') {
   return { ...env, PAYMENT_PROVIDER:'MOCK', PAYMENT_MOCK_SCENARIO:paymentScenario, EMAIL_PROVIDER:'MOCK', EMAIL_MOCK_SCENARIO:emailScenario };
@@ -25,15 +30,21 @@ export async function runCommercialIntegration(db, env) {
   await upsertProduct(db,{product_id:productId,name:'ATLAS Integration Test Product',description:'Synthetic internal integration product',unit:'order',price_usdc:75,pricing_mode:'FOUNDER_QUOTE',status:'ACTIVE'});
   const quote=await createQuote(db,{client_email:email,agreed_amount:75,note:'synthetic integration test',product_id:productId});
 
-  const safeProcess = async (label, input, e) => { try { return await processOrder(db,e,input); } catch (err) { return { order_id: input.__order_id, order_status: 'HARNESS_ERROR', error: String(err?.message || err), label }; } };\n\n  const order=await safeProcess('order',{
+  const safeProcess = async (label, input, e) => { try { return await processOrder(db,e,input); } catch (err) { return { order_id: input.__order_id, order_status: 'HARNESS_ERROR', error: String(err?.message || err), label }; } };
+
+  const order=await safeProcess('order',{
     client_email:email,tx_hash:tx('1'+suffix),__order_id:'INT-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
-  },envForTest(env,'valid','success'));\n  const duplicate=await safeProcess('duplicate',{
+  },envForTest(env,'valid','success'));
+  const duplicate=await safeProcess('duplicate',{
     client_email:email,tx_hash:tx('1'+suffix),__order_id:'INT-DUP-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
-  },envForTest(env,'valid','success'));\n\n  const failEmail='atlas.recovery.'+suffix+'@example.invalid';
+  },envForTest(env,'valid','success'));
+
+  const failEmail='atlas.recovery.'+suffix+'@example.invalid';
   const recoveryQuote=await createQuote(db,{client_email:failEmail,agreed_amount:75,note:'synthetic recovery test',product_id:productId});
   const failedDelivery=await safeProcess('recovery',{
     client_email:failEmail,tx_hash:tx('2'+suffix),__order_id:'REC-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
-  },envForTest(env,'valid','fail'));\n  const recoveredDelivery=await deliverOrder(db,envForTest(env,'valid','success'),'REC-'+suffix,failEmail,
+  },envForTest(env,'valid','fail'));
+  const recoveredDelivery=await deliverOrder(db,envForTest(env,'valid','success'),'REC-'+suffix,failEmail,
     'ATLAS recovery verification','Synthetic recovery resend.',['clean_csv','qa_report']);
   if(recoveredDelivery.delivery_status==='SENT'){
     await db.prepare("UPDATE order_ledger SET status='DELIVERED',delivery_status='SENT',error=NULL,updated_at=datetime('now') WHERE order_id=? AND status='DELIVERY_FAILED'")
@@ -44,12 +55,14 @@ export async function runCommercialIntegration(db, env) {
   await createQuote(db,{client_email:stressEmail,agreed_amount:75,note:'synthetic concurrency test',product_id:productId});
   const calls=Array.from({length:8},(_,i)=>safeProcess('stress-'+i,{
     client_email:stressEmail,tx_hash:tx('3'+suffix),__order_id:'STRESS-'+suffix+'-'+i,__file_name:'input.csv',__file_bytes:csvBytes
-  },envForTest(env,'valid','success')));\n  const stress=await Promise.all(calls);
+  },envForTest(env,'valid','success')));
+  const stress=await Promise.all(calls);
 
   const counts={
     delivered:stress.filter(x=>x.order_status==='DELIVERED').length,
     duplicate_tx:stress.filter(x=>x.order_status==='DUPLICATE_TX').length,
-    other:stress.filter(x=>!['DELIVERED','DUPLICATE_TX'].includes(x.order_status)).length,\n    errors:stress.filter(x=>x.order_status==='HARNESS_ERROR').map(x=>({order_id:x.order_id,error:x.error,label:x.label}))
+    other:stress.filter(x=>!['DELIVERED','DUPLICATE_TX'].includes(x.order_status)).length,
+    errors:stress.filter(x=>x.order_status==='HARNESS_ERROR').map(x=>({order_id:x.order_id,error:x.error,label:x.label}))
   };
 
   return {
