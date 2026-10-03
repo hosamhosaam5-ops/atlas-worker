@@ -25,7 +25,7 @@ export async function handleAccessRequest(request:Request,env:OAuthEnv,_ctx:Exec
  }
  if(request.method==="GET"&&pathname==="/callback"){
   const state=searchParams.get("state"),code=searchParams.get("code");if(!state||!code)return new Response("Missing OAuth callback parameters",{status:400});
-  const raw=await env.OAUTH_KV.get("oauth:state:"+state);if(!raw)return new Response("Invalid or expired OAuth state",{status:400});await env.OAUTH_KV.delete("oauth:state:"+state);
+  const raw=await env.OAUTH_KV.get("oauth:state:"+state);if(!raw)return new Response("Invalid or expired OAuth state",{status:400});
   const saved=JSON.parse(raw) as {oauthReqInfo:AuthRequest;codeVerifier:string};
   const redirectUri=new URL("/callback",request.url).href;
   const form=new URLSearchParams({client_id:env.ACCESS_CLIENT_ID,client_secret:env.ACCESS_CLIENT_SECRET,code,grant_type:"authorization_code",redirect_uri:redirectUri,code_verifier:saved.codeVerifier});
@@ -43,7 +43,7 @@ export async function handleAccessRequest(request:Request,env:OAuthEnv,_ctx:Exec
   }
   const tokens=await tr.json() as any;if(!tokens.id_token)return new Response("Missing Access ID token",{status:502});
   const claims=await verifyIdToken(env,tokens.id_token);
-  const {redirectTo}=await env.OAUTH_PROVIDER.completeAuthorization({metadata:{label:String(claims.name||claims.email||claims.sub||"ATLAS user")},props:{email:String(claims.email||""),name:String(claims.name||claims.email||"ATLAS user"),login:String(claims.sub||"")},request:saved.oauthReqInfo,scope:saved.oauthReqInfo.scope,userId:String(claims.sub||claims.email||"atlas-user")});
+  await env.OAUTH_KV.delete("oauth:state:"+state);\n  const {redirectTo}=await env.OAUTH_PROVIDER.completeAuthorization({metadata:{label:String(claims.name||claims.email||claims.sub||"ATLAS user")},props:{email:String(claims.email||""),name:String(claims.name||claims.email||"ATLAS user"),login:String(claims.sub||"")},request:saved.oauthReqInfo,scope:saved.oauthReqInfo.scope,userId:String(claims.sub||claims.email||"atlas-user")});
   return Response.redirect(redirectTo,302);
  }
  return new Response("Not Found",{status:404});
