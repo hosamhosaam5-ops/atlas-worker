@@ -65,13 +65,13 @@ async function handleAtlasMcp(request: Request, env: Env, _ctx?: ExecutionContex
   if(msg.method==="notifications/initialized")return new Response(null,{status:202});
   if(msg.method==="ping")return result({result:{}});
   if(msg.method==="tools/list")return result({result:{tools:[
-   {name:"health",description:"Read ATLAS Worker health and provider status.",inputSchema:{type:"object",properties:{},additionalProperties:false}},
-   {name:"read_state",description:"Read ATLAS execution state from D1.",inputSchema:{type:"object",properties:{limit:{type:"integer",minimum:1,maximum:200}},additionalProperties:false}},
-   {name:"read_tables",description:"Read ATLAS CEO memory and operational table counts.",inputSchema:{type:"object",properties:{memory_limit:{type:"integer",minimum:1,maximum:100}},additionalProperties:false}},
-   {name:"read_workflow_metadata",description:"Read ATLAS Worker and MCP metadata.",inputSchema:{type:"object",properties:{},additionalProperties:false}},
-   {name:"write_state",description:"Upsert up to 100 validated execution-state rows.",inputSchema:{type:"object",properties:{rows:{type:"array",maxItems:100}},required:["rows"],additionalProperties:false}},
-   {name:"write_memory",description:"Append up to 100 validated CEO memory rows.",inputSchema:{type:"object",properties:{rows:{type:"array",maxItems:100}},required:["rows"],additionalProperties:false}},
-   {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
+   {name:"health",description:"Read ATLAS Worker health and provider status.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
+   {name:"read_state",description:"Read ATLAS execution state from D1.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{limit:{type:"integer",minimum:1,maximum:200}},additionalProperties:false}},
+   {name:"read_tables",description:"Read ATLAS CEO memory and operational table counts.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{memory_limit:{type:"integer",minimum:1,maximum:100}},additionalProperties:false}},
+   {name:"read_workflow_metadata",description:"Read ATLAS Worker and MCP metadata.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
+   {name:"write_state",description:"Upsert up to 100 validated execution-state rows.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{rows:{type:"array",maxItems:100}},required:["rows"],additionalProperties:false}},
+   {name:"write_memory",description:"Append up to 100 validated CEO memory rows.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{rows:{type:"array",maxItems:100}},required:["rows"],additionalProperties:false}},
+   {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
   ]}});
   if(msg.method!=="tools/call")return result({error:{code:-32601,message:"Method not found"}});
   const name=msg.params?.name,args=msg.params?.arguments||{};let out:any;
