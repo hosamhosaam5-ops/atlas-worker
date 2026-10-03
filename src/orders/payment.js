@@ -32,7 +32,7 @@ function mockReceipt({ to = WALLET, amountUsdc = 1, contract = USDC_CONTRACT, st
 }
 
 const MOCK_SCENARIOS = {
-  valid: () => ({ result: mockReceipt({ amountUsdc: 1 }) }),
+  valid: (env) => ({ result: mockReceipt({ amountUsdc: Number(env.PAYMENT_MOCK_AMOUNT_USDC || 1) }) }),
   valid_overpay: () => ({ result: mockReceipt({ amountUsdc: 1.5 }) }),
   not_found: () => ({ result: null }),
   tx_failed: () => ({ result: { status: '0x0', logs: [] } }),
@@ -60,7 +60,7 @@ export async function fetchReceipt(env, txHash) {
     const scenario = env.PAYMENT_MOCK_SCENARIO || 'valid';
     const fn = MOCK_SCENARIOS[scenario];
     if (!fn) throw new Error('unknown PAYMENT_MOCK_SCENARIO: ' + scenario);
-    return fn();
+    return fn(env);
   }
   if (provider === 'BASE_RPC') {
     // Production path (not used in M4; no real RPC calls locally).
