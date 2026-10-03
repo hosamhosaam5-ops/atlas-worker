@@ -27,8 +27,20 @@ export async function handleAccessRequest(request:Request,env:OAuthEnv,_ctx:Exec
   const state=searchParams.get("state"),code=searchParams.get("code");if(!state||!code)return new Response("Missing OAuth callback parameters",{status:400});
   const raw=await env.OAUTH_KV.get("oauth:state:"+state);if(!raw)return new Response("Invalid or expired OAuth state",{status:400});await env.OAUTH_KV.delete("oauth:state:"+state);
   const saved=JSON.parse(raw) as {oauthReqInfo:AuthRequest;codeVerifier:string};
-  const form=new URLSearchParams({client_id:env.ACCESS_CLIENT_ID,client_secret:env.ACCESS_CLIENT_SECRET,code,grant_type:"authorization_code",redirect_uri:new URL("/callback",request.url).href,code_verifier:saved.codeVerifier});
-  const tr=await fetch(env.ACCESS_TOKEN_URL,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:form.toString()});if(!tr.ok)return new Response("Access token exchange failed",{status:502});
+  const redirectUri=new URL("/callback",request.url).href;
+  const form=new URLSearchParams({client_id:env.ACCESS_CLIENT_ID,client_secret:env.ACCESS_CLIENT_SECRET,code,grant_type:"authorization_code",redirect_uri:redirectUri,code_verifier:saved.codeVerifier});
+  // Cloudflare Access SaaS OIDC accepts client_secret_post and client_secret_basic.
+  // Try the documented post form first, then basic auth as a compatibility fallback.
+  let tr=await fetch(env.ACCESS_TOKEN_URL,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:form.toString()});
+  if(!tr.ok){
+    const basic=btoa(env.ACCESS_CLIENT_ID+":"+env.ACCESS_CLIENT_SECRET);
+    tr=await fetch(env.ACCESS_TOKEN_URL,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded","authorization":"Basic "+basic},body:new URLSearchParams({code,grant_type:"authorization_code",redirect_uri:redirectUri,code_verifier:saved.codeVerifier}).toString()});
+  }
+  if(!tr.ok){
+    let detail="upstream_token_exchange_failed";
+    try{const t=await tr.text();const j=JSON.parse(t);detail=String(j.error_description||j.error||detail).slice(0,300);}catch{}
+    return new Response("Access token exchange failed: "+detail,{status:502});
+  }
   const tokens=await tr.json() as any;if(!tokens.id_token)return new Response("Missing Access ID token",{status:502});
   const claims=await verifyIdToken(env,tokens.id_token);
   const {redirectTo}=await env.OAUTH_PROVIDER.completeAuthorization({metadata:{label:String(claims.name||claims.email||claims.sub||"ATLAS user")},props:{email:String(claims.email||""),name:String(claims.name||claims.email||"ATLAS user"),login:String(claims.sub||"")},request:saved.oauthReqInfo,scope:saved.oauthReqInfo.scope,userId:String(claims.sub||claims.email||"atlas-user")});
