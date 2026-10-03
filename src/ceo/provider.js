@@ -4,7 +4,7 @@
 // never a silent hang. Provider failure MUST NOT mutate state or fabricate a reply —
 // the caller (pipeline) treats any throw as AI_FAILED and routes to an honest error reply.
 
-export const AI_TIMEOUT_MS = 30000;
+export const AI_TIMEOUT_MS = 60000;
 
 export function makeMockProvider(scenario) {
   // scenario set via AI_MOCK_SCENARIO (test seam) — default: echo-style honest reply.
