@@ -13,6 +13,10 @@ import { handleSiweBridge } from './bridges/siwe.js';
 // @ts-ignore
 import { handleBountyBookAuth } from './bridges/bountybook.js';
 // @ts-ignore
+import { ensureCommercialSchema, listProducts, upsertProduct, createQuote, requestFinancialApproval, decideFinancialApproval, listFinancialApprovals } from './commercial/control.js';
+// @ts-ignore
+import { runCommercialIntegration } from './commercial/testHarness.js';
+// @ts-ignore
 import { processOrder } from './orders/intake.js';
 // @ts-ignore
 import { ensureOrderSchema } from './orders/schema.js';
@@ -38,6 +42,8 @@ interface Env {
   BRAVE?: string;
   TELEGRAM_PROVIDER?: string;
   EMAIL_PROVIDER?: string;
+  EMAIL_MOCK_SCENARIO?: string;
+  PAYMENT_MOCK_SCENARIO?: string;
   PAYMENT_PROVIDER?: string;
   OPENROUTER_API_KEY?: string;
   ORDER_WEBHOOK_SECRET?: string;
@@ -71,6 +77,13 @@ async function handleAtlasMcp(request: Request, env: Env, _ctx?: ExecutionContex
    {name:"read_workflow_metadata",description:"Read ATLAS Worker and MCP metadata.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
    {name:"write_state",description:"Upsert up to 100 validated execution-state rows.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{rows:{type:"array",maxItems:100}},required:["rows"],additionalProperties:false}},
    {name:"write_memory",description:"Append up to 100 validated CEO memory rows.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{rows:{type:"array",maxItems:100}},required:["rows"],additionalProperties:false}},
+   {name:"list_products",description:"List ATLAS products. Drafts require explicit include_drafts.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{include_drafts:{type:"boolean"}},additionalProperties:false}},
+   {name:"upsert_product",description:"Create or update a product. Default status is DRAFT; no launch or payment occurs.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{product_id:{type:"string"},name:{type:"string"},description:{type:"string"},unit:{type:"string"},price_usdc:{type:"number"},pricing_mode:{type:"string"},status:{type:"string"}},required:["product_id","name","description"],additionalProperties:false}},
+   {name:"create_quote",description:"Create a founder-controlled quote for an ACTIVE product or standalone client.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{client_email:{type:"string"},agreed_amount:{type:"number"},note:{type:"string"},product_id:{type:["string","null"]}},required:["client_email","agreed_amount"],additionalProperties:false}},
+   {name:"request_financial_approval",description:"Create a PENDING founder financial approval record. It never moves funds.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{order_id:{type:["string","null"]},quote_id:{type:["integer","null"]},action:{type:"string"},amount_usdc:{type:["number","null"]},requested_by:{type:"string"},reason:{type:"string"}},required:["action"],additionalProperties:false}},
+   {name:"decide_financial_approval",description:"Record a founder approval decision (APPROVED or REJECTED). This records authorization only; it never executes payment.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{approval_id:{type:"string"},status:{type:"string",enum:["APPROVED","REJECTED"]},decided_by:{type:"string"},reason:{type:"string"}},required:["approval_id","status","decided_by"],additionalProperties:false}},
+   {name:"list_financial_approvals",description:"List financial approval records and lifecycle states.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{status:{type:["string","null"]},limit:{type:"integer"}},additionalProperties:false}},
+   {name:"run_commercial_integration",description:"Run a real D1-backed order/quote/payment-gate/QA/delivery/idempotency/recovery integration suite using only MOCK payment and email adapters.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
    {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
   ]}});
   if(msg.method!=="tools/call")return result({error:{code:-32601,message:"Method not found"}});
@@ -82,6 +95,13 @@ async function handleAtlasMcp(request: Request, env: Env, _ctx?: ExecutionContex
    else if(name==="read_workflow_metadata")out={service:"ATLAS Cloudflare Worker",bridge:"/bridge/chatgpt",mcp:"/mcp",mcp_mode:"READ_WRITE_EXECUTE",mcp_transport:"Streamable HTTP",auth:"OAuth 2.1 via Cloudflare Access"};
    else if(name==="write_state"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_STATE_ROWS");let written=0;for(const row of args.rows){if(!row||!row.idempotency_key)throw new Error("INVALID_STATE_ROW");const payload=row.payload_json!==undefined?String(row.payload_json):JSON.stringify(row.payload??{});await env.DB.prepare("INSERT INTO execution_state (idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,payload_json,error_code,attempt_count,delivery_state,message_key,chunk_index,expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(idempotency_key) DO UPDATE SET status=excluded.status,payload_json=excluded.payload_json,updated_at=datetime('now')").bind(String(row.idempotency_key),row.record_kind??null,row.correlation_id??null,row.request_id??null,row.entity_type??null,row.entity_id??null,row.action_id??null,row.tool??null,row.status??null,row.progress??null,payload,row.error_code??null,row.attempt_count??0,row.delivery_state??null,row.message_key??null,row.chunk_index??null,row.expires_at??null).run();written++;}out={written};}
    else if(name==="write_memory"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_MEMORY_ROWS");for(const row of args.rows){if(!row||!String(row.content||"").trim())throw new Error("INVALID_MEMORY_ROW");await env.DB.prepare("INSERT INTO ceo_memory (category,content) VALUES (?,?)").bind(String(row.category||"fact"),String(row.content)).run();}out={written:args.rows.length};}
+   else if(name==="list_products"){out={products:await listProducts(env.DB,args.include_drafts===true)};}
+   else if(name==="upsert_product"){out=await upsertProduct(env.DB,args);}
+   else if(name==="create_quote"){out=await createQuote(env.DB,args);}
+   else if(name==="request_financial_approval"){out=await requestFinancialApproval(env.DB,args);}
+   else if(name==="decide_financial_approval"){out=await decideFinancialApproval(env.DB,args);}
+   else if(name==="list_financial_approvals"){out={approvals:await listFinancialApprovals(env.DB,args)};}
+   else if(name==="run_commercial_integration"){out=await runCommercialIntegration(env.DB,env);}
    else if(name==="execute_ceo"){const secret=env.CHATGPT_BRIDGE_SECRET;if(!secret)throw new Error("CHATGPT_BRIDGE_NOT_CONFIGURED");const r2=new Request(new URL("/bridge/chatgpt",request.url),{method:"POST",headers:{"content-type":"application/json","x-atlas-bridge-key":secret},body:JSON.stringify({operation:"execute_ceo",founder_message:args.founder_message,chat_id:args.chat_id,message_id:Number(args.message_id)})});const rr=await handleChatGptBridge(r2,env);const body=await rr.json();if(!rr.ok)throw new Error(String(body?.status||"EXECUTE_CEO_FAILED"));out=body;}
    else return result({error:{code:-32602,message:"Unknown tool"}});
   }catch(err:any){return result({result:{isError:true,content:[{type:"text",text:String(err?.message||err).slice(0,2000)}]}});}
@@ -165,6 +185,7 @@ export default {
         return json({ ok: false, error: 'forbidden' }, 403);
       }
       const t0 = Date.now();
+      await ensureCommercialSchema(env.DB);
       await ensureOrderSchema(env.DB);
       let input: any = {};
       const ct = request.headers.get('content-type') || '';
