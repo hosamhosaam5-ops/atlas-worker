@@ -159,10 +159,26 @@ export async function processUpdate(env, update, eventPk, timings) {
     timings.ai1 = timings.ai1 || 0;
     // AI failure: no state mutation, no fabricated reply, event recorded as failed.
     const failReply = 'حدث خطأ أثناء معالجة طلبك (' + (e.code === 'AI_TIMEOUT' ? 'انتهت مهلة مزود الذكاء' : 'تعذر الوصول إلى مزود الذكاء') + '). لم يتم تنفيذ أي إجراء أو تغيير أي حالة. أعد المحاولة لاحقاً.';
-    await markEvent(env, eventPk, 'AI_FAILED', String(e.code || e.message || e));
-    await deliverReply(env, { chatId, reply: failReply, requestId, updatePk: eventPk });
+    const failDeliveries = await deliverReply(env, { chatId, reply: failReply, requestId, updatePk: eventPk });
+    const failDelivery = failDeliveries.find(d => d.state === 'FAILED');
+    // Record the actual terminal result. If the honest error reply itself
+    // cannot be delivered, do not pretend the founder received it.
+    const terminalStatus = failDelivery ? 'DELIVERY_FAILED' : 'AI_FAILED';
+    const terminalError = failDelivery
+      ? String(failDelivery.error || 'DELIVERY_FAILED')
+      : String(e.code || e.message || e);
+    await markEvent(env, eventPk, terminalStatus, terminalError);
     // record request failure row so retries don't look like successes
-    await upsertStateRows(env, [{ idempotency_key: 'req|' + requestId, record_kind: 'request_result', correlation_id: correlationId, request_id: requestId, status: 'AI_FAILED', payload_json: JSON.stringify({ error: String(e.code || e.message || e) }).slice(0, 900), error_code: String(e.code || 'AI_PROVIDER_ERROR'), attempt_count: 1 }]);
+    await upsertStateRows(env, [{
+      idempotency_key: 'req|' + requestId,
+      record_kind: 'request_result',
+      correlation_id: correlationId,
+      request_id: requestId,
+      status: terminalStatus,
+      payload_json: JSON.stringify({ error: String(e.code || e.message || e), deliveries: failDeliveries }).slice(0, 900),
+      error_code: terminalError,
+      attempt_count: 1
+    }]);
     return { outcome: 'AI_FAILED', request_id: requestId, error: String(e.code || e.message || e) };
   }
 
@@ -257,22 +273,31 @@ export async function processUpdate(env, update, eventPk, timings) {
   const keptMemories = (finalMemories || []).filter(m => !['option', 'unknown'].includes(String(m.category || '').toLowerCase()));
   await t('persist_memory', () => insertMemories(env, keptMemories))();
 
-  // request_result row: durable final answer for replay (single writer)
+  // ---- Deliver ----
+  // Delivery is authoritative: request_result MUST NOT claim REPLY_SENT before
+  // the outbox confirms every chunk. This prevents false-success state when
+  // Telegram/provider delivery fails.
+  const deliveries = await t('deliver', () => deliverReply(env, { chatId, reply: finalReply, requestId, updatePk: eventPk }))();
+  const deliveryFailed = deliveries.some(d => d.state === 'FAILED');
+  const deliveryStatus = deliveryFailed ? 'DELIVERY_FAILED' : 'REPLY_SENT';
+  const deliveryError = deliveryFailed
+    ? String(deliveries.find(d => d.state === 'FAILED')?.error || 'DELIVERY_FAILED')
+    : '';
+
+  // request_result row: durable final answer for replay (single writer).
+  // It is written AFTER delivery so its status reflects reality.
   await upsertStateRows(env, [{
     idempotency_key: 'req|' + requestId,
     record_kind: 'request_result',
     correlation_id: correlationId,
     request_id: requestId,
-    status: 'REPLY_SENT',
-    payload_json: JSON.stringify({ final_reply: finalReply }).slice(0, 900),
-    error_code: '',
+    status: deliveryStatus,
+    payload_json: JSON.stringify({ final_reply: finalReply, deliveries }).slice(0, 900),
+    error_code: deliveryError,
     attempt_count: 1,
   }]);
 
-  // ---- Deliver ----
-  const deliveries = await t('deliver', () => deliverReply(env, { chatId, reply: finalReply, requestId, updatePk: eventPk }))();
-
-  await markEvent(env, eventPk, 'PROCESSED', null);
+  await markEvent(env, eventPk, deliveryFailed ? 'DELIVERY_FAILED' : 'PROCESSED', deliveryError || null);
   return {
     outcome: 'PROCESSED',
     request_id: requestId,
