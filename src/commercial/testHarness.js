@@ -29,7 +29,7 @@ export async function runCommercialIntegration(db, env) {
     client_email:email,tx_hash:tx('1'+suffix),__order_id:'INT-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
   });
   const duplicate=await processOrder(db,envForTest(env,'valid','success'),{
-    client_email:email,tx_hash:tx('1'),__order_id:'INT-DUP-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
+    client_email:email,tx_hash:tx('1'+suffix),__order_id:'INT-DUP-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
   });
 
   const failEmail='atlas.recovery.'+suffix+'@example.invalid';
