@@ -79,3 +79,31 @@ export async function requestFinancialApproval(db,{order_id=null,quote_id=null,a
     .bind(approvalId,order_id,quote_id,String(action),amount,'PENDING',String(requested_by),String(reason||'')).run();
   return {approval_id:approvalId,status:'PENDING',action:String(action),amount_usdc:amount};
 }
+
+
+export async function decideFinancialApproval(db,{approval_id,status,decided_by,reason=''}) {
+  await ensureCommercialSchema(db);
+  const id=String(approval_id||'').trim();
+  const next=String(status||'').toUpperCase();
+  const actor=String(decided_by||'').trim();
+  if(!id||!actor) throw new Error('INVALID_APPROVAL_DECISION');
+  if(!['APPROVED','REJECTED'].includes(next)) throw new Error('INVALID_APPROVAL_STATUS');
+  const row=await db.prepare('SELECT * FROM financial_approvals WHERE approval_id=?').bind(id).first();
+  if(!row) throw new Error('APPROVAL_NOT_FOUND');
+  if(String(row.status)!=='PENDING') throw new Error('APPROVAL_ALREADY_DECIDED');
+  await db.prepare("UPDATE financial_approvals SET status=?,approved_by=?,reason=?,decided_at=datetime('now') WHERE approval_id=? AND status='PENDING'")
+    .bind(next,actor,String(reason||''),id).run();
+  return await db.prepare('SELECT * FROM financial_approvals WHERE approval_id=?').bind(id).first();
+}
+
+export async function listFinancialApprovals(db,{status=null,limit=50}={}) {
+  await ensureCommercialSchema(db);
+  const n=Math.min(100,Math.max(1,Number(limit||50)));
+  if(status){
+    const s=String(status).toUpperCase();
+    const {results}=await db.prepare('SELECT * FROM financial_approvals WHERE status=? ORDER BY created_at DESC LIMIT ?').bind(s,n).all();
+    return results||[];
+  }
+  const {results}=await db.prepare('SELECT * FROM financial_approvals ORDER BY created_at DESC LIMIT ?').bind(n).all();
+  return results||[];
+}
