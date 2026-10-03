@@ -19,7 +19,7 @@ function tx(seed) {
 export async function runCommercialIntegration(db, env) {
   await ensureCommercialSchema(db);
   await ensureOrderSchema(db);
-  const suffix=Date.now().toString(36);
+  const suffix=Date.now().toString(16);
   const email='atlas.integration.'+suffix+'@example.invalid';
   const productId='prod_integration_'+suffix;
   await upsertProduct(db,{product_id:productId,name:'ATLAS Integration Test Product',description:'Synthetic internal integration product',unit:'order',price_usdc:75,pricing_mode:'FOUNDER_QUOTE',status:'ACTIVE'});
