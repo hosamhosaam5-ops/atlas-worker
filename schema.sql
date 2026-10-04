@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS order_ledger (
   client_email TEXT,
   tx_hash TEXT,
   quote_ref INTEGER,
+  product_id TEXT,
   status TEXT NOT NULL,
   error TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
