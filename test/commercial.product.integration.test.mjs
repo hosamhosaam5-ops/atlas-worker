@@ -11,13 +11,19 @@ function makeD1(file) {
   const db = new DatabaseSync(file);
   return {
     prepare(sql) {
+      const self = this;
       return {
+        async run(...args) {
+          const r=db.prepare(sql).run(...args);
+          return {meta:{last_row_id:r.lastInsertRowid,changes:r.changes}};
+        },
+        async first(...args) { return db.prepare(sql).get(...args) ?? null; },
+        async all(...args) { return {results:db.prepare(sql).all(...args)}; },
         bind(...args) {
-          const s = db.prepare(sql);
           return {
-            async run() { const r=s.run(...args); return {meta:{last_row_id:r.lastInsertRowid,changes:r.changes}}; },
-            async first() { return s.get(...args) ?? null; },
-            async all() { return {results:s.all(...args)}; },
+            run: async () => self.prepare(sql).run(...args),
+            first: async () => self.prepare(sql).first(...args),
+            all: async () => self.prepare(sql).all(...args),
           };
         },
       };
