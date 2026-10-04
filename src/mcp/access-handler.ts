@@ -30,6 +30,7 @@ async function verifyIdToken(env:OAuthEnv,token:string){
  if(claims.nbf&&claims.nbf>now+60)throw new Error("ID_TOKEN_NOT_YET_VALID");
  return claims;
 }
+// OAuth hardening verified against Cloudflare Access OIDC issuer semantics (2026-10-04).
 export async function handleAccessRequest(request:Request,env:OAuthEnv,_ctx:ExecutionContext){
  const {pathname,searchParams}=new URL(request.url);
  if(request.method==="GET"&&pathname==="/authorize"){
