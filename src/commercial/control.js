@@ -26,6 +26,24 @@ export async function ensureCommercialSchema(db) {
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     decided_at TEXT
   )`).run();
+
+  // Quote/product integrity: every product quote records the exact catalog item.
+  await db.prepare(`CREATE TABLE IF NOT EXISTS order_quotes (
+    quote_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_email TEXT NOT NULL,
+    agreed_amount REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    note TEXT,
+    product_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`).run();
+  const { results: quoteCols } = await db.prepare('PRAGMA table_info(order_quotes)').all();
+  const quoteHave = new Set((quoteCols || []).map(c => c.name));
+  if (!quoteHave.has('product_id')) {
+    await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT').run();
+  }
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_product ON order_quotes(product_id, status)').run();
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_email ON order_quotes(client_email, status)').run();
   await db.prepare('CREATE INDEX IF NOT EXISTS idx_products_status ON products(status)').run();
   await db.prepare('CREATE INDEX IF NOT EXISTS idx_financial_approvals_status ON financial_approvals(status, created_at)').run();
 }
@@ -62,10 +80,17 @@ export async function createQuote(db,{client_email,agreed_amount,note='',product
   const email=String(client_email||'').trim().toLowerCase();
   const amount=Number(agreed_amount);
   if(!email||!Number.isFinite(amount)||amount<=0) throw new Error('INVALID_QUOTE');
-  const product=product_id?await db.prepare("SELECT product_id,status FROM products WHERE product_id=?").bind(String(product_id)).first():null;
-  if(product_id && (!product || product.status!=='ACTIVE')) throw new Error('PRODUCT_NOT_ACTIVE');
-  const r=await db.prepare('INSERT INTO order_quotes(client_email,agreed_amount,status,note) VALUES(?,?,\'ACTIVE\',?)').bind(email,amount,String(note||'')+(product_id?' [product:'+String(product_id)+']':'')).run();
-  return {quote_id:r.meta.last_row_id,client_email:email,agreed_amount:amount,status:'ACTIVE',product_id:product_id||null};
+
+  const productId=product_id==null?'':String(product_id).trim();
+  let product=null;
+  if(productId) {
+    product=await db.prepare("SELECT product_id,status FROM products WHERE product_id=?").bind(productId).first();
+    if(!product || product.status!=='ACTIVE') throw new Error('PRODUCT_NOT_ACTIVE');
+  }
+
+  const r=await db.prepare('INSERT INTO order_quotes(client_email,agreed_amount,status,note,product_id) VALUES(?,?,\'ACTIVE\',?,?)')
+    .bind(email,amount,String(note||''),productId||null).run();
+  return {quote_id:r.meta.last_row_id,client_email:email,agreed_amount:amount,status:'ACTIVE',product_id:productId||null};
 }
 
 export async function requestFinancialApproval(db,{order_id=null,quote_id=null,action,amount_usdc=null,requested_by='founder',reason=''}) {
@@ -79,7 +104,6 @@ export async function requestFinancialApproval(db,{order_id=null,quote_id=null,a
     .bind(approvalId,order_id,quote_id,String(action),amount,'PENDING',String(requested_by),String(reason||'')).run();
   return {approval_id:approvalId,status:'PENDING',action:String(action),amount_usdc:amount};
 }
-
 
 export async function decideFinancialApproval(db,{approval_id,status,decided_by,reason=''}) {
   await ensureCommercialSchema(db);
