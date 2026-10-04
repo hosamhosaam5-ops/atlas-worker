@@ -90,6 +90,32 @@ jobs:
           echo "chatgpt unauthenticated status=$GPT_STATUS"
           case "$GPT_STATUS" in 401|403) ;; *) echo "unexpected chatgpt status=$GPT_STATUS"; exit 1 ;; esac
 
+      - name: Real Base RPC fail-closed payment adapter probe
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { fetchReceipt, evaluatePaymentSafe, WALLET, USDC_CONTRACT, BASE_NETWORK } from './src/orders/payment.js';
+
+          // Deliberately non-existent, syntactically valid 32-byte transaction hash.
+          // This is a read-only eth_getTransactionReceipt call; it cannot broadcast or spend funds.
+          const txHash = '0x' + '00'.repeat(32);
+          const env = { PAYMENT_PROVIDER: 'BASE_RPC' };
+          const response = await fetchReceipt(env, txHash);
+          const verdict = evaluatePaymentSafe(response, {
+            wallet: WALLET,
+            usdc_contract: USDC_CONTRACT,
+            expected_amount: 15,
+            network: BASE_NETWORK,
+            tx_hash: txHash,
+          });
+
+          console.log(JSON.stringify({ response, verdict }, null, 2));
+          if (response?.error) throw new Error('Base RPC returned JSON-RPC error: ' + JSON.stringify(response.error));
+          if (response?.result !== null) throw new Error('Expected nonexistent tx receipt to be null');
+          if (verdict.payment_status !== 'NOT_FOUND') throw new Error('Expected NOT_FOUND, got ' + verdict.payment_status);
+          console.log('BASE_RPC_FAIL_CLOSED=PASS');
+          NODE
+
       - name: MCP remote probe (non-blocking)
         continue-on-error: true
         run: |
