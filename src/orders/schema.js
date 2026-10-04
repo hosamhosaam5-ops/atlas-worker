@@ -9,7 +9,7 @@ const M4_LEDGER_COLUMNS = [
 ];
 
 export async function ensureOrderSchema(db) {
-  const pragma = await db.prepare('PRAGMA table_info(order_ledger)');
+  const pragma = db.prepare('PRAGMA table_info(order_ledger)');
   const { results } = pragma.all ? await pragma.all() : (pragma.allSync ? { results: pragma.allSync() } : { results: [] });
   const have = new Set((results || []).map(r => r.name));
   for (const [name, type] of M4_LEDGER_COLUMNS) {
@@ -47,7 +47,7 @@ export async function ensureOrderSchema(db) {
     updated_at TEXT
   )`);
 
-  const outboxPragma = await db.prepare('PRAGMA table_info(delivery_outbox)');
+  const outboxPragma = db.prepare('PRAGMA table_info(delivery_outbox)');
   const { results: outboxCols } = outboxPragma.all ? await outboxPragma.all() : (outboxPragma.allSync ? { results: outboxPragma.allSync() } : { results: [] });
   const obHave = new Set((outboxCols || []).map(c => c.name));
   if (!obHave.has('dedupe_key')) {
@@ -67,7 +67,7 @@ export async function ensureOrderSchema(db) {
     product_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
-  const quotePragma = await db.prepare('PRAGMA table_info(order_quotes)');
+  const quotePragma = db.prepare('PRAGMA table_info(order_quotes)');
   const { results: quoteCols } = quotePragma.all ? await quotePragma.all() : (quotePragma.allSync ? { results: quotePragma.allSync() } : { results: [] });
   const quoteHave = new Set((quoteCols || []).map(c => c.name));
   if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT');
