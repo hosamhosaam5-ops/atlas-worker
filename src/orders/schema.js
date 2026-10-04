@@ -28,7 +28,7 @@ export async function ensureOrderSchema(db) {
     content_base64 TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(order_id, file_kind)
-  )`).run();
+  )`);
 
   await db.prepare(`CREATE TABLE IF NOT EXISTS delivery_outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
