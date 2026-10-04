@@ -47,7 +47,8 @@ export async function ensureOrderSchema(db) {
     updated_at TEXT
   )`);
 
-  const { results: outboxCols } = await db.prepare('PRAGMA table_info(delivery_outbox)').all();
+  const outboxPragma = await db.prepare('PRAGMA table_info(delivery_outbox)');
+  const { results: outboxCols } = outboxPragma.all ? await outboxPragma.all() : (outboxPragma.allSync ? { results: outboxPragma.allSync() } : { results: [] });
   const obHave = new Set((outboxCols || []).map(c => c.name));
   if (!obHave.has('dedupe_key')) {
     await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN dedupe_key TEXT');
@@ -66,7 +67,8 @@ export async function ensureOrderSchema(db) {
     product_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
-  const { results: quoteCols } = await db.prepare('PRAGMA table_info(order_quotes)').all();
+  const quotePragma = await db.prepare('PRAGMA table_info(order_quotes)');
+  const { results: quoteCols } = quotePragma.all ? await quotePragma.all() : (quotePragma.allSync ? { results: quotePragma.allSync() } : { results: [] });
   const quoteHave = new Set((quoteCols || []).map(c => c.name));
   if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT');
 
