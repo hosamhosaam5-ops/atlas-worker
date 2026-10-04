@@ -370,9 +370,9 @@ export async function processOrder(db, env, input) {
     if (meta.test_mode) {
       await insertLedger(db, {
         order_id: meta.order_id, client_email: meta.client_email, tx_hash: null,
-        status: 'QA_FAILED', qa_status: 'FAIL', qa_report: qa.qa_report, product_id: qa.product_id,
+        status: 'QA_FAILED', qa_status: 'FAIL', qa_report: qa.qa_report,
         payment_status: qa.payment_status, amount_paid: qa.amount_paid,
-        price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref, product_id: qa.product_id,
+        price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref, product_id: priceMeta.product_id,
         file_name: meta.file_name, file_ext: meta.file_ext, rows_in: qa.rows_in, rows_out: qa.rows_out,
         last_error: qa.qa_report,
       });
@@ -406,7 +406,7 @@ export async function processOrder(db, env, input) {
   const finalRow = {
     status: finalStatus, qa_status: 'PASS', qa_report: qa.qa_report,
     payment_status: qa.payment_status, amount_paid: qa.amount_paid,
-    price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref, product_id: qa.product_id,
+    price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref, product_id: priceMeta.product_id,
     file_name: meta.file_name, file_ext: meta.file_ext, rows_in: qa.rows_in, rows_out: qa.rows_out,
     delivery_channel: 'email', delivery_status: dlv.delivery_status,
     last_error: dlv.delivery_error || null,
@@ -420,7 +420,7 @@ export async function processOrder(db, env, input) {
   const a = await audit(db, 'order', meta.order_id, meta, finalStatus, dlv.delivery_error || null);
   return {
     order_id: meta.order_id,
-    order_status: finalStatus, delivery: dlv, qa_report: qa.qa_report, product_id: qa.product_id, quote_ref: qa.quote_ref,
+    order_status: finalStatus, delivery: dlv, qa_report: qa.qa_report, product_id: priceMeta.product_id, quote_ref: qa.quote_ref,
     rows_in: qa.rows_in, rows_out: qa.rows_out, quote_ref: qa.quote_ref,
     payment_status: qa.payment_status, amount_paid: qa.amount_paid,
     message: 'Order processed. Delivery by email.', audit: a, latency_ms: Date.now() - t0,
