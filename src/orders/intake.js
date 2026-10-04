@@ -364,6 +364,11 @@ export async function processOrder(db, env, input) {
     }
   }
 
+  // --- Preserve the paid input before transformation/delivery ---
+  // Original bytes are retained under a unique file kind; no overwrite is allowed.
+  const storage = getFileStorage(env);
+  await storage.put(db, meta.order_id, 'original', meta.file_name || 'input.' + meta.file_ext, input.__file_bytes);
+
   // --- Clean and QA ---
   const qa = cleanAndQA(meta, gate, rows);
   if (!qa.qa_passed) {
@@ -390,7 +395,6 @@ export async function processOrder(db, env, input) {
   }
 
   // --- Build delivery files + store (ports Build Clean CSV / QA report / convertToFile) ---
-  const storage = getFileStorage(env);
   const cleanCsv = buildCleanCSV(qa.clean_rows);
   const qaText = new TextEncoder().encode(qa.qa_report);
   await storage.put(db, meta.order_id, 'clean_csv', `clean_${meta.order_id}.csv`, cleanCsv);
