@@ -60,11 +60,11 @@ export async function ensureOrderSchema(db) {
   const { results: outboxCols } = outboxPragma.bind ? await outboxPragma.bind().all() : (outboxPragma.all ? await outboxPragma.all() : { results: [] });
   const obHave = new Set((outboxCols || []).map(c => c.name));
   if (!obHave.has('dedupe_key')) {
-    await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN dedupe_key TEXT');
-    await db.prepare("UPDATE delivery_outbox SET dedupe_key = 'order|' || order_id || '|' || channel WHERE dedupe_key IS NULL");
-    await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_dedupe ON delivery_outbox(dedupe_key)');
+    await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN dedupe_key TEXT').bind().run();
+    await db.prepare("UPDATE delivery_outbox SET dedupe_key = 'order|' || order_id || '|' || channel WHERE dedupe_key IS NULL").bind().run();
+    await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_dedupe ON delivery_outbox(dedupe_key)').bind().run();
   }
-  if (!obHave.has('provider_message_id')) await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN provider_message_id TEXT');
+  if (!obHave.has('provider_message_id')) await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN provider_message_id TEXT').bind().run();
 
   // Quote table is also ensured here because the order engine consumes it.
   await db.prepare(`CREATE TABLE IF NOT EXISTS order_quotes (
@@ -79,7 +79,7 @@ export async function ensureOrderSchema(db) {
   const quotePragma = db.prepare('PRAGMA table_info(order_quotes)');
   const { results: quoteCols } = quotePragma.bind ? await quotePragma.bind().all() : (quotePragma.all ? await quotePragma.all() : { results: [] });
   const quoteHave = new Set((quoteCols || []).map(c => c.name));
-  if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT');
+  if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT').bind().run();
 
   await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_order_ledger_tx_hash
     ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''`);
