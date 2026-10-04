@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS order_quotes (
   agreed_amount REAL NOT NULL,
   status TEXT NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE | USED | CANCELLED
   note TEXT,
+  product_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 -- More than one ACTIVE quote per client is ambiguous and must be rejected
