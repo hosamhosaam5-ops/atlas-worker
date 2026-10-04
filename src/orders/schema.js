@@ -5,7 +5,7 @@ const M4_LEDGER_COLUMNS = [
   ['qa_status', 'TEXT'], ['qa_report', 'TEXT'], ['payment_status', 'TEXT'],
   ['amount_paid', 'REAL'], ['price_source', 'TEXT'], ['expected_amount', 'REAL'],
   ['file_name', 'TEXT'], ['file_ext', 'TEXT'], ['rows_in', 'INTEGER'], ['rows_out', 'INTEGER'],
-  ['delivery_channel', 'TEXT'], ['delivery_status', 'TEXT'],
+  ['delivery_channel', 'TEXT'], ['delivery_status', 'TEXT'], ['product_id', 'TEXT'],
 ];
 
 export async function ensureOrderSchema(db) {
