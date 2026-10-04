@@ -23,7 +23,8 @@ export async function ensureOrderSchema(db) {
   for (const [name, type] of M4_LEDGER_COLUMNS) {
     if (!have.has(name)) {
       const stmt = db.prepare(`ALTER TABLE order_ledger ADD COLUMN ${name} ${type}`);
-      if (stmt.run) await stmt.run();
+      if (stmt.bind) await stmt.bind().run();
+      else if (stmt.run) await stmt.run();
       else if (db.exec) await db.exec(`ALTER TABLE order_ledger ADD COLUMN ${name} ${type}`);
     }
   }
