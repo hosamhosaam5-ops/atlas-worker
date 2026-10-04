@@ -38,6 +38,7 @@ export function prepareOrderMeta(first, hasFile) {
     expected_amount: 0,
     price_source: 'UNRESOLVED',
     quote_ref: '',
+    product_id: '',
     file_name: fname,
     file_ext: ext,
     invalid_input: missing.length > 0,
@@ -56,15 +57,15 @@ export function applyResolvedPrice(meta, quoteRows) {
   if (meta.test_mode) throw new Error('Apply Resolved Price must only run on the production path');
   const rows = quoteRows.filter(r => r && Object.keys(r).length > 0);
   if (rows.length > 1) {
-    return { ...meta, price_ok: false, invalid_reason: 'MULTIPLE_QUOTES: more than one quote row matches this client_email', price_source: 'AMBIGUOUS', expected_amount: 0, quote_ref: '' };
+    return { ...meta, price_ok: false, invalid_reason: 'MULTIPLE_QUOTES: more than one quote row matches this client_email', price_source: 'AMBIGUOUS', expected_amount: 0, quote_ref: '', product_id: '' };
   }
   const quote = rows.length ? rows[0] : null;
   const amount = quote ? Number(quote.agreed_amount) : 0;
   if (!quote || !(amount > 0)) {
-    return { ...meta, price_ok: false, invalid_reason: 'NO_QUOTE: no agreed price on record for this client_email', price_source: 'NONE', expected_amount: 0, quote_ref: '' };
+    return { ...meta, price_ok: false, invalid_reason: 'NO_QUOTE: no agreed price on record for this client_email', price_source: 'NONE', expected_amount: 0, quote_ref: '', product_id: '' };
   }
   const quoteRef = quote.quote_id !== undefined && quote.quote_id !== null ? String(quote.quote_id) : '';
-  return { ...meta, expected_amount: amount, price_source: 'FOUNDER_QUOTE', price_ok: true, quote_ref: quoteRef };
+  return { ...meta, expected_amount: amount, price_source: 'FOUNDER_QUOTE', price_ok: true, quote_ref: quoteRef, product_id: quote.product_id ? String(quote.product_id) : '' };
 }
 
 // ---------- Apply Test Prepay (verbatim port; founder test path only) ----------
@@ -185,14 +186,13 @@ export function buildCleanCSV(cleanRows) {
 async function insertLedger(db, row) {
   await db.prepare(
     `INSERT INTO order_ledger (order_id, client_email, tx_hash, quote_ref, status, qa_status, qa_report,
-      payment_status, amount_paid, price_source, expected_amount, file_name, file_ext, rows_in, rows_out,
-      delivery_channel, delivery_status, error, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`
+      payment_status, amount_paid, price_source, expected_amount, file_name, file_ext, rows_in, rows_out, product_id, delivery_channel, delivery_status, error, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`
   ).bind(
     row.order_id ?? null, row.client_email ?? null, row.tx_hash ?? null, row.quote_ref ?? null,
     row.status, row.qa_status ?? null, row.qa_report ?? null, row.payment_status ?? null,
     row.amount_paid ?? null, row.price_source ?? null, row.expected_amount ?? null,
-    row.file_name ?? null, row.file_ext ?? null, row.rows_in ?? null, row.rows_out ?? null,
+    row.file_name ?? null, row.file_ext ?? null, row.rows_in ?? null, row.rows_out ?? null, row.product_id ?? null,
     row.delivery_channel ?? null, row.delivery_status ?? null, row.last_error ?? null
   ).run();
 }
@@ -205,12 +205,12 @@ async function finalizeLedger(db, orderId, row) {
   await db.prepare(
     `UPDATE order_ledger SET status=?, qa_status=?, qa_report=?, payment_status=?, amount_paid=?,
        price_source=?, expected_amount=?, quote_ref=?, file_name=?, file_ext=?, rows_in=?, rows_out=?,
-       delivery_channel=?, delivery_status=?, error=?, updated_at=datetime('now')
+       product_id=?, delivery_channel=?, delivery_status=?, error=?, updated_at=datetime('now')
      WHERE order_id=?`
   ).bind(
     row.status, row.qa_status ?? null, row.qa_report ?? null, row.payment_status ?? null,
     row.amount_paid ?? null, row.price_source ?? null, row.expected_amount ?? null,
-    row.quote_ref ?? null, row.file_name ?? null, row.file_ext ?? null,
+    row.quote_ref ?? null, row.product_id ?? null, row.file_name ?? null, row.file_ext ?? null,
     row.rows_in ?? null, row.rows_out ?? null, row.delivery_channel ?? null,
     row.delivery_status ?? null, row.last_error ?? null, orderId
   ).run();
@@ -269,7 +269,7 @@ export async function processOrder(db, env, input) {
   // --- Input Valid gate (ports Reject Invalid Input branch) ---
   if (meta.invalid_input) {
     await insertLedger(db, {
-      order_id: meta.order_id, client_email: meta.client_email, tx_hash: meta.tx_hash,
+      order_id: meta.order_id, client_email: meta.client_email, tx_hash: meta.tx_hash, product_id: meta.product_id,
       status: 'REJECTED', payment_status: 'NOT_CHECKED', last_error: meta.invalid_reason,
     });
     const a = await audit(db, 'order', meta.order_id, meta, 'REJECTED', meta.invalid_reason);
@@ -287,7 +287,7 @@ export async function processOrder(db, env, input) {
   }
   if (extractError) {
     await insertLedger(db, {
-      order_id: meta.order_id, client_email: meta.client_email, tx_hash: meta.tx_hash,
+      order_id: meta.order_id, client_email: meta.client_email, tx_hash: meta.tx_hash, product_id: meta.product_id,
       status: 'REJECTED', payment_status: 'NOT_CHECKED', file_name: meta.file_name, file_ext: meta.file_ext,
       last_error: 'file_parse_error: ' + extractError,
     });
@@ -303,7 +303,7 @@ export async function processOrder(db, env, input) {
   } else {
     // --- Resolve Agreed Price (production only) ---
     const { results: quoteRows } = await db.prepare(
-      "SELECT quote_id, client_email, agreed_amount FROM order_quotes WHERE client_email = ? AND status = 'ACTIVE'"
+      "SELECT quote_id, client_email, agreed_amount, product_id FROM order_quotes WHERE client_email = ? AND status = 'ACTIVE'"
     ).bind(meta.client_email).all();
     priceMeta = applyResolvedPrice(meta, quoteRows);
     if (!priceMeta.price_ok) {
@@ -321,8 +321,8 @@ export async function processOrder(db, env, input) {
     // D1 is single-threaded and the UNIQUE(tx_hash) index is the concurrency authority.
     // Use INSERT OR IGNORE so a concurrent duplicate becomes a normal business result
     // rather than an uncaught UNIQUE exception; the follow-up read identifies the winner.
-    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, status, payment_status) VALUES (?, ?, ?, 'PENDING', 'NOT_CHECKED')")
-      .bind(meta.order_id, meta.client_email, meta.tx_hash).run();
+    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED')")
+      .bind(meta.order_id, meta.client_email, meta.tx_hash, priceMeta.product_id || null).run();
 
     const claimed = await db.prepare(
       "SELECT order_id, status FROM order_ledger WHERE tx_hash = ? LIMIT 1"
@@ -341,7 +341,7 @@ export async function processOrder(db, env, input) {
     ).bind(meta.tx_hash).first();
     if (used) {
       await finalizeLedger(db, meta.order_id, {
-        status: 'DUPLICATE_TX', payment_status: 'REUSED_TX', file_name: meta.file_name,
+        status: 'DUPLICATE_TX', payment_status: 'REUSED_TX', product_id: priceMeta.product_id, file_name: meta.file_name,
         price_source: priceMeta.price_source, expected_amount: priceMeta.expected_amount, quote_ref: priceMeta.quote_ref,
         last_error: 'same tx_hash already DELIVERED in ledger (used by ' + used.order_id + ')',
       });
@@ -354,7 +354,7 @@ export async function processOrder(db, env, input) {
     gate = evaluatePaymentSafe(receipt, priceMeta);
     if (gate.payment_status !== 'PAID') {
       await finalizeLedger(db, meta.order_id, {
-        status: 'PAYMENT_FAILED', payment_status: gate.payment_status, amount_paid: gate.amount_paid,
+        status: 'PAYMENT_FAILED', payment_status: gate.payment_status, amount_paid: gate.amount_paid, product_id: priceMeta.product_id,
         price_source: priceMeta.price_source, expected_amount: priceMeta.expected_amount,
         quote_ref: priceMeta.quote_ref, file_name: meta.file_name, file_ext: meta.file_ext,
         last_error: gate.payment_detail,
@@ -370,9 +370,9 @@ export async function processOrder(db, env, input) {
     if (meta.test_mode) {
       await insertLedger(db, {
         order_id: meta.order_id, client_email: meta.client_email, tx_hash: null,
-        status: 'QA_FAILED', qa_status: 'FAIL', qa_report: qa.qa_report,
+        status: 'QA_FAILED', qa_status: 'FAIL', qa_report: qa.qa_report, product_id: qa.product_id,
         payment_status: qa.payment_status, amount_paid: qa.amount_paid,
-        price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref,
+        price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref, product_id: qa.product_id,
         file_name: meta.file_name, file_ext: meta.file_ext, rows_in: qa.rows_in, rows_out: qa.rows_out,
         last_error: qa.qa_report,
       });
@@ -406,7 +406,7 @@ export async function processOrder(db, env, input) {
   const finalRow = {
     status: finalStatus, qa_status: 'PASS', qa_report: qa.qa_report,
     payment_status: qa.payment_status, amount_paid: qa.amount_paid,
-    price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref,
+    price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref, product_id: qa.product_id,
     file_name: meta.file_name, file_ext: meta.file_ext, rows_in: qa.rows_in, rows_out: qa.rows_out,
     delivery_channel: 'email', delivery_status: dlv.delivery_status,
     last_error: dlv.delivery_error || null,
@@ -420,7 +420,7 @@ export async function processOrder(db, env, input) {
   const a = await audit(db, 'order', meta.order_id, meta, finalStatus, dlv.delivery_error || null);
   return {
     order_id: meta.order_id,
-    order_status: finalStatus, delivery: dlv, qa_report: qa.qa_report,
+    order_status: finalStatus, delivery: dlv, qa_report: qa.qa_report, product_id: qa.product_id, quote_ref: qa.quote_ref,
     rows_in: qa.rows_in, rows_out: qa.rows_out, quote_ref: qa.quote_ref,
     payment_status: qa.payment_status, amount_paid: qa.amount_paid,
     message: 'Order processed. Delivery by email.', audit: a, latency_ms: Date.now() - t0,
