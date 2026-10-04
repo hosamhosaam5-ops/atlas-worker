@@ -9,13 +9,16 @@ const M4_LEDGER_COLUMNS = [
 ];
 
 export async function ensureOrderSchema(db) {
-  if (db.exec) {
-    await db.exec(`CREATE TABLE IF NOT EXISTS order_files (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL, file_kind TEXT NOT NULL, file_name TEXT NOT NULL, content_base64 TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(order_id,file_kind))`);
-    await db.exec(`CREATE TABLE IF NOT EXISTS delivery_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, dedupe_key TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL, channel TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT, body TEXT, attachment_names TEXT, status TEXT NOT NULL DEFAULT 'PENDING', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, provider_message_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`);
-    await db.exec(`CREATE TABLE IF NOT EXISTS order_quotes (quote_id INTEGER PRIMARY KEY AUTOINCREMENT, client_email TEXT NOT NULL, agreed_amount REAL NOT NULL, status TEXT NOT NULL DEFAULT 'ACTIVE', note TEXT, product_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`);
-  }
+  const execSql = async (sql) => {
+    if (db.execRaw) return db.execRaw(sql);
+    if (db.exec) return db.exec(sql);
+    return db.prepare(sql).run();
+  };
+  await execSql(`CREATE TABLE IF NOT EXISTS order_files (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL, file_kind TEXT NOT NULL, file_name TEXT NOT NULL, content_base64 TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(order_id,file_kind))`);
+  await execSql(`CREATE TABLE IF NOT EXISTS delivery_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, dedupe_key TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL, channel TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT, body TEXT, attachment_names TEXT, status TEXT NOT NULL DEFAULT 'PENDING', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, provider_message_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`);
+  await execSql(`CREATE TABLE IF NOT EXISTS order_quotes (quote_id INTEGER PRIMARY KEY AUTOINCREMENT, client_email TEXT NOT NULL, agreed_amount REAL NOT NULL, status TEXT NOT NULL DEFAULT 'ACTIVE', note TEXT, product_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`);
   const pragma = db.prepare('PRAGMA table_info(order_ledger)');
-  const { results } = pragma.all ? await pragma.all() : (pragma.allSync ? { results: pragma.allSync() } : { results: [] });
+  const { results } = pragma.bind ? await pragma.bind().all() : (pragma.all ? await pragma.all() : { results: [] });
   const have = new Set((results || []).map(r => r.name));
   for (const [name, type] of M4_LEDGER_COLUMNS) {
     if (!have.has(name)) {
@@ -53,7 +56,7 @@ export async function ensureOrderSchema(db) {
   )`);
 
   const outboxPragma = db.prepare('PRAGMA table_info(delivery_outbox)');
-  const { results: outboxCols } = outboxPragma.all ? await outboxPragma.all() : (outboxPragma.allSync ? { results: outboxPragma.allSync() } : { results: [] });
+  const { results: outboxCols } = outboxPragma.bind ? await outboxPragma.bind().all() : (outboxPragma.all ? await outboxPragma.all() : { results: [] });
   const obHave = new Set((outboxCols || []).map(c => c.name));
   if (!obHave.has('dedupe_key')) {
     await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN dedupe_key TEXT');
@@ -73,7 +76,7 @@ export async function ensureOrderSchema(db) {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   const quotePragma = db.prepare('PRAGMA table_info(order_quotes)');
-  const { results: quoteCols } = quotePragma.all ? await quotePragma.all() : (quotePragma.allSync ? { results: quotePragma.allSync() } : { results: [] });
+  const { results: quoteCols } = quotePragma.bind ? await quotePragma.bind().all() : (quotePragma.all ? await quotePragma.all() : { results: [] });
   const quoteHave = new Set((quoteCols || []).map(c => c.name));
   if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT');
 
