@@ -55,9 +55,9 @@ const baseInput = (over = {}) => ({
   __file_name: 'data.csv', __file_bytes: csvBytes('name,age\nAli,30\nSara,25\n'), ...over,
 });
 
-async function addQuote(db, email, amount) {
-  await db.prepare("INSERT INTO order_quotes (client_email, agreed_amount, status) VALUES (?, ?, 'ACTIVE')")
-    .bind(email.trim().toLowerCase(), amount).run();
+async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
+  await db.prepare("INSERT INTO order_quotes (client_email, agreed_amount, status, product_id) VALUES (?, ?, 'ACTIVE', ?)")
+    .bind(email.trim().toLowerCase(), amount, productId).run();
 }
 
 // ================= UNIT: Prepare Order Meta (ports) =================
@@ -153,7 +153,9 @@ async function addQuote(db, email, amount) {
   // find actual row
   const { results: ledRows } = await db.prepare('SELECT * FROM order_ledger').bind().all();
   const row = ledRows.find(x => x.status === 'DELIVERED');
+  const quoteRow = (await db.prepare("SELECT product_id FROM order_quotes WHERE quote_id = 1").bind().first());
   T('e2e.ledger DELIVERED + quote_ref + PAID + rows', !!row && String(row.quote_ref) === '1' && row.payment_status === 'PAID' && row.rows_in === 2 && row.rows_out === 2 && row.client_email === 'client@example.com', JSON.stringify(row));
+  T('e2e.product_id Quote -> Order Ledger invariant', !!quoteRow && quoteRow.product_id === 'atlas_ai_data_qa_v1' && row.product_id === quoteRow.product_id, JSON.stringify({quote: quoteRow, ledger: row}));
   const { results: files } = await db.prepare('SELECT file_kind FROM order_files').bind().all();
   T('e2e.files stored clean_csv + qa_report', files.length === 2);
   const ob = await db.prepare("SELECT * FROM delivery_outbox").bind().first();
