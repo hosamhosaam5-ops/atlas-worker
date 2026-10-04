@@ -10,10 +10,14 @@ const M4_LEDGER_COLUMNS = [
 
 export async function ensureOrderSchema(db) {
   const pragma = await db.prepare('PRAGMA table_info(order_ledger)');
-  const { results } = pragma.all ? await pragma.all() : { results: [] };
+  const { results } = pragma.all ? await pragma.all() : (pragma.allSync ? { results: pragma.allSync() } : { results: [] });
   const have = new Set((results || []).map(r => r.name));
   for (const [name, type] of M4_LEDGER_COLUMNS) {
-    if (!have.has(name)) await db.prepare(`ALTER TABLE order_ledger ADD COLUMN ${name} ${type}`).run();
+    if (!have.has(name)) {
+      const stmt = db.prepare(`ALTER TABLE order_ledger ADD COLUMN ${name} ${type}`);
+      if (stmt.run) await stmt.run();
+      else if (db.exec) await db.exec(`ALTER TABLE order_ledger ADD COLUMN ${name} ${type}`);
+    }
   }
 
   await db.prepare(`CREATE TABLE IF NOT EXISTS order_files (
