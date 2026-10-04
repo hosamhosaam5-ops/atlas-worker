@@ -116,6 +116,47 @@ jobs:
           console.log('BASE_RPC_FAIL_CLOSED=PASS');
           NODE
 
+      - name: Real Base RPC positive USDC gate probe (read-only)
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { evaluatePaymentSafe, WALLET, USDC_CONTRACT, BASE_NETWORK } from './src/orders/payment.js';
+
+          const rpc = 'https://mainnet.base.org';
+          const call = async (method, params) => {
+            const res = await fetch(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+            if (!res.ok) throw new Error(method + ' HTTP ' + res.status);
+            return await res.json();
+          };
+          const latest = BigInt((await call('eth_blockNumber', [])).result);
+          const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+          const toTopic = '0x' + WALLET.slice(2).toLowerCase().padStart(64, '0');
+          const contract = USDC_CONTRACT.toLowerCase();
+          let found = null;
+
+          // Read-only scan: recent Base blocks, no transaction submission and no D1 mutation.
+          for (let end = latest; end > latest - 300000n && !found; end -= 50000n) {
+            const start = end - 49999n > 0n ? end - 49999n : 0n;
+            const response = await call('eth_getLogs', [{ address: USDC_CONTRACT, fromBlock: '0x' + start.toString(16), toBlock: '0x' + end.toString(16), topics: [transferTopic, null, toTopic] }]);
+            if (response.error) throw new Error('eth_getLogs error: ' + JSON.stringify(response.error));
+            if (response.result?.length) { found = response.result[0]; break; }
+          }
+
+          if (!found) {
+            console.log(JSON.stringify({ positive_gate_probe: 'NO_EXISTING_INCOMING_TRANSFER_FOUND_IN_RECENT_WINDOW', wallet: WALLET, usdc_contract: USDC_CONTRACT, latest_block: '0x' + latest.toString(16) }, null, 2));
+            console.log('BASE_RPC_POSITIVE_GATE=NOT_PROVABLE_WITHOUT_AN_EXISTING_INCOMING_PAYMENT');
+            process.exit(0);
+          }
+
+          const receiptResponse = await call('eth_getTransactionReceipt', [found.transactionHash]);
+          const amountRaw = BigInt(found.data);
+          const amountUsdc = Number(amountRaw) / 1e6;
+          const verdict = evaluatePaymentSafe(receiptResponse, { wallet: WALLET, usdc_contract: USDC_CONTRACT, expected_amount: amountUsdc, network: BASE_NETWORK, tx_hash: found.transactionHash });
+          console.log(JSON.stringify({ transaction_hash: found.transactionHash, block_number: found.blockNumber, amount_usdc: amountUsdc, verdict, note: 'Existing on-chain inbound transfer used only as a read-only parser/gate fixture; no order, ledger, quote, payment, or delivery mutation.' }, null, 2));
+          if (verdict.payment_status !== 'PAID') throw new Error('Expected PAID for the exact amount represented by the real USDC transfer; got ' + verdict.payment_status);
+          console.log('BASE_RPC_POSITIVE_GATE=PASS');
+          NODE
+
       - name: MCP remote probe (non-blocking)
         continue-on-error: true
         run: |
