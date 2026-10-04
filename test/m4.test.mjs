@@ -157,7 +157,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   T('e2e.ledger DELIVERED + quote_ref + PAID + rows', !!row && String(row.quote_ref) === '1' && row.payment_status === 'PAID' && row.rows_in === 2 && row.rows_out === 2 && row.client_email === 'client@example.com', JSON.stringify(row));
   T('e2e.product_id Quote -> Order Ledger invariant', !!quoteRow && quoteRow.product_id === 'atlas_ai_data_qa_v1' && row.product_id === quoteRow.product_id, JSON.stringify({quote: quoteRow, ledger: row}));
   const { results: files } = await db.prepare('SELECT file_kind FROM order_files').bind().all();
-  T('e2e.files stored clean_csv + qa_report', files.length === 2);
+  T('e2e.files stored original + clean_csv + qa_report', files.length === 3 && files.some(x=>x.file_kind === 'original') && files.some(x=>x.file_kind === 'clean_csv') && files.some(x=>x.file_kind === 'qa_report'));
   const ob = await db.prepare("SELECT * FROM delivery_outbox").bind().first();
   T('e2e.outbox SENT attempts=1', ob.status === 'SENT' && ob.attempts === 1);
 })();
