@@ -45,16 +45,16 @@ export async function ensureOrderSchema(db) {
     provider_message_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT
-  )`).run();
+  )`);
 
   const { results: outboxCols } = await db.prepare('PRAGMA table_info(delivery_outbox)').all();
   const obHave = new Set((outboxCols || []).map(c => c.name));
   if (!obHave.has('dedupe_key')) {
-    await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN dedupe_key TEXT').run();
-    await db.prepare("UPDATE delivery_outbox SET dedupe_key = 'order|' || order_id || '|' || channel WHERE dedupe_key IS NULL").run();
-    await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_dedupe ON delivery_outbox(dedupe_key)').run();
+    await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN dedupe_key TEXT');
+    await db.prepare("UPDATE delivery_outbox SET dedupe_key = 'order|' || order_id || '|' || channel WHERE dedupe_key IS NULL");
+    await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_dedupe ON delivery_outbox(dedupe_key)');
   }
-  if (!obHave.has('provider_message_id')) await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN provider_message_id TEXT').run();
+  if (!obHave.has('provider_message_id')) await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN provider_message_id TEXT');
 
   // Quote table is also ensured here because the order engine consumes it.
   await db.prepare(`CREATE TABLE IF NOT EXISTS order_quotes (
@@ -65,13 +65,13 @@ export async function ensureOrderSchema(db) {
     note TEXT,
     product_id TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`).run();
+  )`);
   const { results: quoteCols } = await db.prepare('PRAGMA table_info(order_quotes)').all();
   const quoteHave = new Set((quoteCols || []).map(c => c.name));
-  if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT').run();
+  if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT');
 
   await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_order_ledger_tx_hash
-    ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''`).run();
-  await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_email ON order_quotes(client_email, status)').run();
-  await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_product ON order_quotes(product_id, status)').run();
+    ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''`);
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_email ON order_quotes(client_email, status)');
+  await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_product ON order_quotes(product_id, status)');
 }
