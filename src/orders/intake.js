@@ -210,8 +210,8 @@ async function finalizeLedger(db, orderId, row) {
   ).bind(
     row.status, row.qa_status ?? null, row.qa_report ?? null, row.payment_status ?? null,
     row.amount_paid ?? null, row.price_source ?? null, row.expected_amount ?? null,
-    row.quote_ref ?? null, row.product_id ?? null, row.file_name ?? null, row.file_ext ?? null,
-    row.rows_in ?? null, row.rows_out ?? null, row.delivery_channel ?? null,
+    row.quote_ref ?? null, row.file_name ?? null, row.file_ext ?? null, row.rows_in ?? null,
+    row.rows_out ?? null, row.product_id ?? null, row.delivery_channel ?? null,
     row.delivery_status ?? null, row.last_error ?? null, orderId
   ).run();
 }
