@@ -14,7 +14,7 @@ async function verifyIdToken(env:OAuthEnv,token:string){
  // the client-specific base path, not merely the team-domain origin. For a
  // JWKS URL like .../cdn-cgi/access/sso/oidc/<client-id>/jwks, the issuer is
  // the same URL without the trailing /jwks path.
- const expectedIssuer=jwksUrl.toString().replace(/\\/jwks\\/?$/i,"");
+ const expectedIssuer=jwksUrl.toString().replace(/\/jwks\/?$/i,"");
  const issuerOk=claims.iss===expectedIssuer;
  const audienceOk=Array.isArray(claims.aud)?claims.aud.includes(env.ACCESS_CLIENT_ID):claims.aud===env.ACCESS_CLIENT_ID;
  if(!issuerOk)throw new Error("INVALID_ID_TOKEN_ISSUER");
