@@ -7,6 +7,12 @@ async function makePkce(){const v=b64url(crypto.getRandomValues(new Uint8Array(3
 async function verifyIdToken(env:OAuthEnv,token:string){
  const [h,p,s]=token.split(".");if(!h||!p||!s)throw new Error("INVALID_ID_TOKEN");
  const header=JSON.parse(decode(h));const claims=JSON.parse(decode(p));
+ if(header.alg!=="RS256")throw new Error("INVALID_ID_TOKEN_ALG");
+ const expectedIssuer=new URL(env.ACCESS_JWKS_URL).origin;
+ const issuerOk=claims.iss===expectedIssuer;
+ const audienceOk=Array.isArray(claims.aud)?claims.aud.includes(env.ACCESS_CLIENT_ID):claims.aud===env.ACCESS_CLIENT_ID;
+ if(!issuerOk)throw new Error("INVALID_ID_TOKEN_ISSUER");
+ if(!audienceOk)throw new Error("INVALID_ID_TOKEN_AUDIENCE");
  const jwks=await (await fetch(env.ACCESS_JWKS_URL)).json() as any;const jwk=jwks.keys?.find((k:any)=>k.kid===header.kid);if(!jwk)throw new Error("UNKNOWN_ID_TOKEN_KEY");
  const key=await crypto.subtle.importKey("jwk",jwk,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);
  const sig=Uint8Array.from(decode(s),c=>c.charCodeAt(0));
