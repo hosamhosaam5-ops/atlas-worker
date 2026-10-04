@@ -35,7 +35,7 @@ export async function runCommercialIntegration(db, env) {
   },envForTest(env,'valid','success'));
 
   const failEmail='atlas.recovery.'+suffix+'@example.invalid';
-  const recoveryQuote=await createQuote(db,{client_email:failEmail,agreed_amount:75,note:'synthetic recovery test',product_id:productId});
+  await createQuote(db,{client_email:failEmail,agreed_amount:75,note:'synthetic recovery test',product_id:productId});
   const failedDelivery=await safeProcess('recovery',{
     client_email:failEmail,tx_hash:tx('2'+suffix),__order_id:'REC-'+suffix,__file_name:'input.csv',__file_bytes:csvBytes
   },envForTest(env,'valid','fail'));
@@ -60,14 +60,20 @@ export async function runCommercialIntegration(db, env) {
     errors:stress.filter(x=>x.order_status==='HARNESS_ERROR').map(x=>({order_id:x.order_id,error:x.error,label:x.label}))
   };
 
+  const ledger=await db.prepare("SELECT order_id,quote_ref,product_id,status,payment_status,delivery_status FROM order_ledger WHERE order_id=? LIMIT 1")
+    .bind(order.order_id).first();
+  const productIdInvariant=ledger?.product_id === productId && String(ledger?.quote_ref) === String(quote.quote_id);
+
   return {
     ok: order.order_status==='DELIVERED'
       && duplicate.order_status==='DUPLICATE_TX'
       && failedDelivery.order_status==='DELIVERY_FAILED'
       && recoveredDelivery.delivery_status==='SENT'
-      && counts.delivered===1 && counts.duplicate_tx===7 && counts.other===0,
+      && counts.delivered===1 && counts.duplicate_tx===7 && counts.other===0
+      && productIdInvariant,
     product_id:productId,
     quote_id:quote.quote_id,
+    product_id_invariant:{pass:productIdInvariant,quote_product_id:productId,ledger_product_id:ledger?.product_id ?? null,quote_id:quote.quote_id,ledger_quote_ref:ledger?.quote_ref ?? null},
     order:{order_id:order.order_id,status:order.order_status,payment_status:order.payment_status,delivery:order.delivery},
     duplicate:{order_id:duplicate.order_id,status:duplicate.order_status},
     recovery:{order_id:failedDelivery.order_id,first_status:failedDelivery.order_status,retry_status:recoveredDelivery.delivery_status},
