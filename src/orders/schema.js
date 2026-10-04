@@ -9,6 +9,11 @@ const M4_LEDGER_COLUMNS = [
 ];
 
 export async function ensureOrderSchema(db) {
+  if (db.exec) {
+    await db.exec(`CREATE TABLE IF NOT EXISTS order_files (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL, file_kind TEXT NOT NULL, file_name TEXT NOT NULL, content_base64 TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(order_id,file_kind))`);
+    await db.exec(`CREATE TABLE IF NOT EXISTS delivery_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, dedupe_key TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL, channel TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT, body TEXT, attachment_names TEXT, status TEXT NOT NULL DEFAULT 'PENDING', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, provider_message_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`);
+    await db.exec(`CREATE TABLE IF NOT EXISTS order_quotes (quote_id INTEGER PRIMARY KEY AUTOINCREMENT, client_email TEXT NOT NULL, agreed_amount REAL NOT NULL, status TEXT NOT NULL DEFAULT 'ACTIVE', note TEXT, product_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`);
+  }
   const pragma = db.prepare('PRAGMA table_info(order_ledger)');
   const { results } = pragma.all ? await pragma.all() : (pragma.allSync ? { results: pragma.allSync() } : { results: [] });
   const have = new Set((results || []).map(r => r.name));
