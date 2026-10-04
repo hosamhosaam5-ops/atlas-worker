@@ -13,6 +13,8 @@ import { getFileStorage } from './storage.js';
 import { getEmailProvider } from './email.js';
 import { createOutbox } from '../core/outbox.js';
 
+const MAX_DATA_ROWS = 5000;
+
 // ---------- Prepare Order Meta (verbatim port) ----------
 export function prepareOrderMeta(first, hasFile) {
   const fileKeys = hasFile ? [hasFile] : [];
@@ -293,6 +295,19 @@ export async function processOrder(db, env, input) {
     });
     const a = await audit(db, 'order', meta.order_id, meta, 'REJECTED', 'file_parse_error');
     return { order_id: meta.order_id, order_status: 'REJECTED', reason: 'Could not parse uploaded file: ' + extractError, audit: a, latency_ms: Date.now() - t0 };
+  }
+
+  // Product contract: starter scope is capped at 5,000 parsed data rows. Reject before
+  // quote/payment processing so an oversized upload never consumes a payment transaction.
+  if (rows.length > MAX_DATA_ROWS) {
+    const reason = 'ROW_LIMIT_EXCEEDED: maximum ' + MAX_DATA_ROWS + ' data rows';
+    await insertLedger(db, {
+      order_id: meta.order_id, client_email: meta.client_email, tx_hash: meta.tx_hash, product_id: meta.product_id,
+      status: 'REJECTED', payment_status: 'NOT_CHECKED', file_name: meta.file_name, file_ext: meta.file_ext,
+      rows_in: rows.length, rows_out: 0, last_error: reason,
+    });
+    const a = await audit(db, 'order', meta.order_id, meta, 'REJECTED', reason);
+    return { order_id: meta.order_id, order_status: 'REJECTED', reason, audit: a, latency_ms: Date.now() - t0 };
   }
 
   let gate;   // the node-that-actually-ran payment result (Evaluate Payment or Apply Test Prepay)
