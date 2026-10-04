@@ -193,6 +193,10 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   // QA fail: file with only empty rows
   r = await processOrder(db, env('valid'), baseInput({ tx_hash: '0x' + '33'.repeat(32), __file_bytes: csvBytes('a,b\n,\n,\n') }));
   T('e2e.QA_FAILED all-empty rows', r.order_status === 'QA_FAILED' && r.qa_report.includes('FAIL'));
+  // Starter commercial scope is capped at 5,000 parsed data rows and rejects oversized input before payment.
+  const oversized = 'a\\n' + Array.from({ length: 5001 }, (_, n) => String(n)).join('\\n') + '\\n';
+  r = await processOrder(db, env('valid'), baseInput({ tx_hash: '0x' + '34'.repeat(32), __file_bytes: csvBytes(oversized) }));
+  T('e2e.ROW_LIMIT_EXCEEDED before payment', r.order_status === 'REJECTED' && r.reason.includes('5000'));
 
   // invalid input
   r = await processOrder(db, env('valid'), { client_email: 'x@y.z', tx_hash: 'bad' });
