@@ -33,6 +33,8 @@ import { getTelegramProvider } from './core/outbox.js';
 import { ensureAutonomySchema, listCapabilities, registerCapability, getPolicy, checkBudget, autonomySnapshot } from './autonomy/registry.js';
 // @ts-ignore
 import { sanitizeExternalInput, authorizeAction, validateMarketplaceLead } from './autonomy/policy.js';
+// @ts-ignore
+import { acquisitionCycle, discoverCapabilities, scanAgentDemand, selectLLMRoute } from './autonomy/engine.js';
 import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { handleAccessRequest } from './mcp/access-handler.ts';
 
@@ -61,6 +63,9 @@ interface Env {
   ACCESS_TOKEN_URL: string;
   ACCESS_AUTHORIZATION_URL: string;
   ACCESS_JWKS_URL: string;
+  OPENROUTER_FREE_MODEL?: string;
+  GITHUB_MODELS_TOKEN?: string;
+  GITHUB_MODELS_MODEL?: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -101,6 +106,10 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    {name:"autonomy_snapshot",description:"Read the bounded autonomy snapshot: capabilities, policy, identity, and demand signals.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
    {name:"get_autonomy_policy",description:"Read ATLAS autonomous execution guardrails.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
    {name:"check_autonomy_budget",description:"Check whether a proposed autonomous workload stays within ATLAS execution limits.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{tool_calls:{type:"integer"},retries:{type:"integer"},execution_seconds:{type:"number"},external_requests:{type:"integer"},build_iterations:{type:"integer"},outbound_spend_usdc:{type:"number"}},additionalProperties:false}},
+   {name:"discover_capabilities",description:"Read-only discovery and health probe of configured free-first capabilities and agent-native services.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
+   {name:"scan_agent_demand",description:"Read-only scan for public agent-native demand signals; never applies, messages, pays, or creates an order.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
+   {name:"acquisition_cycle",description:"Run the bounded autonomous acquisition discovery cycle: capability discovery plus public demand scan.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
+   {name:"select_llm_route",description:"Select currently available free-first LLM routes without invoking a provider.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{preferFree:{type:"boolean"}},additionalProperties:false}},
    {name:"list_financial_approvals",description:"List financial approval records and lifecycle states.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{status:{type:["string","null"]},limit:{type:"integer"}},additionalProperties:false}},
    {name:"run_commercial_integration",description:"Run a real D1-backed order/quote/payment-gate/QA/delivery/idempotency/recovery integration suite using only MOCK payment and email adapters. Defaults to the active commercial catalog product when product_id is omitted; an explicit product_id may target another ACTIVE product.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{product_id:{type:"string"}},additionalProperties:false}},
    {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
@@ -108,7 +117,8 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
   if(msg.method!=="tools/call")return result({error:{code:-32601,message:"Method not found"}});
   const name=msg.params?.name,args=msg.params?.arguments||{};let out:any;
   const requiredScopeByTool:any={
-    health:"mcp:read",read_state:"mcp:read",read_tables:"mcp:read",read_workflow_metadata:"mcp:read",list_capabilities:"mcp:read",autonomy_snapshot:"mcp:read",get_autonomy_policy:"mcp:read",check_autonomy_budget:"mcp:read",
+    health:"mcp:read",read_state:"mcp:read",read_tables:"mcp:read",read_workflow_metadata:"mcp:read",list_capabilities:"mcp:read",autonomy_snapshot:"mcp:read",get_autonomy_policy:"mcp:read",check_autonomy_budget:"mcp:read",select_llm_route:"mcp:read",
+    discover_capabilities:"mcp:execute",scan_agent_demand:"mcp:execute",acquisition_cycle:"mcp:execute",
     list_products:"mcp:read",list_financial_approvals:"mcp:read",list_capabilities:"mcp:read",autonomy_snapshot:"mcp:read",get_autonomy_policy:"mcp:read",check_autonomy_budget:"mcp:read",
     write_state:"mcp:write",write_memory:"mcp:write",upsert_product:"mcp:write",create_quote:"mcp:write",
     request_financial_approval:"mcp:write",decide_financial_approval:"mcp:write",
@@ -126,6 +136,10 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="autonomy_snapshot"){out=await autonomySnapshot(env.DB);}
    else if(name==="get_autonomy_policy"){out=await getPolicy(env.DB);}
    else if(name==="check_autonomy_budget"){out=await checkBudget(env.DB,args);}
+   else if(name==="select_llm_route"){out={routes:selectLLMRoute(env,{preferFree:args.preferFree!==false})};}
+   else if(name==="discover_capabilities"){out=await discoverCapabilities(env.DB);}
+   else if(name==="scan_agent_demand"){out=await scanAgentDemand(env.DB);}
+   else if(name==="acquisition_cycle"){out=await acquisitionCycle(env.DB);}
    else if(name==="read_workflow_metadata")out={service:"ATLAS Cloudflare Worker",bridge:"/bridge/chatgpt",mcp:"/mcp",mcp_mode:"READ_WRITE_EXECUTE",mcp_transport:"Streamable HTTP",auth:"OAuth 2.1 via Cloudflare Access"};
    else if(name==="write_state"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_STATE_ROWS");let written=0;for(const row of args.rows){if(!row||!row.idempotency_key)throw new Error("INVALID_STATE_ROW");const payload=row.payload_json!==undefined?String(row.payload_json):JSON.stringify(row.payload??{});await env.DB.prepare("INSERT INTO execution_state (idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,payload_json,error_code,attempt_count,delivery_state,message_key,chunk_index,expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(idempotency_key) DO UPDATE SET status=excluded.status,payload_json=excluded.payload_json,updated_at=datetime('now')").bind(String(row.idempotency_key),row.record_kind??null,row.correlation_id??null,row.request_id??null,row.entity_type??null,row.entity_id??null,row.action_id??null,row.tool??null,row.status??null,row.progress??null,payload,row.error_code??null,row.attempt_count??0,row.delivery_state??null,row.message_key??null,row.chunk_index??null,row.expires_at??null).run();written++;}out={written};}
    else if(name==="write_memory"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_MEMORY_ROWS");for(const row of args.rows){if(!row||!String(row.content||"").trim())throw new Error("INVALID_MEMORY_ROW");await env.DB.prepare("INSERT INTO ceo_memory (category,content) VALUES (?,?)").bind(String(row.category||"fact"),String(row.content)).run();}out={written:args.rows.length};}
@@ -404,6 +418,7 @@ export default {
         ['daily_report', () => runDailyReport(env, undefined, alertAdapter)],
         ['revenue_watch', () => runRevenueWatch(env, undefined, alertAdapter)],
         ['telegraph_monitor', () => runTelegraphMonitor(env, undefined, alertAdapter)],
+        ['acquisition_cycle', () => acquisitionCycle(env.DB)],
       ] as const) {
         try { results[name] = await fn(); }
         catch (e: any) { results[name] = { error: String(e?.message || e) }; }
