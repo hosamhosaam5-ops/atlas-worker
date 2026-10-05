@@ -52,12 +52,26 @@ export async function ensureAutonomySchema(db){
     order_id TEXT, score_delta REAL NOT NULL DEFAULT 0, evidence_json TEXT DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS growth_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, action_key TEXT UNIQUE NOT NULL, action_type TEXT NOT NULL,
+    target_id TEXT, payload_json TEXT DEFAULT '{}', status TEXT NOT NULL DEFAULT 'READY',
+    risk TEXT NOT NULL DEFAULT 'medium', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT
+  )`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS pricing_rules (
+    rule_id TEXT PRIMARY KEY, min_usdc REAL NOT NULL, max_usdc REAL NOT NULL,
+    multiplier REAL NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'ACTIVE', updated_at TEXT
+  )`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS engineering_jobs (
+    job_id TEXT PRIMARY KEY, source TEXT, request_summary TEXT, status TEXT NOT NULL DEFAULT 'QUEUED',
+    risk TEXT NOT NULL DEFAULT 'high', sandbox TEXT, result_json TEXT DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT
+  )`).run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS demand_signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, signal_key TEXT NOT NULL,
     request_summary TEXT, score REAL DEFAULT 0, status TEXT DEFAULT 'NEW',
     created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT
   )`).run();
   await db.prepare(`INSERT OR IGNORE INTO autonomy_policies(policy_id) VALUES ('default')`).run();
+  await db.prepare(`INSERT OR IGNORE INTO pricing_rules(rule_id,min_usdc,max_usdc,multiplier) VALUES ('default',15,5000,1)`).run();
   await db.prepare(`INSERT OR IGNORE INTO agent_identity(identity_id,display_name,protocol) VALUES ('atlas','ATLAS','MCP/A2A')`).run();
   for(const c of DEFAULT_CAPABILITIES){
     await db.prepare(`INSERT OR IGNORE INTO capabilities(capability_id,kind,provider,protocol,cost_class,risk,status,score,metadata_json,updated_at)
