@@ -87,7 +87,7 @@ export function selectLLMRoute(env,{preferFree=true}={}) {
   return preferFree ? routes.filter(x=>x.cost!=='paid') : routes;
 }
 
-export function buildAutonomousDecision(db,action,context={}) {
+function buildAutonomousDecision(db,action,context={}) {
   return authorizeAction(action,context);
 }
 
@@ -111,7 +111,7 @@ export async function prepareGrowthActions(db) {
   return {ok:true,actions};
 }
 
-export async function queueEngineeringJob(db,{source='customer_request',request_summary,risk='high'}={}) {
+async function queueEngineeringJob(db,{source='customer_request',request_summary,risk='high'}={}) {
   if(!String(request_summary||'').trim()) throw new Error('EMPTY_ENGINEERING_REQUEST');
   const jobId='ENG-'+crypto.randomUUID().replaceAll('-','').slice(0,16);
   await db.prepare("INSERT INTO engineering_jobs(job_id,source,request_summary,status,risk,sandbox) VALUES(?,?,?,?,?,?)")
