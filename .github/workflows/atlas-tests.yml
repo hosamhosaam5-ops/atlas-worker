@@ -172,7 +172,26 @@ jobs:
           curl --fail-with-body --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/catalog.json -o catalog.json
           cat catalog.json
           jq -e '.products[] | select(.product_id=="atlas_ai_data_qa_v1" and .status=="ACTIVE" and (.price_usdc|tonumber)==15)' catalog.json
-          curl --http1.1 -sS -D x402-headers.txt -o x402-body.json -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1 > x402-status.txt
+          python3 - <<'PY'
+          import urllib.request
+          u="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1"
+          try:
+              r=urllib.request.urlopen(u, timeout=20)
+              body=r.read()
+              status=r.status
+              headers=r.headers
+          except urllib.error.HTTPError as e:
+              body=e.read()
+              status=e.code
+              headers=e.headers
+          open("x402-body.json","wb").write(body)
+          open("x402-status.txt","w").write(str(status))
+          with open("x402-headers.txt","w") as f:
+              f.write(str(headers))
+          print("x402_status=",status)
+          print("x402_body_bytes=",len(body))
+          print("x402_payment_required_present=",bool(headers.get("PAYMENT-REQUIRED")))
+          PY
           printf 'x402_status='; cat x402-status.txt; echo
           echo '--- x402 headers ---'; sed -n '1,80p' x402-headers.txt
           echo '--- x402 body bytes ---'; wc -c x402-body.json
