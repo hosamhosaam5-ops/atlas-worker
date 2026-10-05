@@ -4,21 +4,76 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/atlas-registry-submit.yml"
+
 jobs:
   submit:
     if: startsWith(github.event.head_commit.message, 'register ATLAS')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Submit ATLAS manifest to public A2A Registry
+      - name: Register ATLAS through the public Submit Agent flow
         env:
-          MANIFEST_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+          AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error \
-            -X POST https://api.a2a-registry.org/public/ingest \
-            -H 'content-type: application/json' \
-            --data "{\"manifestUrl\":\"$MANIFEST_URL\"}" \
-            | tee registry-response.json
-          grep -Eq '"success"[[:space:]]*:[[:space:]]*true|"id"|"agent"' registry-response.json
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright >/dev/null 2>&1
+          npx playwright install --with-deps chromium >/dev/null 2>&1
 
-# trigger registry submission
+          node <<'NODE'
+          const { chromium } = require('playwright');
+          (async () => {
+            const browser = await chromium.launch({headless:true});
+            const page = await browser.newPage();
+            page.on('console', m => console.log('[browser]', m.type(), m.text()));
+            page.on('requestfailed', r => console.log('[requestfailed]', r.url(), r.failure()?.errorText || 'unknown'));
+            await page.goto('https://www.a2a-registry.org/submit', {waitUntil:'domcontentloaded', timeout:60000});
+            await page.waitForLoadState('networkidle', {timeout:30000}).catch(()=>{});
+
+            console.log('submit_page=', page.url());
+            console.log('title=', await page.title());
+
+            const inputs = await page.locator('input').evaluateAll(els => els.map(e => ({
+              type:e.type, name:e.name, placeholder:e.placeholder, aria:e.getAttribute('aria-label')
+            })));
+            console.log('inputs=', JSON.stringify(inputs));
+
+            const input = page.locator('input').first();
+            await input.fill(process.env.AGENT_URL);
+
+            const buttons = await page.locator('button').evaluateAll(els => els.map(e => (e.innerText || e.textContent || '').trim()));
+            console.log('buttons=', JSON.stringify(buttons));
+
+            await page.getByRole('button', {name:/scan agent/i}).click();
+            await page.waitForTimeout(5000);
+            await page.waitForLoadState('networkidle', {timeout:30000}).catch(()=>{});
+
+            console.log('after_submit_url=', page.url());
+            const body = await page.locator('body').innerText();
+            console.log('result_text=', body.slice(0,12000));
+
+            if (/captcha|verify you are human|access denied/i.test(body)) {
+              throw new Error('Registry submission was blocked by anti-bot/human verification; no registration claim made.');
+            }
+
+            const success = /registered|unclaimed|go live|success|agent id|package name/i.test(body);
+            if (!success) {
+              throw new Error('Registry UI did not expose a registration success/Unclaimed result after Scan Agent.');
+            }
+
+            await browser.close();
+          })().catch(async err => {
+            console.error(err.stack || String(err));
+            process.exit(1);
+          });
+          NODE
+
+      - name: Independently verify ATLAS appears in the public registry
+        env:
+          AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error             'https://api.a2a-registry.org/public/agents?q=ATLAS'             -o registry-search.json
+          cat registry-search.json
+          grep -Fq "$AGENT_URL" registry-search.json
+          echo "ATLAS_PUBLIC_REGISTRY_VERIFIED=true"
