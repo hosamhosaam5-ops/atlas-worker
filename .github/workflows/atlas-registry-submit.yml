@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   submit:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'register ATLAS')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -87,8 +86,8 @@ jobs:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
           set +e
-          status="browser_step_failed"
-          if [ -f registry-browser-result.txt ]; then status="browser_step_completed"; fi
+          export STATUS="browser_step_failed"
+          if [ -f registry-browser-result.txt ]; then export STATUS="browser_step_completed"; fi
           python3 - <<'PY' > .github/registry-attempt-result.json
 import json, pathlib, os, datetime
 p=pathlib.Path("registry-browser-result.txt")
