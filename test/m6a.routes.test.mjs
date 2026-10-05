@@ -49,7 +49,7 @@ test('route.health: GET /health returns current configured provider matrix', asy
   assert.equal(j.brave, 'MOCK');
   assert.equal(j.telegram, 'LIVE');
   assert.equal(j.email, 'MOCK');
-  assert.equal(j.payment, 'MOCK');
+  assert.equal(j.payment, 'BASE_RPC');
 });
 
 test('route.mcp: OAuth discovery is available and unauthenticated MCP is rejected', async () => {
