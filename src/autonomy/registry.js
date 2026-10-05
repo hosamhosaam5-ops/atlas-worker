@@ -102,8 +102,8 @@ export async function registerCapability(db,args){
 }
 
 export async function getPolicy(db){
-  await ensureAutonomySchema(db);
-  return await db.prepare('SELECT * FROM autonomy_policies WHERE policy_id=\'default\'').first();
+  const row = await db.prepare('SELECT * FROM autonomy_policies WHERE policy_id=\'default\'').first();
+  return row || {policy_id:'default',max_tool_calls:20,max_retries:3,max_execution_seconds:120,max_external_requests:30,max_build_iterations:5,outbound_spend_allowed:0};
 }
 
 export async function checkBudget(db,usage={}){
@@ -119,7 +119,6 @@ export async function checkBudget(db,usage={}){
 }
 
 export async function recordReputation(db,{identity_id='atlas',event_type,order_id=null,score_delta=0,evidence={}}){
-  await ensureAutonomySchema(db);
   await db.prepare('INSERT INTO reputation_events(identity_id,event_type,order_id,score_delta,evidence_json) VALUES(?,?,?,?,?)')
     .bind(identity_id,event_type,order_id,Number(score_delta||0),JSON.stringify(evidence||{})).run();
   await db.prepare(`UPDATE agent_identity SET reputation_score=MAX(0,reputation_score+?), 
