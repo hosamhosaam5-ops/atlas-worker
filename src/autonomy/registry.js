@@ -102,7 +102,8 @@ export async function registerCapability(db,args){
 }
 
 export async function getPolicy(db){
-  const row = await db.prepare('SELECT * FROM autonomy_policies WHERE policy_id=\'default\'').first();
+  const stmt = db.prepare('SELECT * FROM autonomy_policies WHERE policy_id=\'default\'');
+  const row = typeof stmt.first === 'function' ? await stmt.first() : null;
   return row || {policy_id:'default',max_tool_calls:20,max_retries:3,max_execution_seconds:120,max_external_requests:30,max_build_iterations:5,outbound_spend_allowed:0};
 }
 
