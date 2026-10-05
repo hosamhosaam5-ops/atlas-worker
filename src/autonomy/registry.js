@@ -119,7 +119,7 @@ export async function checkBudget(db,usage={}){
   return {allowed:violations.length===0,violations,policy:p};
 }
 
-export async function recordReputation(db,{identity_id='atlas',event_type,order_id=null,score_delta=0,evidence={}}){
+async function recordReputation(db,{identity_id='atlas',event_type,order_id=null,score_delta=0,evidence={}}){
   await ensureAutonomySchema(db);
   await db.prepare('INSERT INTO reputation_events(identity_id,event_type,order_id,score_delta,evidence_json) VALUES(?,?,?,?,?)')
     .bind(identity_id,event_type,order_id,Number(score_delta||0),JSON.stringify(evidence||{})).run();
@@ -131,10 +131,9 @@ export async function recordReputation(db,{identity_id='atlas',event_type,order_
 
 export async function autonomySnapshot(db){
   await ensureAutonomySchema(db);
-  const [caps,policy,identity,demand]=await Promise.all([
-    listCapabilities(db,{limit:50}),getPolicy(db),
-    db.prepare('SELECT * FROM agent_identity WHERE identity_id=\'atlas\'').first(),
-    db.prepare('SELECT * FROM demand_signals WHERE status=\'NEW\' ORDER BY score DESC, created_at DESC LIMIT 20').all()
-  ]);
+  const caps=await listCapabilities(db,{limit:50});
+  const policy=await getPolicy(db);
+  const identity=await db.prepare('SELECT * FROM agent_identity WHERE identity_id=\'atlas\'').first();
+  const demand=await db.prepare('SELECT * FROM demand_signals WHERE status=\'NEW\' ORDER BY score DESC, created_at DESC LIMIT 20').all();
   return {capabilities:caps,policy,identity,demand_signals:demand.results||[]};
 }
