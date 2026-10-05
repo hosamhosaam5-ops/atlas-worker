@@ -8,7 +8,7 @@ import { sanitizeExternalInput, validateMarketplaceLead, authorizeAction } from 
 const TIMEOUT_MS = 8000;
 
 const PUBLIC_SOURCES = [
-  {id:'agent_souk',kind:'marketplace',provider:'Agent Souk',protocol:'API/MCP/A2A',endpoint:'https://agentsouk.ai/v1/listings',cost_class:'free',risk:'medium'},
+  {id:'agent_souk',kind:'marketplace',provider:'Agent Souk',protocol:'API/MCP/A2A',endpoint:'https://api.agentsouk.dev/v1/listings',cost_class:'free',risk:'medium'},
   {id:'agentgigs',kind:'marketplace',provider:'AgentGigs',protocol:'API',endpoint:'https://www.agentgigs.io/docs/api',cost_class:'free',risk:'medium'},
   {id:'ecc',kind:'engineering',provider:'ECC',protocol:'GitHub/CLI',endpoint:'https://github.com/affaan-m/ECC',cost_class:'free_open_source',risk:'high'},
   {id:'okara_ai_cmo',kind:'growth',provider:'Okara AI CMO',protocol:'web',endpoint:'https://okara.ai/',cost_class:'free_or_trial',risk:'medium'},
@@ -56,7 +56,7 @@ function extractListings(payload){
 export async function scanAgentDemand(db) {
   const budget=await checkBudget(db,{external_requests:1});
   if(!budget.allowed) return {ok:false,blocked:budget.violations};
-  const sources=[{source:'agent_souk',url:'https://agentsouk.ai/v1/listings'}];
+  const sources=[{source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings'}];
   const signals=[];
   for(const s of sources){
     try {
