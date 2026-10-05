@@ -14,8 +14,10 @@ test('P2 catalog exposes only active machine-readable products', async ()=>{
 
 test('P2 referral tracking sanitizes and records bounded data', async ()=>{
   let bound;
-  const db={prepare(){return {run:async()=>{bound=[...arguments];}}}};
-  db.prepare=()=>({bind(...args){bound=args;return {run:async()=>({})}}});
+  const db={prepare(){return {
+    run:async()=>({}),
+    bind(...args){bound=args;return {run:async()=>({})}}
+  };}};
   const r=await trackReferral(db,{code:'agent-souk',path:'/r/agent-souk',user_agent:'x'.repeat(1000),source:'https://example.test'});
   assert.equal(r.ok,true);
   assert.equal(bound[0],'agent-souk');
