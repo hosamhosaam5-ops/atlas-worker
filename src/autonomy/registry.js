@@ -10,7 +10,6 @@ export const DEFAULT_CAPABILITIES = [
   {id:'workers_ai',kind:'llm',provider:'Cloudflare Workers AI',protocol:'native',cost_class:'free_quota',risk:'low',status:'ACTIVE'},
   {id:'free_llm_apis',kind:'llm',provider:'Free LLM API aggregators',protocol:'openai_compatible',cost_class:'free_or_trial',risk:'medium',status:'DISCOVERY'},
   {id:'openrouter_free',kind:'llm',provider:'OpenRouter',protocol:'openai_compatible',cost_class:'free_models',risk:'medium',status:'DISCOVERY'},
-  {id:'github_models',kind:'llm',provider:'GitHub Models',protocol:'openai_compatible',cost_class:'free_quota',risk:'medium',status:'DISCOVERY'},
   {id:'ecc',kind:'engineering',provider:'ECC (open-source agent engineering harness)',protocol:'local_cli',cost_class:'free_open_source',risk:'high',status:'DISCOVERY'},
   {id:'okara_ai_cmo',kind:'growth',provider:'Okara AI CMO',protocol:'web',cost_class:'free_or_trial',risk:'medium',status:'DISCOVERY'},
   {id:'agent_souk',kind:'marketplace',provider:'Agent Souk',protocol:'API/MCP',cost_class:'free',risk:'medium',status:'DISCOVERY'},
