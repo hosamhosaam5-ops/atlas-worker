@@ -99,6 +99,61 @@ export function getProvider(env) {
       },
     };
   }
+  if (kind === 'ROUTER') {
+    const providers = [];
+    if (env.AI && typeof env.AI.run === 'function') {
+      providers.push({ name: 'workers-ai', chat: getProvider({ ...env, AI_PROVIDER: 'WORKERS_AI' }).chat });
+    }
+    if (env.OPENROUTER_API_KEY) {
+      providers.push({ name: 'openrouter', chat: getProvider({ ...env, AI_PROVIDER: 'OPENROUTER' }).chat });
+    }
+    if (env.GITHUB_MODELS_TOKEN) {
+      providers.push({
+        name: 'github-models',
+        async chat({ model, system, user }) {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), AI_TIMEOUT_MS);
+          try {
+            const res = await fetch('https://models.github.ai/inference/chat/completions', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', authorization: 'Bearer ' + env.GITHUB_MODELS_TOKEN },
+              body: JSON.stringify({
+                model: model || env.GITHUB_MODELS_MODEL || 'openai/gpt-4o-mini',
+                messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
+              }),
+              signal: ctrl.signal
+            });
+            if (!res.ok) {
+              const e = new Error('github models http ' + res.status);
+              e.code = res.status === 429 ? 'AI_RATE_LIMIT' : 'AI_PROVIDER_ERROR';
+              throw e;
+            }
+            const data = await res.json();
+            const content = data?.choices?.[0]?.message?.content || '';
+            if (!content) { const e = new Error('github models returned empty response'); e.code='AI_PROVIDER_ERROR'; throw e; }
+            return { content };
+          } finally { clearTimeout(t); }
+        }
+      });
+    }
+    if (!providers.length) {
+      const e = new Error('No free LLM provider is configured');
+      e.code = 'AI_PROVIDER_UNAVAILABLE';
+      throw e;
+    }
+    let last;
+    for (const p of providers) {
+      try {
+        return await p.chat({ model, system, user });
+      } catch (e) {
+        last = e;
+        if (e?.code !== 'AI_RATE_LIMIT' && e?.code !== 'AI_PROVIDER_ERROR' && e?.code !== 'AI_TIMEOUT') throw e;
+      }
+    }
+    const e = new Error('All configured LLM routes failed: ' + String(last?.message || last || 'unknown'));
+    e.code = last?.code || 'AI_PROVIDER_ERROR';
+    throw e;
+  }
   if (kind === 'OPENROUTER') {
     // Not used in M2. Implemented structurally only — real use requires OPENROUTER_API_KEY
     // secret set by the founder, and explicit approval. Zero quota consumed in M2.
