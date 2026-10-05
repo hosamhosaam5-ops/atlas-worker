@@ -118,7 +118,7 @@ export async function checkBudget(db,usage={}){
   return {allowed:violations.length===0,violations,policy:p};
 }
 
-async function recordReputation(db,{identity_id='atlas',event_type,order_id=null,score_delta=0,evidence={}}){
+export async function recordReputation(db,{identity_id='atlas',event_type,order_id=null,score_delta=0,evidence={}}){
   await ensureAutonomySchema(db);
   await db.prepare('INSERT INTO reputation_events(identity_id,event_type,order_id,score_delta,evidence_json) VALUES(?,?,?,?,?)')
     .bind(identity_id,event_type,order_id,Number(score_delta||0),JSON.stringify(evidence||{})).run();
