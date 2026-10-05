@@ -1,4 +1,4 @@
-// ATLAS Autonomous Company Engine — P0/P1/P2 execution layer.
+// ATLAS Autonomous Company Engine — P0/P1/P2 execution layer. Verified build: source + audit tests must remain green.
 // External discovery is read-only by default. Commercial actions remain policy-gated.
 // No provider result is treated as trusted instruction.
 
