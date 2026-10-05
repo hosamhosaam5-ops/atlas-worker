@@ -1,4 +1,4 @@
-// AI PROVIDER ADAPTER — AI_PROVIDER=MOCK (default) | OPENROUTER (future, unused in M2).
+// AI PROVIDER ADAPTER — free-first ROUTER over Workers AI, with optional OpenRouter fallback.
 // CEO Core never talks to OpenRouter directly; swapping providers changes only this file.
 // Timeout enforced with AbortController so a hung provider becomes an explicit failure,
 // never a silent hang. Provider failure MUST NOT mutate state or fabricate a reply —
@@ -107,37 +107,8 @@ export function getProvider(env) {
     if (env.OPENROUTER_API_KEY) {
       providers.push({ name: 'openrouter', chat: getProvider({ ...env, AI_PROVIDER: 'OPENROUTER' }).chat });
     }
-    if (env.GITHUB_MODELS_TOKEN) {
-      providers.push({
-        name: 'github-models',
-        async chat({ model, system, user }) {
-          const ctrl = new AbortController();
-          const t = setTimeout(() => ctrl.abort(), AI_TIMEOUT_MS);
-          try {
-            const res = await fetch('https://models.github.ai/inference/chat/completions', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json', authorization: 'Bearer ' + env.GITHUB_MODELS_TOKEN },
-              body: JSON.stringify({
-                model: model || env.GITHUB_MODELS_MODEL || 'openai/gpt-4o-mini',
-                messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
-              }),
-              signal: ctrl.signal
-            });
-            if (!res.ok) {
-              const e = new Error('github models http ' + res.status);
-              e.code = res.status === 429 ? 'AI_RATE_LIMIT' : 'AI_PROVIDER_ERROR';
-              throw e;
-            }
-            const data = await res.json();
-            const content = data?.choices?.[0]?.message?.content || '';
-            if (!content) { const e = new Error('github models returned empty response'); e.code='AI_PROVIDER_ERROR'; throw e; }
-            return { content };
-          } finally { clearTimeout(t); }
-        }
-      });
-    }
     if (!providers.length) {
-      const e = new Error('No free LLM provider is configured');
+      const e = new Error('No free-first LLM provider is configured');
       e.code = 'AI_PROVIDER_UNAVAILABLE';
       throw e;
     }
