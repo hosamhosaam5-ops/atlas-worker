@@ -61,7 +61,7 @@ jobs:
               await page.waitForLoadState('networkidle', {timeout:30000}).catch(()=>{});
               console.log('submit_page=', page.url());
               console.log('title=', await page.title());
-              console.log('inputs=', JSON.stringify(await page.locator('input').evaluateAll(els => els.map(e => ({type:e.type,name:e.name,placeholder:e.placeholder,aria:e.getAttribute('aria-label')}))));
+              console.log('inputs=', JSON.stringify(await page.locator('input').evaluateAll(els => els.map(e => ({type:e.type,name:e.name,placeholder:e.placeholder,aria:e.getAttribute('aria-label')})))));
               await page.locator('input').first().fill(process.env.AGENT_URL);
               console.log('buttons=', JSON.stringify(await page.locator('button').evaluateAll(els => els.map(e => (e.innerText || e.textContent || '').trim()))));
               await page.getByRole('button', {name:/scan agent/i}).click();
@@ -77,7 +77,7 @@ jobs:
               if (!fs.existsSync('registry-browser-result.txt')) fs.writeFileSync('registry-browser-result.txt', body.slice(0,30000));
               if (browser) await browser.close().catch(()=>{});
             }
-          })().catch(err => { console.error(err.stack || String(err)); process.exit(1); });
+          })().catch(err => { console.error(err.stack || String(err)); throw err; });
           NODE
       - name: Verify public registry independently
         if: success()
