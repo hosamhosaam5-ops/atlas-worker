@@ -13,6 +13,7 @@ import { getFileStorage } from './storage.js';
 import { getEmailProvider } from './email.js';
 import { createOutbox } from '../core/outbox.js';
 import { recordReputation } from '../autonomy/registry.js';
+import { emitAgentEvent } from '../autonomy/p1.js';
 
 const MAX_DATA_ROWS = 5000;
 
@@ -444,6 +445,7 @@ export async function processOrder(db, env, input) {
     score_delta: finalStatus === 'DELIVERED' ? 1 : -0.25,
     evidence: {status: finalStatus, delivery_status: dlv.delivery_status, qa_status: 'PASS'}
   });
+  if (!meta.test_mode) { try { await emitAgentEvent(db,{type:finalStatus === 'DELIVERED' ? 'order.completed' : 'order.failed',data:{order_id:meta.order_id,client_email:meta.client_email,status:finalStatus,product_id:meta.product_id}}); } catch {} }
   return {
     order_id: meta.order_id,
     order_status: finalStatus, delivery: dlv, qa_report: qa.qa_report, product_id: priceMeta.product_id, quote_ref: qa.quote_ref,
