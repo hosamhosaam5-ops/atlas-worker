@@ -172,12 +172,14 @@ jobs:
           curl --fail-with-body --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/catalog.json -o catalog.json
           cat catalog.json
           jq -e '.products[] | select(.product_id=="atlas_ai_data_qa_v1" and .status=="ACTIVE" and (.price_usdc|tonumber)==15)' catalog.json
-          curl -sS -D x402-headers.txt -o x402-body.json -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1 > x402-status.txt
-          cat x402-headers.txt
-          cat x402-body.json
+          curl --http1.1 -sS -D x402-headers.txt -o x402-body.json -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1 > x402-status.txt
+          printf 'x402_status='; cat x402-status.txt; echo
+          echo '--- x402 headers ---'; sed -n '1,80p' x402-headers.txt
+          echo '--- x402 body bytes ---'; wc -c x402-body.json
+          echo '--- x402 body ---'; cat x402-body.json; echo
           test "$(cat x402-status.txt)" = 402
           grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
-          jq -e '.x402Version==2 and .accepts[0].scheme=="exact" and .accepts[0].network=="eip155:8453" and .accepts[0].amount=="15000000" and .accepts[0].asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .accepts[0].payTo=="0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F"' x402-body.json
+          jq -e '.x402Version==2 and .accepts[0].scheme=="exact" and .accepts[0].network=="eip155:8453" and .accepts[0].amount=="15000000" and (.accepts[0].asset|ascii_downcase)=="0x833589fcD6eDb6e08f4c7c32d4f71b54bda02913"|ascii_downcase and (.accepts[0].payTo|ascii_downcase)=="0xac2af2dd2343f4eaab2de64c89129b7b9283666f"' x402-body.json
 
       - name: Upload A2A evidence
         if: always()
