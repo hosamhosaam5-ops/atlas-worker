@@ -15,6 +15,7 @@ import { executeActions } from './tools.js';
 import { getProvider, chatWithTimeout } from './provider.js';
 import { braveSearchRaw } from './webresearch.js';
 import { createOutbox, getTelegramProvider } from '../core/outbox.js';
+import { checkBudget } from '../autonomy/registry.js';
 
 function hashStr(s) { let h = 0; s = String(s); for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; } return Math.abs(h).toString(36); }
 
@@ -146,7 +147,25 @@ export async function processUpdate(env, update, eventPk, timings) {
   }
 
   const model = env.AI_MODEL || '@cf/zai-org/glm-4.7-flash';
-  const provider = getProvider(env); // AI_PROVIDER=MOCK default
+  const provider = getProvider(env);
+  const autonomyStartedAt = Date.now();
+  const assertAutonomyBudget = async ({tool_calls=0, external_requests=0, retries=0}={}) => {
+    const verdict = await checkBudget(env.DB, {
+      tool_calls,
+      external_requests,
+      retries,
+      execution_seconds: Math.ceil((Date.now() - autonomyStartedAt) / 1000),
+    });
+    if (!verdict.allowed) {
+      const e = new Error('Autonomy budget exceeded: ' + verdict.violations.join(','));
+      e.code = 'AUTONOMY_BUDGET_BLOCKED';
+      e.violations = verdict.violations;
+      throw e;
+    }
+    return verdict;
+  };
+
+  await assertAutonomyBudget();
 
   // ---- AI1 ----
   let ai1Raw;
@@ -210,15 +229,20 @@ export async function processUpdate(env, update, eventPk, timings) {
   let toolOut = { results: [], results_text: '', overall_status: 'NO_ACTIONS', tool_used: 'none', state_rows: [] };
   if (risked.has_tool && !risked.skip_duplicate_request) {
     const webActions = (risked.actions || []).filter(a => a && a.tool === 'web_research');
+    try {
+      await assertAutonomyBudget({tool_calls: Array.isArray(risked.actions) ? risked.actions.length : 0, external_requests: webActions.length});
+    } catch (e) {
+      toolOut = { results: [], results_text: 'AUTONOMY_BUDGET_BLOCKED: ' + String(e.violations || e.message), overall_status: 'BLOCKED', tool_used: 'none', state_rows: [] };
+    }
     const braveItems = [];
-    for (const wa of webActions) {
+    if (toolOut.overall_status !== 'BLOCKED') for (const wa of webActions) {
       try {
         braveItems.push(await t('brave', () => braveSearchRaw(env, (wa.input && wa.input.query) || ''))());
       } catch (e) {
         braveItems.push({ error: { message: String(e && e.message || e) }, statusCode: 0 });
       }
     }
-    await t('tools', async () => {
+    if (toolOut.overall_status !== 'BLOCKED') await t('tools', async () => {
       toolOut = executeActions(risked, {
         correlation_id: correlationId,
         request_id: requestId,
@@ -236,6 +260,7 @@ export async function processUpdate(env, update, eventPk, timings) {
   let finalMemories = parsed.memories;
   if (toolOut.tool_used !== 'none' && toolOut.results.length > 0) {
     try {
+      await assertAutonomyBudget({tool_calls: toolOut.results.length, external_requests: 0});
       const r2 = await chatWithTimeout(provider, {
         model,
         system: buildFinalSystemPrompt(),
@@ -246,8 +271,9 @@ export async function processUpdate(env, update, eventPk, timings) {
       if (typeof p2.reply === 'string' && p2.reply.trim()) finalReply = p2.reply;
       finalMemories = p2.memories;
     } catch (e) {
-      // AI2 failure: fall back to honest tool-based reply; do NOT fabricate
-      finalReply = parsed.reply + '\n\n(ملاحظة: تعذر توليد الصياغة النهائية — ' + (e.code === 'AI_TIMEOUT' ? 'انتهت المهلة' : 'خطأ مزود') + '. نتائج الأدوات:\n' + toolOut.results_text + ')';
+      // AI2 failure or autonomy budget block: fall back to honest tool-based reply; do NOT fabricate
+      const reason = e.code === 'AUTONOMY_BUDGET_BLOCKED' ? 'تجاوز حدود الاستقلالية الآمنة' : (e.code === 'AI_TIMEOUT' ? 'انتهت المهلة' : 'خطأ مزود');
+      finalReply = parsed.reply + '\n\n(ملاحظة: تعذر توليد الصياغة النهائية — ' + reason + '. نتائج الأدوات:\n' + toolOut.results_text + ')';
     }
   }
 
