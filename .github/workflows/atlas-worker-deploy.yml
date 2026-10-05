@@ -9,6 +9,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "schema*.sql"
+      - "migrations/**"
       - ".github/workflows/atlas-worker-deploy.yml"
   workflow_dispatch:
 
@@ -39,6 +40,14 @@ jobs:
           if [ "$rc" -eq 124 ]; then exit 0; fi
           exit "$rc"
       - run: npm test
+      - name: Apply D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          npx wrangler d1 migrations apply atlas_db --remote
       - name: Deploy Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
