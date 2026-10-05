@@ -125,31 +125,46 @@ jobs:
           const rpc = 'https://mainnet.base.org';
           const call = async (method, params) => {
             const res = await fetch(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
-            if (!res.ok) throw new Error(method + ' HTTP ' + res.status);
-            const body = await res.json();
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) return { __http_status: res.status, __body: body };
             if (body.error) throw new Error(method + ' error: ' + JSON.stringify(body.error));
             return body.result;
           };
-          const latest = BigInt(await call('eth_blockNumber', []));
+          const latestResult = await call('eth_blockNumber', []);
+          if (latestResult?.__http_status) throw new Error('eth_blockNumber HTTP ' + latestResult.__http_status);
+          const latest = BigInt(latestResult);
           const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
           const toTopic = '0x' + WALLET.slice(2).toLowerCase().padStart(64, '0');
-          const chunkSize = 1000n;
+          let chunkSize = 1000n;
+          const minChunkSize = 25n;
           const scanBlocks = 300000n;
           let found = null;
+          let providerLimited = false;
 
-          // Read-only scan. Small chunks avoid provider range limits (HTTP 413) while preserving
-          // the positive gate: if a real inbound USDC transfer exists, it must pass the same
-          // production payment verifier. No order, ledger, quote, payment, or delivery mutation occurs.
+          // Read-only scan. Start with a modest range and shrink it only when the RPC provider
+          // rejects the request for size/rate limits. A provider limitation means the positive
+          // gate is NOT_PROVABLE, not PASS and not a reason to weaken payment verification.
           const firstBlock = latest > scanBlocks ? latest - scanBlocks : 0n;
           for (let end = latest; end >= firstBlock && !found; ) {
             const start = end >= chunkSize - 1n ? end - (chunkSize - 1n) : 0n;
             const fromBlock = start < firstBlock ? firstBlock : start;
-            const logs = await call('eth_getLogs', [{
+            const response = await call('eth_getLogs', [{
               address: USDC_CONTRACT,
               fromBlock: '0x' + fromBlock.toString(16),
               toBlock: '0x' + end.toString(16),
               topics: [transferTopic, null, toTopic]
             }]);
+            if (response?.__http_status === 413) {
+              if (chunkSize > minChunkSize) { chunkSize = chunkSize / 2n; continue; }
+              providerLimited = true; break;
+            }
+            if (response?.__http_status === 429) {
+              await new Promise(r => setTimeout(r, 1500));
+              if (chunkSize > minChunkSize) { chunkSize = chunkSize / 2n; continue; }
+              providerLimited = true; break;
+            }
+            if (response?.__http_status) throw new Error('eth_getLogs HTTP ' + response.__http_status);
+            const logs = response;
             if (Array.isArray(logs) && logs.length) { found = logs[0]; break; }
             if (fromBlock === firstBlock) break;
             end = fromBlock - 1n;
@@ -161,7 +176,8 @@ jobs:
               wallet: WALLET,
               usdc_contract: USDC_CONTRACT,
               latest_block: '0x' + latest.toString(16),
-              scanned_blocks: Number(latest - firstBlock + 1n)
+              scanned_blocks: Number(latest - firstBlock + 1n),
+              provider_limited: providerLimited
             }, null, 2));
             console.log('BASE_RPC_POSITIVE_GATE=NOT_PROVABLE_WITHOUT_AN_EXISTING_INCOMING_PAYMENT');
             process.exit(0);
