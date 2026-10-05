@@ -37,6 +37,9 @@ import { sanitizeExternalInput, authorizeAction, validateMarketplaceLead } from 
 import { acquisitionCycle, discoverCapabilities, scanAgentDemand, selectLLMRoute } from './autonomy/engine.js';
 // @ts-ignore
 import { agentCard, createWebhook, listWebhooks, discoverAgentMarketplaces, prepareOffer, negotiateOffer, productIntelligence, x402Requirements, handleA2A } from './autonomy/p1.js';
+// P2 growth: bounded acquisition intelligence, machine-readable discovery assets, referrals.
+// @ts-ignore
+import { ensureGrowthAssets, getGrowthAsset, runGrowthCycle, growthSnapshot, trackReferral } from './autonomy/p2.js';
 import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { handleAccessRequest } from './mcp/access-handler.ts';
 
@@ -119,6 +122,8 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    {name:"product_intelligence",description:"Read demand, product, and order signals to recommend reuse before building.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
    {name:"create_agent_webhook",description:"Register an HTTPS webhook for agent lifecycle events.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{agent_id:{type:"string"},url:{type:"string"},events:{type:"array"}},required:["agent_id","url"],additionalProperties:false}},
    {name:"list_agent_webhooks",description:"List registered agent webhooks.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{agent_id:{type:"string"}},additionalProperties:false}},
+   {name:"growth_snapshot",description:"Read P2 growth runs, qualified actions, demand signals, partner discovery, and referral metrics.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
+   {name:"run_growth_cycle",description:"Run the bounded P2 growth cycle: public demand discovery, lead preparation, A2A partner discovery, and machine-readable acquisition assets. No outbound messages, applications, purchases, or spending.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
    {name:"run_commercial_integration",description:"Run a real D1-backed order/quote/payment-gate/QA/delivery/idempotency/recovery integration suite using only MOCK payment and email adapters. Defaults to the active commercial catalog product when product_id is omitted; an explicit product_id may target another ACTIVE product.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{product_id:{type:"string"}},additionalProperties:false}},
    {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
   ]}});
@@ -130,7 +135,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
     list_products:"mcp:read",list_financial_approvals:"mcp:read",list_capabilities:"mcp:read",autonomy_snapshot:"mcp:read",get_autonomy_policy:"mcp:read",check_autonomy_budget:"mcp:read",
     write_state:"mcp:write",write_memory:"mcp:write",upsert_product:"mcp:write",create_quote:"mcp:write",
     request_financial_approval:"mcp:write",decide_financial_approval:"mcp:write",
-    run_commercial_integration:"mcp:execute",discover_agent_marketplaces:"mcp:execute",prepare_offer:"mcp:execute",negotiate_offer:"mcp:execute",product_intelligence:"mcp:read",create_agent_webhook:"mcp:write",list_agent_webhooks:"mcp:read",execute_ceo:"mcp:execute"
+    run_commercial_integration:"mcp:execute",discover_agent_marketplaces:"mcp:execute",prepare_offer:"mcp:execute",negotiate_offer:"mcp:execute",product_intelligence:"mcp:read",create_agent_webhook:"mcp:write",list_agent_webhooks:"mcp:read",growth_snapshot:"mcp:read",run_growth_cycle:"mcp:execute",execute_ceo:"mcp:execute"
   };
   const requiredScope=requiredScopeByTool[name];
   if(!requiredScope)return result({error:{code:-32602,message:"Unknown tool"}});
@@ -163,6 +168,8 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="product_intelligence"){out=await productIntelligence(env.DB);}
    else if(name==="create_agent_webhook"){out=await createWebhook(env.DB,args);}
    else if(name==="list_agent_webhooks"){out={webhooks:await listWebhooks(env.DB,args)};}
+   else if(name==="growth_snapshot"){out=await growthSnapshot(env.DB);}
+   else if(name==="run_growth_cycle"){out=await runGrowthCycle(env.DB,new URL(request.url).origin);}
    else if(name==="run_commercial_integration"){out=await runCommercialIntegration(env.DB,env,{product_id:args.product_id || "atlas_ai_data_qa_v1"});}
    else if(name==="execute_ceo"){const secret=env.CHATGPT_BRIDGE_SECRET;if(!secret)throw new Error("CHATGPT_BRIDGE_NOT_CONFIGURED");const r2=new Request(new URL("/bridge/chatgpt",request.url),{method:"POST",headers:{"content-type":"application/json","x-atlas-bridge-key":secret},body:JSON.stringify({operation:"execute_ceo",founder_message:args.founder_message,chat_id:args.chat_id,message_id:Number(args.message_id)})});const rr=await handleChatGptBridge(r2,env);const body=await rr.json();if(!rr.ok)throw new Error(String(body?.status||"EXECUTE_CEO_FAILED"));out=body;}
    else return result({error:{code:-32602,message:"Unknown tool"}});
@@ -189,6 +196,10 @@ export default {
     try { await ensureAutonomySchema(env.DB); } catch (e) { console.error('AUTONOMY_SCHEMA_INIT_FAILED', String(e)); }
     const origin = new URL(request.url).origin;
     if (pathname === "/.well-known/agent-card.json") return new Response(JSON.stringify(agentCard(origin)),{headers:{"content-type":"application/json"}});
+    if (pathname === "/catalog.json" && request.method === "GET") { await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"catalog.json"); return new Response(a?.content||"{}",{headers:{"content-type":"application/json","cache-control":"public, max-age=300"}}); }
+    if (pathname === "/llms.txt" && request.method === "GET") { await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"llms.txt"); return new Response(a?.content||"# ATLAS",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"public, max-age=300"}}); }
+    if (pathname === "/robots.txt" && request.method === "GET") return new Response("User-agent: *\nAllow: /\nAllow: /.well-known/\nAllow: /catalog.json\nAllow: /llms.txt\nDisallow: /dev/\nDisallow: /bridge/\nDisallow: /webhook/\n", {headers:{"content-type":"text/plain"}});
+    if (pathname.startsWith("/r/") && request.method === "GET") { const code=decodeURIComponent(pathname.slice(3)).slice(0,100); await trackReferral(env.DB,{code,path:pathname,user_agent:request.headers.get("user-agent"),source:request.headers.get("referer")}); return Response.redirect(origin+"/catalog.json?ref="+encodeURIComponent(code),302); }
     if (pathname === "/a2a") return handleA2A(request,env);
     if (request.method === "GET" && pathname === "/x402/atlas_ai_data_qa_v1") {
       const req=x402Requirements(origin,{wallet:"0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F",asset:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"});
@@ -439,7 +450,7 @@ export default {
         ['daily_report', () => runDailyReport(env, undefined, alertAdapter)],
         ['revenue_watch', () => runRevenueWatch(env, undefined, alertAdapter)],
         ['telegraph_monitor', () => runTelegraphMonitor(env, undefined, alertAdapter)],
-        ['acquisition_cycle', () => acquisitionCycle(env.DB)],
+        ['growth_cycle', () => runGrowthCycle(env.DB,new URL(request.url).origin)],
       ] as const) {
         try { results[name] = await fn(); }
         catch (e: any) { results[name] = { error: String(e?.message || e) }; }
