@@ -438,7 +438,7 @@ export async function processOrder(db, env, input) {
   }
 
   const a = await audit(db, 'order', meta.order_id, meta, finalStatus, dlv.delivery_error || null);
-  const reputation = meta.test_mode ? {skipped:true,reason:'SYNTHETIC_TEST_ORDER'} : await recordReputation(db, {
+  const reputation = (meta.test_mode || env.PAYMENT_PROVIDER === 'MOCK') ? {skipped:true,reason:'SYNTHETIC_ORDER_OR_PAYMENT'} : await recordReputation(db, {
     event_type: finalStatus === 'DELIVERED' ? 'ORDER_SUCCESS' : 'ORDER_DELIVERY_FAILED',
     order_id: meta.order_id,
     score_delta: finalStatus === 'DELIVERED' ? 1 : -0.25,
