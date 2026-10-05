@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildCatalog, trackReferral } from '../src/autonomy/p2.js';
 
 test('P2 catalog exposes only active machine-readable products', async ()=>{
-  const db={prepare(sql){ return {all:async()=>({results:[
+  const db={prepare(sql){ return {run:async()=>({}),all:async()=>({results:[
     {product_id:'atlas_ai_data_qa_v1',name:'AI Agent Data QA & Transformation',description:'Clean CSV/XLSX data.',unit:'dataset',price_usdc:15,pricing_mode:'FOUNDER_QUOTE',status:'ACTIVE',version:3}
   ]})}; }};
   const c=await buildCatalog(db,'https://atlas.example');
