@@ -28,3 +28,72 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Run complete test suite
         run: npm test
+
+  registry_submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Register ATLAS through Submit Agent
+        env:
+          AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+        run: |
+          set -euo pipefail
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund playwright >/dev/null 2>&1
+          npx playwright install --with-deps chromium >/dev/null 2>&1
+          node <<'NODE'
+          const fs = require('fs');
+          const { chromium } = require('playwright');
+          (async () => {
+            let browser;
+            let body = '';
+            try {
+              browser = await chromium.launch({headless:true});
+              const page = await browser.newPage();
+              page.on('requestfailed', r => console.log('[requestfailed]', r.url(), r.failure()?.errorText || 'unknown'));
+              await page.goto('https://www.a2a-registry.org/submit', {waitUntil:'domcontentloaded', timeout:60000});
+              await page.waitForLoadState('networkidle', {timeout:30000}).catch(()=>{});
+              console.log('submit_page=', page.url());
+              console.log('title=', await page.title());
+              console.log('inputs=', JSON.stringify(await page.locator('input').evaluateAll(els => els.map(e => ({type:e.type,name:e.name,placeholder:e.placeholder,aria:e.getAttribute('aria-label')}))));
+              await page.locator('input').first().fill(process.env.AGENT_URL);
+              console.log('buttons=', JSON.stringify(await page.locator('button').evaluateAll(els => els.map(e => (e.innerText || e.textContent || '').trim()))));
+              await page.getByRole('button', {name:/scan agent/i}).click();
+              await page.waitForTimeout(5000);
+              await page.waitForLoadState('networkidle', {timeout:30000}).catch(()=>{});
+              console.log('after_submit_url=', page.url());
+              body = await page.locator('body').innerText();
+              console.log('result_text=', body.slice(0,20000));
+              fs.writeFileSync('registry-browser-result.txt', body.slice(0,30000));
+              if (/captcha|verify you are human|access denied/i.test(body)) throw new Error('ANTI_BOT_OR_ACCESS_BLOCK');
+              if (!/registered|unclaimed|go live|success|agent id|package name/i.test(body)) throw new Error('NO_REGISTRATION_SUCCESS_SIGNAL');
+            } finally {
+              if (!fs.existsSync('registry-browser-result.txt')) fs.writeFileSync('registry-browser-result.txt', body.slice(0,30000));
+              if (browser) await browser.close().catch(()=>{});
+            }
+          })().catch(err => { console.error(err.stack || String(err)); process.exit(1); });
+          NODE
+      - name: Verify public registry independently
+        if: success()
+        env:
+          AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-search.json
+          cat registry-search.json
+          grep -Fq "$AGENT_URL" registry-search.json
+      - name: Upload registry evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-registry-evidence-${{ github.run_id }}
+          path: |
+            registry-browser-result.txt
+            registry-search.json
+          if-no-files-found: warn
