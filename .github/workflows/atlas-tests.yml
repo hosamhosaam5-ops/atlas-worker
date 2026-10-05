@@ -186,5 +186,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: atlas-a2a-production-probe-${{ github.run_id }}
-          path: a2a-evidence/
-          if-no-files-found: error
+          path: |
+            a2a-evidence/
+            x402-headers.txt
+            x402-body.json
+            x402-status.txt
+            catalog.json
+          if-no-files-found: warn
