@@ -20,3 +20,5 @@ jobs:
             --data "{\"manifestUrl\":\"$MANIFEST_URL\"}" \
             | tee registry-response.json
           grep -Eq '"success"[[:space:]]*:[[:space:]]*true|"id"|"agent"' registry-response.json
+
+# trigger registry submission
