@@ -1,3 +1,4 @@
+// P2 production candidate: tests green before deployment gate.
 import { checkBudget } from './registry.js';
 import { sanitizeExternalInput } from './policy.js';
 import { scanAgentDemand, prepareGrowthActions } from './engine.js';
