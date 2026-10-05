@@ -111,11 +111,14 @@ export async function prepareGrowthActions(db) {
 }
 
 export async function queueEngineeringJob(db,{source='customer_request',request_summary,risk='high'}={}) {
-  if(!String(request_summary||'').trim()) throw new Error('EMPTY_ENGINEERING_REQUEST');
+  const safe = sanitizeExternalInput({request_summary}).data.request_summary;
+  if(!String(safe||'').trim()) throw new Error('EMPTY_ENGINEERING_REQUEST');
+  const gate = authorizeAction('engineering_queue', {sensitive: risk === 'critical', outboundSpend: false, majorStrategy: false});
+  if(!gate.allowed) throw new Error(gate.reason);
   const jobId='ENG-'+crypto.randomUUID().replaceAll('-','').slice(0,16);
   await db.prepare("INSERT INTO engineering_jobs(job_id,source,request_summary,status,risk,sandbox) VALUES(?,?,?,?,?,?)")
-    .bind(jobId,source,String(request_summary).slice(0,10000),'QUEUED',risk,'NOT_CONFIGURED').run();
-  return {ok:true,job_id:jobId,status:'QUEUED',executor:'ECC_EXTERNAL_HARNESS_REQUIRED'};
+    .bind(jobId,source,String(safe).slice(0,10000),'QUEUED',risk,'SAFE_ADMISSION_ONLY').run();
+  return {ok:true,job_id:jobId,status:'QUEUED',executor:'SAFE_ADMISSION_ONLY',execution:'NOT_ENABLED',reason:'No untrusted-code runtime is configured; job is queued without execution'};
 }
 
 export async function acquisitionCycle(db) {
