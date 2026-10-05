@@ -35,6 +35,8 @@ import { ensureAutonomySchema, listCapabilities, registerCapability, getPolicy, 
 import { sanitizeExternalInput, authorizeAction, validateMarketplaceLead } from './autonomy/policy.js';
 // @ts-ignore
 import { acquisitionCycle, discoverCapabilities, scanAgentDemand, selectLLMRoute } from './autonomy/engine.js';
+// @ts-ignore
+import { agentCard, createWebhook, listWebhooks, discoverAgentMarketplaces, prepareOffer, negotiateOffer, productIntelligence, x402Requirements, handleA2A } from './autonomy/p1.js';
 import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { handleAccessRequest } from './mcp/access-handler.ts';
 
@@ -111,6 +113,12 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    {name:"acquisition_cycle",description:"Run the bounded autonomous acquisition discovery cycle: capability discovery plus public demand scan.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
    {name:"select_llm_route",description:"Select currently available free-first LLM routes without invoking a provider.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{preferFree:{type:"boolean"}},additionalProperties:false}},
    {name:"list_financial_approvals",description:"List financial approval records and lifecycle states.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{status:{type:["string","null"]},limit:{type:"integer"}},additionalProperties:false}},
+   {name:"discover_agent_marketplaces",description:"Probe public agent marketplaces. Never authenticates, applies, messages, or spends.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
+   {name:"prepare_offer",description:"Prepare a bounded offer from a qualified demand signal. External sending is never attempted.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{signal_id:{type:"integer"},price_usdc:{type:"number"},message:{type:"string"}},required:["signal_id"],additionalProperties:false}},
+   {name:"negotiate_offer",description:"Calculate a bounded midpoint proposal; founder quote remains required.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{action_key:{type:"string"},counter_price_usdc:{type:"number"}},required:["action_key","counter_price_usdc"],additionalProperties:false}},
+   {name:"product_intelligence",description:"Read demand, product, and order signals to recommend reuse before building.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
+   {name:"create_agent_webhook",description:"Register an HTTPS webhook for agent lifecycle events.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{agent_id:{type:"string"},url:{type:"string"},events:{type:"array"}},required:["agent_id","url"],additionalProperties:false}},
+   {name:"list_agent_webhooks",description:"List registered agent webhooks.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{agent_id:{type:"string"}},additionalProperties:false}},
    {name:"run_commercial_integration",description:"Run a real D1-backed order/quote/payment-gate/QA/delivery/idempotency/recovery integration suite using only MOCK payment and email adapters. Defaults to the active commercial catalog product when product_id is omitted; an explicit product_id may target another ACTIVE product.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{product_id:{type:"string"}},additionalProperties:false}},
    {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
   ]}});
@@ -122,7 +130,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
     list_products:"mcp:read",list_financial_approvals:"mcp:read",list_capabilities:"mcp:read",autonomy_snapshot:"mcp:read",get_autonomy_policy:"mcp:read",check_autonomy_budget:"mcp:read",
     write_state:"mcp:write",write_memory:"mcp:write",upsert_product:"mcp:write",create_quote:"mcp:write",
     request_financial_approval:"mcp:write",decide_financial_approval:"mcp:write",
-    run_commercial_integration:"mcp:execute",execute_ceo:"mcp:execute"
+    run_commercial_integration:"mcp:execute",discover_agent_marketplaces:"mcp:execute",prepare_offer:"mcp:execute",negotiate_offer:"mcp:execute",product_intelligence:"mcp:read",create_agent_webhook:"mcp:write",list_agent_webhooks:"mcp:read",execute_ceo:"mcp:execute"
   };
   const requiredScope=requiredScopeByTool[name];
   if(!requiredScope)return result({error:{code:-32602,message:"Unknown tool"}});
@@ -149,6 +157,12 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="request_financial_approval"){out=await requestFinancialApproval(env.DB,args);}
    else if(name==="decide_financial_approval"){out=await decideFinancialApproval(env.DB,args);}
    else if(name==="list_financial_approvals"){out={approvals:await listFinancialApprovals(env.DB,args)};}
+   else if(name==="discover_agent_marketplaces"){out=await discoverAgentMarketplaces(env.DB);}
+   else if(name==="prepare_offer"){out=await prepareOffer(env.DB,args);}
+   else if(name==="negotiate_offer"){out=await negotiateOffer(env.DB,args);}
+   else if(name==="product_intelligence"){out=await productIntelligence(env.DB);}
+   else if(name==="create_agent_webhook"){out=await createWebhook(env.DB,args);}
+   else if(name==="list_agent_webhooks"){out={webhooks:await listWebhooks(env.DB,args)};}
    else if(name==="run_commercial_integration"){out=await runCommercialIntegration(env.DB,env,{product_id:args.product_id || "atlas_ai_data_qa_v1"});}
    else if(name==="execute_ceo"){const secret=env.CHATGPT_BRIDGE_SECRET;if(!secret)throw new Error("CHATGPT_BRIDGE_NOT_CONFIGURED");const r2=new Request(new URL("/bridge/chatgpt",request.url),{method:"POST",headers:{"content-type":"application/json","x-atlas-bridge-key":secret},body:JSON.stringify({operation:"execute_ceo",founder_message:args.founder_message,chat_id:args.chat_id,message_id:Number(args.message_id)})});const rr=await handleChatGptBridge(r2,env);const body=await rr.json();if(!rr.ok)throw new Error(String(body?.status||"EXECUTE_CEO_FAILED"));out=body;}
    else return result({error:{code:-32602,message:"Unknown tool"}});
@@ -174,6 +188,13 @@ export default {
     // Initialize additive autonomy tables on first request; migration remains the canonical schema artifact.
     try { await ensureAutonomySchema(env.DB); } catch (e) { console.error('AUTONOMY_SCHEMA_INIT_FAILED', String(e)); }
     const origin = new URL(request.url).origin;
+    if (pathname === "/.well-known/agent-card.json") return new Response(JSON.stringify(agentCard(origin)),{headers:{"content-type":"application/json"}});
+    if (pathname === "/a2a") return handleA2A(request,env);
+    if (request.method === "GET" && pathname === "/x402/atlas_ai_data_qa_v1") {
+      const req=x402Requirements(origin,{wallet:"0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F",asset:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"});
+      const encoded=btoa(JSON.stringify(req));
+      return new Response(JSON.stringify(req),{status:402,headers:{"content-type":"application/json","PAYMENT-REQUIRED":encoded}});
+    }
     if (request.method === "GET" && pathname === "/.well-known/oauth-authorization-server") {
       return new Response(JSON.stringify({
         issuer: origin,
