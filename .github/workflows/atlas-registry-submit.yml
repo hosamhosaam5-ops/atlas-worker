@@ -54,6 +54,7 @@ jobs:
             console.log('after_submit_url=', page.url());
             const body = await page.locator('body').innerText();
             console.log('result_text=', body.slice(0,12000));
+            require('fs').writeFileSync('registry-browser-result.txt', body.slice(0,30000));
 
             if (/captcha|verify you are human|access denied/i.test(body)) {
               throw new Error('Registry submission was blocked by anti-bot/human verification; no registration claim made.');
@@ -75,9 +76,26 @@ jobs:
         if: always()
         run: |
           set +e
-          {
-            echo '{"attempted_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","workflow_run":"'$GITHUB_RUN_ID'","status":"browser_step_completed_or_failed"}'
-          } > .github/registry-attempt-result.json
+          status="browser_step_failed"
+          if [ -f registry-browser-result.txt ]; then status="browser_step_completed"; fi
+          python3 - <<'PY' > .github/registry-attempt-result.json
+import json, os, pathlib, datetime
+p=pathlib.Path("registry-browser-result.txt")
+body=p.read_text(errors="replace")[:30000] if p.exists() else ""
+print(json.dumps({
+  "attempted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  "workflow_run": os.environ.get("GITHUB_RUN_ID"),
+  "status": os.environ.get("STATUS","browser_step_completed_or_failed"),
+  "body": body
+}, ensure_ascii=False))
+PY
+          export STATUS="$status"
+          python3 - <<'PY' > .github/registry-attempt-result.json
+import json, pathlib, os, datetime
+p=pathlib.Path("registry-browser-result.txt")
+body=p.read_text(errors="replace")[:30000] if p.exists() else ""
+print(json.dumps({"attempted_at":datetime.datetime.now(datetime.timezone.utc).isoformat(),"workflow_run":os.environ.get("GITHUB_RUN_ID"),"status":os.environ.get("STATUS"),"body":body},ensure_ascii=False))
+PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .github/registry-attempt-result.json
