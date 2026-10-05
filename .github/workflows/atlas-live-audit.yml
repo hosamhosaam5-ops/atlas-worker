@@ -137,7 +137,7 @@ jobs:
           const toTopic = '0x' + WALLET.slice(2).toLowerCase().padStart(64, '0');
           let chunkSize = 1000n;
           const minChunkSize = 25n;
-          const scanBlocks = 300000n;
+          const scanBlocks = 20000n;
           let found = null;
           let providerLimited = false;
 
