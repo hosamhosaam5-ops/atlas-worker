@@ -83,7 +83,6 @@ export function selectLLMRoute(env,{preferFree=true}={}) {
   const routes=[];
   if(env.AI && typeof env.AI.run==='function') routes.push({provider:'WORKERS_AI',model:env.AI_MODEL||'@cf/zai-org/glm-4.7-flash',cost:'free_quota'});
   if(env.OPENROUTER_API_KEY) routes.push({provider:'OPENROUTER',model:env.OPENROUTER_FREE_MODEL||'openrouter/free',cost:'free_models'});
-  if(env.GITHUB_MODELS_TOKEN) routes.push({provider:'GITHUB_MODELS',model:env.GITHUB_MODELS_MODEL||'openai/gpt-4o-mini',cost:'free_quota'});
   return preferFree ? routes.filter(x=>x.cost!=='paid') : routes;
 }
 
