@@ -39,7 +39,23 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Check existing public Registry entry before any submit
+        id: precheck
+        env:
+          AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-precheck.json
+          cat registry-precheck.json
+          if grep -Fq "$AGENT_URL" registry-precheck.json; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "ATLAS registry entry already exists; skipping Submit Agent to avoid duplicates."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Register ATLAS through Submit Agent
+        if: steps.precheck.outputs.exists != 'true'
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
@@ -61,7 +77,7 @@ jobs:
               await page.waitForLoadState('networkidle', {timeout:30000}).catch(()=>{});
               console.log('submit_page=', page.url());
               console.log('title=', await page.title());
-              console.log('inputs=', JSON.stringify(await page.locator('input').evaluateAll(els => els.map(e => ({type:e.type,name:e.name,placeholder:e.placeholder,aria:e.getAttribute('aria-label')})))));
+              console.log('inputs=', JSON.stringify(await page.locator('input').evaluateAll(els => els.map(e => ({type:e.type,name:e.name,placeholder:e.placeholder,aria:e.getAttribute('aria-label')}))));
               await page.locator('input').first().fill(process.env.AGENT_URL);
               console.log('buttons=', JSON.stringify(await page.locator('button').evaluateAll(els => els.map(e => (e.innerText || e.textContent || '').trim()))));
               await page.getByRole('button', {name:/scan agent/i}).click();
@@ -86,13 +102,14 @@ jobs:
             }
           })().catch(err => { console.error(err.stack || String(err)); throw err; });
           NODE
+
       - name: Verify public registry independently
         if: success()
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=dev.workers.atlas' -o registry-search.json
+          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-search.json
           cat registry-search.json
           grep -Fq "$AGENT_URL" registry-search.json
       - name: Upload registry evidence
