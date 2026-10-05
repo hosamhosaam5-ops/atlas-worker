@@ -1,0 +1,22 @@
+name: atlas-registry-submit
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/atlas-registry-submit.yml"
+jobs:
+  submit:
+    if: startsWith(github.event.head_commit.message, 'register ATLAS')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Submit ATLAS manifest to public A2A Registry
+        env:
+          MANIFEST_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X POST https://api.a2a-registry.org/public/ingest \
+            -H 'content-type: application/json' \
+            --data "{\"manifestUrl\":\"$MANIFEST_URL\"}" \
+            | tee registry-response.json
+          grep -Eq '"success"[[:space:]]*:[[:space:]]*true|"id"|"agent"' registry-response.json
