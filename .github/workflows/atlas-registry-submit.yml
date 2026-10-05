@@ -1,9 +1,7 @@
 name: atlas-registry-submit
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/atlas-registry-submit.yml"
+  schedule:
+    - cron: "*/5 * * * *"
 
 jobs:
   submit:
