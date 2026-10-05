@@ -22,6 +22,20 @@ CREATE TABLE IF NOT EXISTS reputation_events (
   order_id TEXT, score_delta REAL NOT NULL DEFAULT 0, evidence_json TEXT DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS growth_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, action_key TEXT UNIQUE NOT NULL, action_type TEXT NOT NULL,
+  target_id TEXT, payload_json TEXT DEFAULT '{}', status TEXT NOT NULL DEFAULT 'READY',
+  risk TEXT NOT NULL DEFAULT 'medium', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS pricing_rules (
+  rule_id TEXT PRIMARY KEY, min_usdc REAL NOT NULL, max_usdc REAL NOT NULL,
+  multiplier REAL NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'ACTIVE', updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS engineering_jobs (
+  job_id TEXT PRIMARY KEY, source TEXT, request_summary TEXT, status TEXT NOT NULL DEFAULT 'QUEUED',
+  risk TEXT NOT NULL DEFAULT 'high', sandbox TEXT, result_json TEXT DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT
+);
+INSERT OR IGNORE INTO pricing_rules(rule_id,min_usdc,max_usdc,multiplier) VALUES ('default',15,5000,1);
 CREATE TABLE IF NOT EXISTS demand_signals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, signal_key TEXT NOT NULL,
   request_summary TEXT, score REAL DEFAULT 0, status TEXT DEFAULT 'NEW',
@@ -30,3 +44,6 @@ CREATE TABLE IF NOT EXISTS demand_signals (
 CREATE INDEX IF NOT EXISTS idx_capabilities_kind_status ON capabilities(kind,status);
 CREATE INDEX IF NOT EXISTS idx_reputation_identity ON reputation_events(identity_id,created_at);
 CREATE INDEX IF NOT EXISTS idx_demand_status_score ON demand_signals(status,score);
+CREATE INDEX IF NOT EXISTS idx_growth_actions_status ON growth_actions(status,created_at);
+CREATE INDEX IF NOT EXISTS idx_engineering_jobs_status ON engineering_jobs(status,created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_demand_signal_key ON demand_signals(signal_key);
