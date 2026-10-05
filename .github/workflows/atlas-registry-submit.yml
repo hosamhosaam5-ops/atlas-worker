@@ -3,12 +3,17 @@ on:
   schedule:
     - cron: "*/5 * * * *"
 
+permissions:
+  contents: write
+
 jobs:
   submit:
     if: startsWith(github.event.head_commit.message, 'register ATLAS')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+
       - name: Register ATLAS through the public Submit Agent flow
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
@@ -65,6 +70,19 @@ jobs:
             process.exit(1);
           });
           NODE
+
+      - name: Persist browser attempt evidence
+        if: always()
+        run: |
+          set +e
+          {
+            echo '{"attempted_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","workflow_run":"'$GITHUB_RUN_ID'","status":"browser_step_completed_or_failed"}'
+          } > .github/registry-attempt-result.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/registry-attempt-result.json
+          git commit -m "chore: record ATLAS registry submission attempt" || true
+          git push origin HEAD:main || true
 
       - name: Independently verify ATLAS appears in the public registry
         env:
