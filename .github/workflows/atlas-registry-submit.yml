@@ -16,8 +16,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check existing public Registry entry before any submit
+        id: precheck
+        env:
+          AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-precheck.json
+          cat registry-precheck.json
+          if grep -Fq "$AGENT_URL" registry-precheck.json; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            cp registry-precheck.json registry-browser-result.txt
+            echo "Existing ATLAS Registry entry found; skipping Submit Agent to avoid duplicate registration."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Register ATLAS through the public Submit Agent flow
         id: browser
+        if: steps.precheck.outputs.exists != 'true'
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
@@ -39,47 +56,26 @@ jobs:
               page.on('requestfailed', r => console.log('[requestfailed]', r.url(), r.failure()?.errorText || 'unknown'));
               await page.goto('https://www.a2a-registry.org/submit', {waitUntil:'domcontentloaded', timeout:60000});
               await page.waitForLoadState('networkidle', {timeout:30000}).catch(()=>{});
-
               console.log('submit_page=', page.url());
               console.log('title=', await page.title());
-
-              const inputs = await page.locator('input').evaluateAll(els => els.map(e => ({
-                type:e.type, name:e.name, placeholder:e.placeholder, aria:e.getAttribute('aria-label')
-              })));
+              const inputs = await page.locator('input').evaluateAll(els => els.map(e => ({type:e.type, name:e.name, placeholder:e.placeholder, aria:e.getAttribute('aria-label')})));
               console.log('inputs=', JSON.stringify(inputs));
-
-              const input = page.locator('input').first();
-              await input.fill(process.env.AGENT_URL);
-
-              const buttons = await page.locator('button').evaluateAll(els => els.map(e => (e.innerText || e.textContent || '').trim()));
-              console.log('buttons=', JSON.stringify(buttons));
-
+              await page.locator('input').first().fill(process.env.AGENT_URL);
+              console.log('buttons=', JSON.stringify(await page.locator('button').evaluateAll(els => els.map(e => (e.innerText || e.textContent || '').trim()))));
               await page.getByRole('button', {name:/scan agent/i}).click();
               await page.waitForTimeout(5000);
               await page.waitForLoadState('networkidle', {timeout:30000}).catch(()=>{});
-
               console.log('after_submit_url=', page.url());
               body = await page.locator('body').innerText();
               console.log('result_text=', body.slice(0,12000));
-
-              if (/captcha|verify you are human|access denied/i.test(body)) {
-                throw new Error('Registry submission was blocked by anti-bot/human verification; no registration claim made.');
-              }
-
-              const success = /registered|unclaimed|go live|success|agent id|package name/i.test(body);
-              if (!success) {
-                throw new Error('Registry UI did not expose a registration success/Unclaimed result after Scan Agent.');
-              }
-            } catch (err) {
-              console.error(err.stack || String(err));
-              throw err;
+              if (/captcha|verify you are human|access denied/i.test(body)) throw new Error('Registry submission was blocked by anti-bot/human verification; no registration claim made.');
+              if (!/registered|unclaimed|go live|success|agent id|package name/i.test(body)) throw new Error('Registry UI did not expose a registration success/Unclaimed result after Scan Agent.');
             } finally {
               fs.writeFileSync('registry-browser-result.txt', body.slice(0,30000));
               if (browser) await browser.close().catch(()=>{});
             }
           })().catch(() => process.exit(1));
           NODE
-
       - name: Persist browser attempt evidence
         if: always()
         env:
