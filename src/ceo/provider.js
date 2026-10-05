@@ -142,17 +142,19 @@ export function getProvider(env) {
       throw e;
     }
     let last;
-    for (const p of providers) {
+    return { name: 'router', async chat({ model, system, user }) {
+      for (const p of providers) {
       try {
         return await p.chat({ model, system, user });
       } catch (e) {
         last = e;
         if (e?.code !== 'AI_RATE_LIMIT' && e?.code !== 'AI_PROVIDER_ERROR' && e?.code !== 'AI_TIMEOUT') throw e;
       }
-    }
-    const e = new Error('All configured LLM routes failed: ' + String(last?.message || last || 'unknown'));
+      }
+      const e = new Error('All configured LLM routes failed: ' + String(last?.message || last || 'unknown'));
     e.code = last?.code || 'AI_PROVIDER_ERROR';
-    throw e;
+      throw e;
+    }};
   }
   if (kind === 'OPENROUTER') {
     // Not used in M2. Implemented structurally only — real use requires OPENROUTER_API_KEY
