@@ -39,6 +39,7 @@ function normInputAE(inp) { const o = (inp && typeof inp === 'object') ? inp : {
 function contentKeyOf(a) { return 'act|' + hashStrAE(a.tool + '|' + normInputAE(a.input)); }
 
 import { webResearchFromBrave, classifyBraveError, evidenceFromBrave } from './webresearch.js';
+import { sanitizeExternalInput } from '../autonomy/policy.js';
 
 // classifyToolError — ported from backup (braveRaw branch preserved verbatim).
 function classifyToolError(tool, result, braveRaw) {
@@ -147,9 +148,17 @@ export function executeActions(item, ctx) {
     guard++;
     progressed = false;
     for (let i = pending.length - 1; i >= 0; i--) {
-      const a = pending[i];
+      const rawAction = pending[i];
+      const a = { ...rawAction, input: sanitizeExternalInput(rawAction && rawAction.input ? rawAction.input : {}).data };
       if (a.depends_on !== null && a.depends_on !== undefined && !done.has('action_' + (a.depends_on + 1))) continue;
       const rec = mkRec(a);
+      const allowedTools = new Set(['calculator','datetime','memory_query','web_research']);
+      if (!allowedTools.has(String(a.tool || ''))) {
+        transit(rec, 'REQUESTED');
+        transit(rec, 'BLOCKED');
+        rec.error_code = 'ERR_TOOL_NOT_ALLOWED'; rec.retryable = false; rec.completed_at = new Date().toISOString();
+        results.push(rec); done.add(a.id); pending.splice(i, 1); progressed = true; continue;
+      }
       if (resumeAction(a, rec)) {
         results.push(rec); done.add(a.id); pending.splice(i, 1); progressed = true; continue;
       }
