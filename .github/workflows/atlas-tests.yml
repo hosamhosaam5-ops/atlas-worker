@@ -148,6 +148,37 @@ jobs:
           test "$STATUS" = 200
           printf '%s' "$TYPE" | grep -Eiq '^application/json([;[:space:]]|$)'
           jq -e --arg id "$ID" '.jsonrpc=="2.0" and .id==$id and (.result != null) and (.error == null)' a2a-evidence/response.json
+      - name: Verify persisted task lifecycle
+        run: |
+          set -euo pipefail
+          ID="atlas-task-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          cat > task-request.json <<EOF
+          {"jsonrpc":"2.0","id":"$ID","method":"message/send","params":{"message":{"messageId":"$ID-message","role":"user","parts":[{"kind":"text","text":"ATLAS task lifecycle probe; no purchase, payment, order, customer data, or external commitment."}]}}}
+          EOF
+          curl --fail-with-body --silent --show-error -H 'content-type: application/json' --data-binary @task-request.json https://atlas-worker.hosamhosaam5.workers.dev/a2a -o task-send.json
+          cat task-send.json
+          TASK_ID="$(jq -er '.result.id' task-send.json)"
+          test "$(jq -r '.result.status.state' task-send.json)" = submitted
+          cat > task-get-request.json <<EOF
+          {"jsonrpc":"2.0","id":"$ID-get","method":"tasks/get","params":{"id":"$TASK_ID"}}
+          EOF
+          curl --fail-with-body --silent --show-error -H 'content-type: application/json' --data-binary @task-get-request.json https://atlas-worker.hosamhosaam5.workers.dev/a2a -o task-get.json
+          cat task-get.json
+          jq -e --arg task "$TASK_ID" '.jsonrpc=="2.0" and .result.id==$task and .result.status.state=="submitted" and .result.metadata.source=="A2A"' task-get.json
+
+      - name: Verify production catalog and x402 payment challenge
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/catalog.json -o catalog.json
+          cat catalog.json
+          jq -e '.products[] | select(.product_id=="atlas_ai_data_qa_v1" and .status=="ACTIVE" and (.price_usdc|tonumber)==15)' catalog.json
+          curl -sS -D x402-headers.txt -o x402-body.json -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1 > x402-status.txt
+          cat x402-headers.txt
+          cat x402-body.json
+          test "$(cat x402-status.txt)" = 402
+          grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
+          jq -e '.x402Version==2 and .accepts[0].scheme=="exact" and .accepts[0].network=="eip155:8453" and .accepts[0].amount=="15000000" and .accepts[0].asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .accepts[0].payTo=="0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F"' x402-body.json
+
       - name: Upload A2A evidence
         if: always()
         uses: actions/upload-artifact@v4
