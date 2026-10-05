@@ -96,3 +96,38 @@ export function selectLLMRoute(env,{preferFree=true}={}) {
 export function buildAutonomousDecision(db,action,context={}) {
   return authorizeAction(action,context);
 }
+
+
+export async function prepareGrowthActions(db) {
+  const rows = await db.prepare("SELECT id,source,signal_key,request_summary,score FROM demand_signals WHERE status='NEW' ORDER BY score DESC,created_at DESC LIMIT 20").all();
+  const actions=[];
+  for(const r of (rows.results||[])){
+    const key='qualify|'+r.signal_key;
+    const exists=await db.prepare('SELECT id FROM growth_actions WHERE action_key=?').first(key);
+    if(exists) continue;
+    const summary=String(r.request_summary||'');
+    const safe=validateMarketplaceLead(sanitizeExternalInput({description:summary}).data);
+    if(!safe.ok) continue;
+    const price=Math.max(15,Math.min(5000,Number((15 + Math.min(100,Number(r.score||0)*100)).toFixed(2))));
+    await db.prepare("INSERT INTO growth_actions(action_key,action_type,target_id,payload_json,status,risk) VALUES(?,?,?,?,?,?)")
+      .bind(key,'QUALIFIED_LEAD',String(r.id),JSON.stringify({source:r.source,signal_key:r.signal_key,summary,score:r.score,price_usdc:price,pricing_mode:'BOUNDED_AUTONOMOUS'}),'READY','medium').run();
+    await db.prepare("UPDATE demand_signals SET status='QUALIFIED',updated_at=datetime('now') WHERE id=?").bind(r.id).run();
+    actions.push({id:r.id,price_usdc:price,status:'READY'});
+  }
+  return {ok:true,actions};
+}
+
+export async function queueEngineeringJob(db,{source='customer_request',request_summary,risk='high'}={}) {
+  if(!String(request_summary||'').trim()) throw new Error('EMPTY_ENGINEERING_REQUEST');
+  const jobId='ENG-'+crypto.randomUUID().replaceAll('-','').slice(0,16);
+  await db.prepare("INSERT INTO engineering_jobs(job_id,source,request_summary,status,risk,sandbox) VALUES(?,?,?,?,?,?)")
+    .bind(jobId,source,String(request_summary).slice(0,10000),'QUEUED',risk,'NOT_CONFIGURED').run();
+  return {ok:true,job_id:jobId,status:'QUEUED',executor:'ECC_EXTERNAL_HARNESS_REQUIRED'};
+}
+
+export async function acquisitionCycle(db) {
+  const discovery=await discoverCapabilities(db);
+  const demand=await scanAgentDemand(db);
+  const growth=await prepareGrowthActions(db);
+  return {ok:true,discovery,demand,growth,next_action:'AUTHENTICATED_EXTERNAL_CHANNEL_REQUIRED_FOR_APPLY_MESSAGE_OR_ORDER'};
+}
