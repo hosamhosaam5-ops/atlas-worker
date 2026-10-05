@@ -92,7 +92,7 @@ jobs:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-search.json
+          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=dev.workers.atlas' -o registry-search.json
           cat registry-search.json
           grep -Fq "$AGENT_URL" registry-search.json
       - name: Upload registry evidence
