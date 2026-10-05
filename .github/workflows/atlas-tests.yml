@@ -121,3 +121,37 @@ jobs:
             registry-browser-result.txt
             registry-search.json
           if-no-files-found: warn
+  production_a2a_probe:
+    if: github.event_name != 'pull_request'
+    needs: [test, registry_submit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Production A2A probe
+        env:
+          CARD: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+        run: |
+          set -euo pipefail
+          mkdir -p a2a-evidence
+          curl --fail-with-body --silent --show-error -H 'accept: application/json' "$CARD" -o a2a-evidence/agent-card.json
+          ENDPOINT="$(jq -er '.supportedInterfaces[0] | select(.protocolBinding=="JSONRPC" and .protocolVersion=="1.0") | .url' a2a-evidence/agent-card.json)"
+          test "$ENDPOINT" = "https://atlas-worker.hosamhosaam5.workers.dev/a2a"
+          ID="atlas-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          cat > a2a-evidence/request.json <<EOF
+          {"jsonrpc":"2.0","id":"$ID","method":"message/send","params":{"message":{"messageId":"$ID-message","role":"user","parts":[{"kind":"text","text":"ATLAS interoperability probe; no purchase, payment, order, customer data, or external commitment."}]}}}
+          EOF
+          curl -sS -D a2a-evidence/headers.txt -o a2a-evidence/response.json -w '%{http_code}' -H 'content-type: application/json' -H 'accept: application/json' --data-binary @a2a-evidence/request.json "$ENDPOINT" > a2a-evidence/http-status.txt
+          STATUS="$(cat a2a-evidence/http-status.txt)"
+          TYPE="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/,"" ); print}' a2a-evidence/headers.txt | tail -1 | sed 's/^[^:]*:[[:space:]]*//')"
+          printf 'endpoint=%s\nhttp_status=%s\ncontent_type=%s\nrequest_id=%s\n' "$ENDPOINT" "$STATUS" "$TYPE" "$ID" | tee a2a-evidence/metadata.txt
+          cat a2a-evidence/response.json
+          test "$STATUS" = 200
+          printf '%s' "$TYPE" | grep -Eiq '^application/json([;[:space:]]|$)'
+          jq -e --arg id "$ID" '.jsonrpc=="2.0" and .id==$id and (.result != null) and (.error == null)' a2a-evidence/response.json
+      - name: Upload A2A evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-a2a-production-probe-${{ github.run_id }}
+          path: a2a-evidence/
+          if-no-files-found: error
