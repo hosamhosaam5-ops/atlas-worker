@@ -110,7 +110,7 @@ export async function prepareGrowthActions(db) {
   return {ok:true,actions};
 }
 
-export async function queueEngineeringJob(db,{source='customer_request',request_summary,risk='high'}={}) {
+async function queueEngineeringJob(db,{source='customer_request',request_summary,risk='high'}={}) {
   const safe = sanitizeExternalInput({request_summary}).data.request_summary;
   if(!String(safe||'').trim()) throw new Error('EMPTY_ENGINEERING_REQUEST');
   const gate = authorizeAction('engineering_queue', {sensitive: risk === 'critical', outboundSpend: false, majorStrategy: false});
