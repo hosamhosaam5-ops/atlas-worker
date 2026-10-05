@@ -12,6 +12,7 @@ import { WALLET, USDC_CONTRACT, fetchReceipt, evaluatePaymentSafe } from './paym
 import { getFileStorage } from './storage.js';
 import { getEmailProvider } from './email.js';
 import { createOutbox } from '../core/outbox.js';
+import { recordReputation } from '../autonomy/registry.js';
 
 const MAX_DATA_ROWS = 5000;
 
@@ -437,11 +438,18 @@ export async function processOrder(db, env, input) {
   }
 
   const a = await audit(db, 'order', meta.order_id, meta, finalStatus, dlv.delivery_error || null);
+  const reputation = await recordReputation(db, {
+    event_type: finalStatus === 'DELIVERED' ? 'ORDER_SUCCESS' : 'ORDER_DELIVERY_FAILED',
+    order_id: meta.order_id,
+    score_delta: finalStatus === 'DELIVERED' ? 1 : -0.25,
+    evidence: {status: finalStatus, delivery_status: dlv.delivery_status, qa_status: 'PASS'}
+  });
   return {
     order_id: meta.order_id,
     order_status: finalStatus, delivery: dlv, qa_report: qa.qa_report, product_id: priceMeta.product_id, quote_ref: qa.quote_ref,
     rows_in: qa.rows_in, rows_out: qa.rows_out, quote_ref: qa.quote_ref,
     payment_status: qa.payment_status, amount_paid: qa.amount_paid,
+    reputation,
     message: 'Order processed. Delivery by email.', audit: a, latency_ms: Date.now() - t0,
   };
 }
