@@ -79,12 +79,6 @@ export async function scanAgentDemand(db) {
   return {ok:true,signals};
 }
 
-export async function acquisitionCycle(db) {
-  const discovery=await discoverCapabilities(db);
-  const demand=await scanAgentDemand(db);
-  return {ok:true,discovery,demand,next_action:'QUALIFY_AND_OFFER_REQUIRES_AUTHENTICATED_EXTERNAL_CHANNEL'};
-}
-
 export function selectLLMRoute(env,{preferFree=true}={}) {
   const routes=[];
   if(env.AI && typeof env.AI.run==='function') routes.push({provider:'WORKERS_AI',model:env.AI_MODEL||'@cf/zai-org/glm-4.7-flash',cost:'free_quota'});
