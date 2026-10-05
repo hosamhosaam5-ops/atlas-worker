@@ -258,6 +258,9 @@ export async function processUpdate(env, update, eventPk, timings) {
   // ---- AI2 (final) ----
   let finalReply = parsed.reply;
   let finalMemories = parsed.memories;
+  if (toolOut.overall_status === 'BLOCKED') {
+    finalReply += '\n\n(ملاحظة: تم إيقاف الأدوات تلقائياً لأن الطلب تجاوز حدود الاستقلالية الآمنة. لم تُنفذ الأدوات.)';
+  }
   if (toolOut.tool_used !== 'none' && toolOut.results.length > 0) {
     try {
       await assertAutonomyBudget({tool_calls: toolOut.results.length, external_requests: 0});
