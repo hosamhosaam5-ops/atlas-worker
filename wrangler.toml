@@ -42,6 +42,7 @@ DATAPOINT_PROVIDER = "MOCK"
 BOUNTYBOOK_PROVIDER = "MOCK"
 # FOUNDER_CHAT_ID is a var (not secret) — set at deploy:
 FOUNDER_CHAT_ID = "5246182877"
+FOUNDER_OAUTH_SUB = "d11ad887-43fa-51fb-95f2-dee77ccdd3e2"
 # Founder-approved public receiving wallet for x402. This is a public address, not a private key.
 ATLAS_WALLET_ADDRESS = "0x59Ea688b36464133E71873d8BeE8Fcb3BC369383"
 
