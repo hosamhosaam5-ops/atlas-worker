@@ -262,37 +262,65 @@ export default {
       const paymentRequirements = req.accepts[0];
       const paymentRequiredHeader = btoa(JSON.stringify(req));
       if (request.method === "GET") return new Response(JSON.stringify(req), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+
+      // Parse and validate the paid resource request BEFORE settlement. A malformed
+      // order must never cause a customer payment to be settled.
+      let input: any = {};
+      const ct = request.headers.get("content-type") || "";
+      try {
+        if (ct.includes("multipart/form-data")) {
+          const form = await request.formData();
+          const file = form.get("file_upload");
+          input.client_email = form.get("client_email");
+          input.__file_name = file && typeof file === "object" && "name" in file ? String(file.name) : String(form.get("file_name") || "upload.csv");
+          if (file && typeof file === "object" && "arrayBuffer" in file) input.__file_bytes = new Uint8Array(await file.arrayBuffer());
+        } else {
+          const body: any = await request.json();
+          input.client_email = body.client_email;
+          input.__file_name = body.file_name || "upload.csv";
+          if (body.file_base64) {
+            const bin = atob(String(body.file_base64));
+            input.__file_bytes = Uint8Array.from(bin, (c: string) => c.charCodeAt(0));
+          }
+        }
+      } catch { return json({ ok: false, error: "bad request body" }, 400); }
+      if (!input.client_email || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: "client_email and file_upload/file_base64 are required" }, 400);
+
       const signatureHeader = request.headers.get("PAYMENT-SIGNATURE");
       if (!signatureHeader) return new Response(JSON.stringify({ ok: false, error: "PAYMENT-SIGNATURE header is required" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
       let paymentPayload;
-      try { paymentPayload = JSON.parse(atob(signatureHeader)); } catch { return new Response(JSON.stringify({ ok: false, error: "INVALID_PAYMENT_SIGNATURE" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } }); }
+      try { paymentPayload = JSON.parse(atob(signatureHeader)); } catch { return new Response(JSON.stringify({ ok: false, error: "INVALID_PAYMENT_SIGNATURE" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
       if (paymentPayload?.x402Version !== 2 || !paymentPayload?.accepted || !paymentPayload?.payload) return new Response(JSON.stringify({ ok: false, error: "INVALID_PAYMENT_PAYLOAD" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
-      const facilitator = String(env.X402_FACILITATOR_URL || "https://facilitator.openx402.ai").replace(/\\/$/, "");
+
+      const facilitator = String(env.X402_FACILITATOR_URL || "https://facilitator.openx402.ai").replace(/\/$/, "");
       const facilitatorBody = JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements });
       let verifyResponse;
       try { verifyResponse = await fetch(facilitator + "/verify", { method: "POST", headers: { "content-type": "application/json" }, body: facilitatorBody, signal: AbortSignal.timeout(15000) }); } catch (e) { return json({ ok: false, error: "X402_VERIFY_UNAVAILABLE", detail: String(e?.message || e) }, 503); }
       let verifyData; try { verifyData = await verifyResponse.json(); } catch { verifyData = { isValid: false, invalidReason: "invalid_facilitator_response" }; }
       if (!verifyResponse.ok || verifyData?.isValid !== true) return new Response(JSON.stringify({ ok: false, error: "PAYMENT_NOT_VERIFIED", reason: verifyData?.invalidReason || "facilitator_rejected_payment" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+
       let settleResponse;
       try { settleResponse = await fetch(facilitator + "/settle", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "x402-" + String(paymentPayload.payload?.authorization?.nonce || "unknown") }, body: facilitatorBody, signal: AbortSignal.timeout(30000) }); } catch (e) { return json({ ok: false, error: "X402_SETTLE_UNAVAILABLE", detail: String(e?.message || e) }, 503); }
       let settleData; try { settleData = await settleResponse.json(); } catch { settleData = { success: false, errorReason: "invalid_facilitator_response" }; }
       if (!settleResponse.ok || settleData?.success !== true || !/^0x[0-9a-fA-F]{64}$/.test(String(settleData?.transaction || ""))) return json({ ok: false, error: "PAYMENT_NOT_SETTLED", reason: settleData?.errorReason || "facilitator_settlement_failed", settlement: settleData }, 503);
-      let input: any = {};
-      const ct = request.headers.get("content-type") || "";
+
+      input.tx_hash = String(settleData.transaction);
+      input.__order_id = "X402-" + String(settleData.transaction).slice(2, 18);
+      input.__x402_expected_amount = Number(paymentRequirements.amount) / 1e6;
+      input.__x402_product_id = "atlas_ai_data_qa_v1";
+
+      let order;
       try {
-        if (ct.includes("multipart/form-data")) {
-          const form = await request.formData(); const file = form.get("file_upload");
-          input.client_email = form.get("client_email"); input.__file_name = file && typeof file === "object" && "name" in file ? String(file.name) : String(form.get("file_name") || "upload.csv");
-          if (file && typeof file === "object" && "arrayBuffer" in file) input.__file_bytes = new Uint8Array(await file.arrayBuffer());
-        } else {
-          const body: any = await request.json(); input.client_email = body.client_email; input.__file_name = body.file_name || "upload.csv";
-          if (body.file_base64) { const bin = atob(String(body.file_base64)); input.__file_bytes = Uint8Array.from(bin, (c: string) => c.charCodeAt(0)); }
-        }
-      } catch { return json({ ok: false, error: "bad request body" }, 400); }
-      if (!input.client_email || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: "client_email and file_upload/file_base64 are required" }, 400);
-      input.tx_hash = String(settleData.transaction); input.__order_id = "X402-" + String(settleData.transaction).slice(2, 18);
-      input.__x402_expected_amount = Number(paymentRequirements.amount) / 1e6; input.__x402_product_id = "atlas_ai_data_qa_v1";
-      const order = await processOrder(env.DB, env, input);
+        order = await processOrder(env.DB, env, input);
+      } catch (e) {
+        // Settlement already succeeded; preserve the paid transaction for reconciliation.
+        const error = String(e?.message || e);
+        await ensureOrderSchema(env.DB);
+        await env.DB.prepare("INSERT OR IGNORE INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,error,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'))")
+          .bind(input.__order_id, String(input.client_email).trim().toLowerCase(), input.tx_hash, input.__x402_product_id, "REVIEW_REQUIRED", "PAID", "X402_POST_SETTLEMENT_PROCESS_ERROR: " + error).run();
+        order = { order_id: input.__order_id, order_status: "REVIEW_REQUIRED", error };
+      }
+
       const paymentResponse = JSON.stringify(settleData);
       const headers: Record<string,string> = { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-RESPONSE": btoa(paymentResponse) };
       if (order.order_status === "DELIVERED") return new Response(JSON.stringify({ ok: true, payment: settleData, order }), { status: 200, headers });
