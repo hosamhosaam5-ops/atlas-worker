@@ -203,14 +203,16 @@ jobs:
           echo '--- commerce.json ---'; cat commerce.json
           echo '--- trust.json ---'; cat trust.json
           echo '--- llms.txt (head) ---'; sed -n '1,120p' llms.txt
-          jq -e '.manifestVersion and (.products | type == "array") and any(.products[]; .id=="atlas_ai_data_qa_v1")' commerce.json
-          jq -e '(.products[] | select(.id=="atlas_ai_data_qa_v1") | (.status=="ACTIVE" and ((.price_usdc|tonumber)==15) and (.payment_protocol|test("x402";"i"))))' commerce.json
-          jq -e '.trust_version and (.service=="ATLAS") and (.payment_safety != null)' trust.json
+          jq -e '.schema_version=="atlas.commerce.v1" and .provider=="ATLAS" and .audience=="AI agents and agent systems" and .product_id=="atlas_ai_data_qa_v1"' commerce.json
+          jq -e '.pricing.mode=="FOUNDER_QUOTE" and (.pricing.indicative_usdc|tonumber)==15' commerce.json
+          jq -e '.protocols.a2a=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocols.x402_requirements=="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1" and .payment.network=="eip155:8453" and .payment.asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .payment.payTo=="0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F" and .payment.x402_settlement=="NOT_ACTIVE"' commerce.json
+          jq -e '.ok==true and .verified==true and (.metrics.delivered_orders|tonumber)>=0 and (.metrics.paid_orders|tonumber)>=0 and (.metrics.failed_or_review_orders|tonumber)>=0 and .methodology=="Derived only from ATLAS order ledger and reputation events; no synthetic records are included."' trust.json
           grep -Fq 'atlas_ai_data_qa_v1' llms.txt
           grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/a2a' llms.txt
+          grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1' llms.txt
           curl --fail-with-body --silent --show-error "$BASE/.well-known/agent-card.json" -o agent-card-consistency.json
-          jq -e '.name=="ATLAS" and (.supportedInterfaces[] | select(.url=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding=="JSONRPC" and .protocolVersion=="1.0"))' agent-card-consistency.json
-          jq -e '.capabilities.extensions[] | select(.uri=="https://a2a-registry.org/extensions/registry/v1") | (.params.identity.provider=="github" and .params.identity.username=="hosamhosaam5-ops" and .params.identity.packageName=="github.hosamhosaam5-ops.atlas")' agent-card-consistency.json
+          jq -e '.name=="ATLAS" and any(.supportedInterfaces[]; .url=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding=="JSONRPC" and .protocolVersion=="1.0")' agent-card-consistency.json
+          jq -e 'any(.capabilities.extensions[]; .uri=="https://a2a-registry.org/extensions/registry/v1" and .params.identity.provider=="github" and .params.identity.username=="hosamhosaam5-ops" and .params.identity.packageName=="github.hosamhosaam5-ops.atlas")' agent-card-consistency.json
 
       - name: Upload A2A evidence
         if: always()
