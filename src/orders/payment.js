@@ -32,7 +32,7 @@ function mockReceipt({ to = WALLET, amountUsdc = 1, contract = USDC_CONTRACT, st
 }
 
 const MOCK_SCENARIOS = {
-  valid: (env) => ({ result: mockReceipt({ amountUsdc: Number(env.PAYMENT_MOCK_AMOUNT_USDC || 1) }) }),
+  valid: (env) => ({ result: mockReceipt({ to: env.ATLAS_WALLET_ADDRESS || WALLET, amountUsdc: Number(env.PAYMENT_MOCK_AMOUNT_USDC || 1) }) }),
   valid_overpay: () => ({ result: mockReceipt({ amountUsdc: 1.5 }) }),
   not_found: () => ({ result: null }),
   tx_failed: () => ({ result: { status: '0x0', logs: [] } }),
