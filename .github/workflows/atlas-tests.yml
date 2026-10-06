@@ -171,7 +171,7 @@ jobs:
           set -euo pipefail
           curl --fail-with-body --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/catalog.json -o catalog.json
           cat catalog.json
-          jq -e '.products[] | select(.product_id=="atlas_ai_data_qa_v1" and .status=="ACTIVE" and (.price_usdc|tonumber)==15)' catalog.json
+          jq -e '.products[] | select(.id=="atlas_ai_data_qa_v1" and .status=="ACTIVE" and (.price_usdc|tonumber)==15)' catalog.json
           curl -sS -D x402-headers.txt -o x402-body.json -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1 > x402-status.txt
           printf 'x402_status='; cat x402-status.txt; echo
           echo '--- x402 headers ---'; sed -n '1,120p' x402-headers.txt
