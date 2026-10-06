@@ -18,7 +18,7 @@ import { emitAgentEvent } from '../autonomy/p1.js';
 const MAX_DATA_ROWS = 5000;
 
 // ---------- Prepare Order Meta (verbatim port) ----------
-export function prepareOrderMeta(first, hasFile) {
+export function prepareOrderMeta(first, hasFile, env = {}) {
   const fileKeys = hasFile ? [hasFile] : [];
   // Public callers must provide real order credentials. Test mode is explicit and is
   // only intended for authenticated/internal callers; the public webhook never sets it.
@@ -50,7 +50,7 @@ export function prepareOrderMeta(first, hasFile) {
     payment_status: 'NOT_CHECKED',
     amount_paid: 0,
     test_price_override: testMode ? 75 : 0,
-    wallet: WALLET,
+    wallet: String(env.ATLAS_WALLET_ADDRESS || WALLET).trim(),
     usdc_contract: USDC_CONTRACT,
   };
 }
@@ -267,7 +267,7 @@ export async function processOrder(db, env, input) {
     tx_hash: input.tx_hash,
     __file_name: input.__file_name,
     __test_mode: input.__test_mode === true,
-  }, hasFile);
+  }, hasFile, env);
   if (input.__order_id) meta.order_id = String(input.__order_id); // stable id for idempotency tests
 
   // --- Input Valid gate (ports Reject Invalid Input branch) ---
@@ -317,6 +317,29 @@ export async function processOrder(db, env, input) {
 
   if (meta.test_mode) {
     gate = applyTestPrepay(meta);
+  } else if (input.__x402_expected_amount !== undefined) {
+    const x402Amount = Number(input.__x402_expected_amount);
+    const x402ProductId = String(input.__x402_product_id || '').trim();
+    const product = await db.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind(x402ProductId).first();
+    if (!product || String(product.status) !== 'ACTIVE' || Number(product.price_usdc) !== x402Amount) {
+      await finalizeLedger(db, meta.order_id, { status: 'PRICE_MISMATCH', payment_status: 'NOT_CHECKED', product_id: x402ProductId, last_error: 'X402_PRODUCT_PRICE_MISMATCH' });
+      const a = await audit(db, 'order', meta.order_id, meta, 'PRICE_MISMATCH', 'X402_PRODUCT_PRICE_MISMATCH');
+      return { order_id: meta.order_id, order_status: 'PRICE_MISMATCH', message: 'x402 payment amount does not match the active ATLAS product.', audit: a, latency_ms: Date.now() - t0 };
+    }
+    priceMeta = { ...meta, expected_amount: x402Amount, price_source: 'X402', price_ok: true, quote_ref: 'x402', product_id: x402ProductId };
+    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED')").bind(meta.order_id, meta.client_email, meta.tx_hash, x402ProductId).run();
+    const claimed = await db.prepare("SELECT order_id FROM order_ledger WHERE tx_hash=? LIMIT 1").bind(meta.tx_hash).first();
+    if (!claimed || String(claimed.order_id) !== String(meta.order_id)) {
+      const a = await audit(db, 'order', meta.order_id, meta, 'DUPLICATE_TX', 'tx_hash already claimed');
+      return { order_id: meta.order_id, order_status: 'DUPLICATE_TX', message: 'This x402 settlement transaction was already used.', audit: a, latency_ms: Date.now() - t0 };
+    }
+    const receipt = await fetchReceipt(env, meta.tx_hash);
+    gate = evaluatePaymentSafe(receipt, priceMeta);
+    if (gate.payment_status !== 'PAID') {
+      await finalizeLedger(db, meta.order_id, { status: 'PAYMENT_FAILED', payment_status: gate.payment_status, amount_paid: gate.amount_paid, product_id: x402ProductId, price_source: 'X402', expected_amount: x402Amount, quote_ref: 'x402', last_error: gate.payment_detail });
+      const a = await audit(db, 'order', meta.order_id, meta, 'PAYMENT_FAILED', gate.payment_status);
+      return { order_id: meta.order_id, order_status: 'PAYMENT_FAILED', message: 'Settled transaction did not independently verify as the required USDC payment.', audit: a, latency_ms: Date.now() - t0 };
+    }
   } else {
     // --- Resolve Agreed Price (production only) ---
     const { results: quoteRows } = await db.prepare(
