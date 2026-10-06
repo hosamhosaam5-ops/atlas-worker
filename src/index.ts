@@ -77,7 +77,8 @@ interface Env {
   CHATGPT_BRIDGE_SECRET?: string;
   ATLAS_ORIGIN?: string;
   FOUNDER_CHAT_ID?: string;
-  ATLAS_WALLET_ADDRESS?: string;\n  X402_FACILITATOR_URL?: string;
+  ATLAS_WALLET_ADDRESS?: string;
+  X402_FACILITATOR_URL?: string;
 }
 
 const json = (data: unknown, status = 200) =>
