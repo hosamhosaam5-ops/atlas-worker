@@ -84,7 +84,7 @@ interface Env {
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 
-async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext & { readonly auth?: { scope?: string[]; audience?: string } }) {
+async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext & { readonly auth?: { scope?: string[]; audience?: string }; readonly props?: Record<string, unknown> }) {
   const json=(data:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json",...headers}});
   if(request.method!=="POST")return json({jsonrpc:"2.0",error:{code:-32000,message:"Method Not Allowed"}},405,{Allow:"POST"});
   let msg:any;try{msg=await request.json();}catch{return json({jsonrpc:"2.0",error:{code:-32700,message:"Parse error"}},400);}
@@ -115,7 +115,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    {name:"upsert_product",description:"Create or update a product. Default status is DRAFT; no launch or payment occurs.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{product_id:{type:"string"},name:{type:"string"},description:{type:"string"},unit:{type:"string"},price_usdc:{type:"number"},pricing_mode:{type:"string"},status:{type:"string"}},required:["product_id","name","description"],additionalProperties:false}},
    {name:"create_quote",description:"Create a founder-controlled quote for an ACTIVE product or standalone client.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{client_email:{type:"string"},agreed_amount:{type:"number"},note:{type:"string"},product_id:{type:["string","null"]}},required:["client_email","agreed_amount"],additionalProperties:false}},
    {name:"request_financial_approval",description:"Create a PENDING founder financial approval record. It never moves funds.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{order_id:{type:["string","null"]},quote_id:{type:["integer","null"]},action:{type:"string"},amount_usdc:{type:["number","null"]},requested_by:{type:"string"},reason:{type:"string"}},required:["action"],additionalProperties:false}},
-   {name:"decide_financial_approval",description:"Record a founder approval decision (APPROVED or REJECTED). This records authorization only; it never executes payment.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{approval_id:{type:"string"},status:{type:"string",enum:["APPROVED","REJECTED"]},decided_by:{type:"string"},reason:{type:"string"}},required:["approval_id","status","decided_by"],additionalProperties:false}},
+   {name:"decide_financial_approval",description:"Record a founder approval decision (APPROVED or REJECTED). Identity is derived server-side from the authenticated OAuth subject; client-supplied decided_by is not accepted.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{approval_id:{type:"string"},status:{type:"string",enum:["APPROVED","REJECTED"]},reason:{type:"string"}},required:["approval_id","status"],additionalProperties:false}},
    {name:"list_capabilities",description:"List ATLAS capability registry entries and health metadata.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{kind:{type:"string"},limit:{type:"integer",minimum:1,maximum:200}},additionalProperties:false}},
    {name:"autonomy_snapshot",description:"Read the bounded autonomy snapshot: capabilities, policy, identity, and demand signals.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
    {name:"get_autonomy_policy",description:"Read ATLAS autonomous execution guardrails.",securitySchemes:[{type:"oauth2",scopes:["mcp:read"]}],inputSchema:{type:"object",properties:{},additionalProperties:false}},
@@ -175,7 +175,12 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="upsert_product"){out=await upsertProduct(env.DB,args);}
    else if(name==="create_quote"){out=await createQuote(env.DB,args);}
    else if(name==="request_financial_approval"){out=await requestFinancialApproval(env.DB,args);}
-   else if(name==="decide_financial_approval"){out=await decideFinancialApproval(env.DB,args);}
+   else if(name==="decide_financial_approval"){
+    const oauthSub=String((ctx as any)?.props?.login || (ctx as any)?.props?.sub || (ctx as any)?.props?.userId || "").trim();
+    const founderOauthSub=String(env.FOUNDER_OAUTH_SUB || "").trim();
+    if(!oauthSub || !founderOauthSub || oauthSub!==founderOauthSub) throw new Error("FOUNDER_IDENTITY_REQUIRED");
+    out=await decideFinancialApproval(env.DB,{...args,decided_by:oauthSub});
+   }
    else if(name==="list_financial_approvals"){out={approvals:await listFinancialApprovals(env.DB,args)};}
    else if(name==="discover_agent_marketplaces"){out=await discoverAgentMarketplaces(env.DB);}
    else if(name==="prepare_offer"){out=await prepareOffer(env.DB,args);}
