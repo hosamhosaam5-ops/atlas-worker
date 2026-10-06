@@ -41,7 +41,8 @@ FILE_STORAGE = "LOCAL"
 DATAPOINT_PROVIDER = "MOCK"
 BOUNTYBOOK_PROVIDER = "MOCK"
 # FOUNDER_CHAT_ID is a var (not secret) — set at deploy:
-# FOUNDER_CHAT_ID = "5246182877"
+FOUNDER_CHAT_ID = "5246182877"
+# ATLAS_WALLET_ADDRESS must be configured as a secret/var with the current founder-approved wallet before x402 can advertise payment requirements.
 
 # Secrets (founder enters via `wrangler secret put`, never in this file):
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, OPENROUTER_API_KEY,
