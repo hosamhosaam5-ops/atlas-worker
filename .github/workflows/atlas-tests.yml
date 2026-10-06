@@ -172,26 +172,17 @@ jobs:
           curl --fail-with-body --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/catalog.json -o catalog.json
           cat catalog.json
           jq -e '.products[] | select(.product_id=="atlas_ai_data_qa_v1" and .status=="ACTIVE" and (.price_usdc|tonumber)==15)' catalog.json
-          python3 - <<'PY'
-          import urllib.request
-          u="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1"
-          try:
-              r=urllib.request.urlopen(u, timeout=20)
-              body=r.read()
-              status=r.status
-              headers=r.headers
-          except urllib.error.HTTPError as e:
-              body=e.read()
-              status=e.code
-              headers=e.headers
-          open("x402-body.json","wb").write(body)
-          open("x402-status.txt","w").write(str(status))
-          with open("x402-headers.txt","w") as f:
-              f.write(str(headers))
-          print("x402_status=",status)
-          print("x402_body_bytes=",len(body))
-          print("x402_payment_required_present=",bool(headers.get("PAYMENT-REQUIRED")))
-          PY
+          curl -sS -D x402-headers.txt -o x402-body.json -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1 > x402-status.txt
+          printf 'x402_status='; cat x402-status.txt; echo
+          echo '--- x402 headers ---'; sed -n '1,120p' x402-headers.txt
+          echo '--- x402 body bytes ---'; wc -c x402-body.json
+          echo '--- x402 body ---'; cat x402-body.json; echo
+          test "$(cat x402-status.txt)" = 402
+          grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
+          PAYMENT_REQUIRED="$(awk 'BEGIN{IGNORECASE=1} /^PAYMENT-REQUIRED:/{sub(/\r$/,""); sub(/^[^:]*:[[:space:]]*/,""); print}' x402-headers.txt | tail -1)"
+          test -n "$PAYMENT_REQUIRED"
+          printf '%s' "$PAYMENT_REQUIRED" | base64 -d > x402-decoded.json
+          jq -e '.x402Version==2 and .error=="PAYMENT-SIGNATURE header is required" and (.accepts|length)>0 and .accepts[0].scheme=="exact" and .accepts[0].network=="eip155:8453" and .accepts[0].amount=="15000000" and .accepts[0].payTo=="0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F" and .accepts[0].asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"' x402-decoded.json
           printf 'x402_status='; cat x402-status.txt; echo
           echo '--- x402 headers ---'; sed -n '1,80p' x402-headers.txt
           echo '--- x402 body bytes ---'; wc -c x402-body.json
