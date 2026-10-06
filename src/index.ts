@@ -597,3 +597,5 @@ export default {
     ctx.waitUntil(run());
   },
 };
+
+// Deployment verification: x402 production metadata synchronized.
