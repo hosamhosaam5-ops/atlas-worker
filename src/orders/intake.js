@@ -273,7 +273,8 @@ export async function processOrder(db, env, input) {
     __test_mode: input.__test_mode === true,
   }, hasFile, env);
   if (input.__order_id) meta.order_id = String(input.__order_id); // stable id for idempotency tests
-  const settlementMode = String(input.__settlement_mode || (meta.test_mode ? 'MOCK' : (String(env.SETTLEMENT_MODE || '').toUpperCase() || (String(env.PAYMENT_PROVIDER || '').toUpperCase() === 'BASE_RPC' ? 'REAL' : 'MOCK'))).toUpperCase();
+  const requestedSettlementMode = String(input.__settlement_mode || '').trim().toUpperCase();
+  const settlementMode = requestedSettlementMode || (meta.test_mode ? 'MOCK' : (String(env.SETTLEMENT_MODE || '').trim().toUpperCase() || (String(env.PAYMENT_PROVIDER || '').toUpperCase() === 'BASE_RPC' ? 'REAL' : 'MOCK')));
   const chainId = settlementMode === 'REAL' ? String(input.__chain_id || env.CHAIN_ID || 'eip155:8453') : (settlementMode === 'TESTNET' ? String(input.__chain_id || env.CHAIN_ID || 'eip155:84532') : null);
 
   // --- Input Valid gate (ports Reject Invalid Input branch) ---
