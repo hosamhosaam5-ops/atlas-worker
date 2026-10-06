@@ -398,18 +398,35 @@ export function runCeoEngine(input, opts) {
   activeGoals.forEach(function (g) { activeGoalIds[g.goal_id] = true; if (g.status === 'APPROVED') { g.status = 'ACTIVE'; g.last_updated_at = now; } });
 
   // 5. Approval Gate
-  var approvalMsg = founderMessage.match(/(?:أوافق|موافق|نعم أوافق|approve)\s*(?:على)?\s*([a-zA-Z0-9_:-]+)?/i);
-  if (approvalMsg) {
+  // Approval is valid only when the request originated from the verified Telegram path
+  // and the Telegram sender matches the server-side founder identity.
+  var negativeApproval = /(?:غير\s+موافق|لا\s+أوافق|disapprove)/i.test(founderMessage);
+  var approvalMsg = founderMessage.match(/(?:^|\s)(?:أوافق|موافق|نعم\s+أوافق|approve)\s*(?:على)?(?:\s+([a-zA-Z0-9_:-]+))?(?:\s|$)/i);
+  var approvalSource = String(input.approval_source || '');
+  var founderId = String(input.founder_id || '');
+  var founderChatId = String(input.founder_chat_id || '');
+  if (negativeApproval) {
+    pushEvent('APPROVAL_REJECTED', null, 'REJECTED', 'negative approval phrase');
+  } else if (approvalMsg) {
     var targetId = approvalMsg[1] ? approvalMsg[1].trim() : null;
-    durable.tasks.forEach(function (t) {
-      if (t.status !== 'WAITING_APPROVAL') return;
-      if (targetId && t.task_id !== targetId) return;
-      t.status = 'READY'; syncRow(t, 'READY');
-      t.updated_at = now;
-      emitRow({ entity_type: 'task', entity_id: t.task_id, correlation_id: corr, status: 'READY', progress: 0, created_at: t.created_at, updated_at: now, task: t });
-      pushEvent('APPROVAL_GRANTED', t.task_id, 'READY', 'founder approval');
-      emitDecision({ goal_id: t.goal_id, task_id: t.task_id, question: 'Approval granted by founder', selected_option: 'APPROVE', reason: 'explicit founder message', confidence: 1, risk: 'LOW', requires_approval: true, approved: true });
-    });
+    if (approvalSource !== 'telegram' || !founderChatId || founderId !== founderChatId) {
+      pushEvent('APPROVAL_REJECTED', targetId, 'REJECTED', 'approval requires verified Telegram founder identity');
+    } else if (!targetId) {
+      pushEvent('APPROVAL_REJECTED', null, 'REJECTED', 'explicit task id required; collective approval is disabled');
+    } else {
+      var granted = false;
+      durable.tasks.forEach(function (t) {
+        if (t.status !== 'WAITING_APPROVAL') return;
+        if (t.task_id !== targetId) return;
+        t.status = 'READY'; syncRow(t, 'READY');
+        t.updated_at = now;
+        emitRow({ entity_type: 'task', entity_id: t.task_id, correlation_id: corr, status: 'READY', progress: 0, created_at: t.created_at, updated_at: now, task: t });
+        pushEvent('APPROVAL_GRANTED', t.task_id, 'READY', 'verified Telegram founder approval');
+        emitDecision({ goal_id: t.goal_id, task_id: t.task_id, question: 'Approval granted by founder', selected_option: 'APPROVE', reason: 'verified Telegram founder message', confidence: 1, risk: 'LOW', requires_approval: true, approved: true });
+        granted = true;
+      });
+      if (!granted) pushEvent('APPROVAL_REJECTED', targetId, 'REJECTED', 'target task is not WAITING_APPROVAL');
+    }
   }
 
   // 6. Task Execution (deterministic, no external side effects)
