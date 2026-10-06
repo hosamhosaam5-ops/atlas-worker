@@ -319,6 +319,8 @@ export default {
         }
       } catch { return json({ ok: false, error: "bad request body" }, 400); }
       if (!input.client_email || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: "client_email and file_upload/file_base64 are required" }, 400);
+      const MAX_ORDER_FILE_BYTES = 1_400_000;
+      if (input.__file_bytes.length > MAX_ORDER_FILE_BYTES) return json({ ok: false, error: "FILE_SIZE_LIMIT_EXCEEDED", max_bytes: MAX_ORDER_FILE_BYTES, received_bytes: input.__file_bytes.length }, 413);
 
       const signatureHeader = request.headers.get("PAYMENT-SIGNATURE");
       if (!signatureHeader) return new Response(JSON.stringify({ ok: false, error: "PAYMENT-SIGNATURE header is required" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
@@ -372,6 +374,8 @@ export default {
       input.__order_id = "X402-" + String(settleData.transaction).slice(2, 18);
       input.__x402_expected_amount = Number(paymentRequirements.amount) / 1e6;
       input.__x402_product_id = "atlas_ai_data_qa_v1";
+      input.__settlement_mode = "REAL";
+      input.__chain_id = "eip155:8453";
 
       let order;
       try {
@@ -478,6 +482,9 @@ export default {
         }
       } catch {
         return json({ ok: false, error: 'bad request body' }, 400);
+      }
+      if (input.__file_bytes && input.__file_bytes.length > 1_400_000) {
+        return json({ ok: false, error: 'FILE_SIZE_LIMIT_EXCEEDED', max_bytes: 1_400_000, received_bytes: input.__file_bytes.length }, 413);
       }
       try {
         const result = await processOrder(env.DB, env, input);
