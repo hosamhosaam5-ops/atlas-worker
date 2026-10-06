@@ -475,6 +475,23 @@ export default {
   // engines idempotently (each engine self-skips when there is nothing new).
   // alertAdapter bridges to the LIVE/MOCK telegram provider; MOCK sends nothing.
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Dedicated 5-minute recovery trigger: replay only durably logged Telegram events
+    // that remained PENDING. processUpdate has a durable duplicate precheck, so recovery
+    // is safe after a waitUntil cancellation and does not blindly duplicate completed work.
+    if (event.cron === "*/5 * * * *") {
+      try {
+        const rows: any = await env.DB.prepare(
+          "SELECT id FROM event_log WHERE source='telegram' AND status='PENDING' AND created_at < datetime('now','-1 minute') ORDER BY id ASC LIMIT 3"
+        ).all();
+        for (const row of (rows.results || [])) {
+          try { await replayPendingTelegramEvent(env, Number(row.id)); }
+          catch (e) { console.error('PENDING_EVENT_REPLAY_FAILED', Number(row.id), String(e?.message || e)); }
+        }
+      } catch (e) {
+        console.error('PENDING_EVENT_RECOVERY_SCAN_FAILED', String(e?.message || e));
+      }
+      return;
+    }
     const tg = getTelegramProvider(env as any);
     const alertAdapter = {
       async send(chatId: string, text: string, _opts: any) {
