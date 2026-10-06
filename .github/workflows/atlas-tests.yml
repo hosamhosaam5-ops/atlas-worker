@@ -193,6 +193,25 @@ jobs:
           test -s x402-headers.txt
           grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
 
+      - name: Verify public commerce, trust, and discovery consistency
+        run: |
+          set -euo pipefail
+          BASE='https://atlas-worker.hosamhosaam5.workers.dev'
+          curl --fail-with-body --silent --show-error "$BASE/commerce.json" -o commerce.json
+          curl --fail-with-body --silent --show-error "$BASE/trust.json" -o trust.json
+          curl --fail-with-body --silent --show-error "$BASE/llms.txt" -o llms.txt
+          echo '--- commerce.json ---'; cat commerce.json
+          echo '--- trust.json ---'; cat trust.json
+          echo '--- llms.txt (head) ---'; sed -n '1,120p' llms.txt
+          jq -e '.manifestVersion and (.products | type == "array") and any(.products[]; .id=="atlas_ai_data_qa_v1")' commerce.json
+          jq -e '(.products[] | select(.id=="atlas_ai_data_qa_v1") | (.status=="ACTIVE" and ((.price_usdc|tonumber)==15) and (.payment_protocol|test("x402";"i"))))' commerce.json
+          jq -e '.trust_version and (.service=="ATLAS") and (.payment_safety != null)' trust.json
+          grep -Fq 'atlas_ai_data_qa_v1' llms.txt
+          grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/a2a' llms.txt
+          curl --fail-with-body --silent --show-error "$BASE/.well-known/agent-card.json" -o agent-card-consistency.json
+          jq -e '.name=="ATLAS" and (.supportedInterfaces[] | select(.url=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding=="JSONRPC" and .protocolVersion=="1.0"))' agent-card-consistency.json
+          jq -e '.capabilities.extensions[] | select(.uri=="https://a2a-registry.org/extensions/registry/v1") | (.params.identity.provider=="github" and .params.identity.username=="hosamhosaam5-ops" and .params.identity.packageName=="github.hosamhosaam5-ops.atlas")' agent-card-consistency.json
+
       - name: Upload A2A evidence
         if: always()
         uses: actions/upload-artifact@v4
