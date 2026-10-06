@@ -190,14 +190,16 @@ export function buildCleanCSV(cleanRows) {
 async function insertLedger(db, row) {
   await db.prepare(
     `INSERT INTO order_ledger (order_id, client_email, tx_hash, quote_ref, status, qa_status, qa_report,
-      payment_status, amount_paid, price_source, expected_amount, file_name, file_ext, rows_in, rows_out, product_id, delivery_channel, delivery_status, error, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`
+      payment_status, amount_paid, price_source, expected_amount, file_name, file_ext, rows_in, rows_out, product_id, delivery_channel, delivery_status, error, settlement_mode, chain_id, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`
   ).bind(
     row.order_id ?? null, row.client_email ?? null, row.tx_hash ?? null, row.quote_ref ?? null,
     row.status, row.qa_status ?? null, row.qa_report ?? null, row.payment_status ?? null,
     row.amount_paid ?? null, row.price_source ?? null, row.expected_amount ?? null,
     row.file_name ?? null, row.file_ext ?? null, row.rows_in ?? null, row.rows_out ?? null, row.product_id ?? null,
-    row.delivery_channel ?? null, row.delivery_status ?? null, row.last_error ?? null
+    row.delivery_channel ?? null, row.delivery_status ?? null, row.last_error ?? null,
+    row.settlement_mode ?? ((row.payment_status === 'PAID' && row.tx_hash) ? 'REAL' : 'MOCK'),
+    row.chain_id ?? ((row.payment_status === 'PAID' && row.tx_hash) ? 'eip155:8453' : null)
   ).run();
 }
 
@@ -209,14 +211,16 @@ async function finalizeLedger(db, orderId, row) {
   await db.prepare(
     `UPDATE order_ledger SET status=?, qa_status=?, qa_report=?, payment_status=?, amount_paid=?,
        price_source=?, expected_amount=?, quote_ref=?, file_name=?, file_ext=?, rows_in=?, rows_out=?,
-       product_id=?, delivery_channel=?, delivery_status=?, error=?, updated_at=datetime('now')
+       product_id=?, delivery_channel=?, delivery_status=?, error=?, settlement_mode=?, chain_id=?, updated_at=datetime('now')
      WHERE order_id=?`
   ).bind(
     row.status, row.qa_status ?? null, row.qa_report ?? null, row.payment_status ?? null,
     row.amount_paid ?? null, row.price_source ?? null, row.expected_amount ?? null,
     row.quote_ref ?? null, row.file_name ?? null, row.file_ext ?? null, row.rows_in ?? null,
     row.rows_out ?? null, row.product_id ?? null, row.delivery_channel ?? null,
-    row.delivery_status ?? null, row.last_error ?? null, orderId
+    row.delivery_status ?? null, row.last_error ?? null,
+    row.settlement_mode ?? ((row.payment_status === 'PAID' && row.tx_hash) ? 'REAL' : 'MOCK'),
+    row.chain_id ?? ((row.payment_status === 'PAID' && row.tx_hash) ? 'eip155:8453' : null), orderId
   ).run();
 }
 
@@ -269,6 +273,8 @@ export async function processOrder(db, env, input) {
     __test_mode: input.__test_mode === true,
   }, hasFile, env);
   if (input.__order_id) meta.order_id = String(input.__order_id); // stable id for idempotency tests
+  const settlementMode = String(input.__settlement_mode || (meta.test_mode ? 'MOCK' : (String(env.SETTLEMENT_MODE || '').toUpperCase() || (String(env.PAYMENT_PROVIDER || '').toUpperCase() === 'BASE_RPC' ? 'REAL' : 'MOCK'))).toUpperCase();
+  const chainId = settlementMode === 'REAL' ? String(input.__chain_id || env.CHAIN_ID || 'eip155:8453') : (settlementMode === 'TESTNET' ? String(input.__chain_id || env.CHAIN_ID || 'eip155:84532') : null);
 
   // --- Input Valid gate (ports Reject Invalid Input branch) ---
   if (meta.invalid_input) {
@@ -327,7 +333,7 @@ export async function processOrder(db, env, input) {
       return { order_id: meta.order_id, order_status: 'PRICE_MISMATCH', message: 'x402 payment amount does not match the active ATLAS product.', audit: a, latency_ms: Date.now() - t0 };
     }
     priceMeta = { ...meta, expected_amount: x402Amount, price_source: 'X402', price_ok: true, quote_ref: 'x402', product_id: x402ProductId };
-    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED')").bind(meta.order_id, meta.client_email, meta.tx_hash, x402ProductId).run();
+    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status, settlement_mode, chain_id) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED', ?, ?)").bind(meta.order_id, meta.client_email, meta.tx_hash, x402ProductId).run();
     const claimed = await db.prepare("SELECT order_id FROM order_ledger WHERE tx_hash=? LIMIT 1").bind(meta.tx_hash).first();
     if (!claimed || String(claimed.order_id) !== String(meta.order_id)) {
       const a = await audit(db, 'order', meta.order_id, meta, 'DUPLICATE_TX', 'tx_hash already claimed');
@@ -361,8 +367,8 @@ export async function processOrder(db, env, input) {
     // D1 is single-threaded and the UNIQUE(tx_hash) index is the concurrency authority.
     // Use INSERT OR IGNORE so a concurrent duplicate becomes a normal business result
     // rather than an uncaught UNIQUE exception; the follow-up read identifies the winner.
-    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED')")
-      .bind(meta.order_id, meta.client_email, meta.tx_hash, priceMeta.product_id || null).run();
+    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status, settlement_mode, chain_id) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED', ?, ?)")
+      .bind(meta.order_id, meta.client_email, meta.tx_hash, priceMeta.product_id || null, settlementMode, chainId).run();
 
     const claimed = await db.prepare(
       "SELECT order_id, status FROM order_ledger WHERE tx_hash = ? LIMIT 1"
