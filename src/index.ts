@@ -221,7 +221,7 @@ export default {
     if (request.method === "GET" && pathname === "/x402/atlas_ai_data_qa_v1") {
       const req=x402Requirements(origin,{wallet:"0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F",asset:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"});
       const encoded=btoa(JSON.stringify(req));
-      return new Response(JSON.stringify(req),{status:402,headers:{"content-type":"application/json","PAYMENT-REQUIRED":encoded}});
+      const payload=JSON.stringify(req); const encoded=btoa(payload); return new Response(payload,{status:402,headers:{"content-type":"application/json","cache-control":"no-store","PAYMENT-REQUIRED":encoded}});
     }
     if (request.method === "GET" && pathname === "/.well-known/oauth-authorization-server") {
       return new Response(JSON.stringify({
