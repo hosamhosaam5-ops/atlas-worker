@@ -9,7 +9,7 @@ import { ensureOrderSchema } from '../orders/schema.js';
 const csvBytes = new TextEncoder().encode('name,value\n alpha , 10 \n alpha ,10\n beta,20\n,,\n');
 
 function envForTest(env, paymentScenario='valid', emailScenario='success', amount=75) {
-  return { ...env, PAYMENT_PROVIDER:'MOCK', PAYMENT_MOCK_SCENARIO:paymentScenario, PAYMENT_MOCK_AMOUNT_USDC:String(amount), EMAIL_PROVIDER:'MOCK', EMAIL_MOCK_SCENARIO:emailScenario };
+  return { ...env, ATLAS_WALLET_ADDRESS: env.ATLAS_WALLET_ADDRESS || '0x59Ea688b36464133E71873d8BeE8Fcb3BC369383', PAYMENT_PROVIDER:'MOCK', PAYMENT_MOCK_SCENARIO:paymentScenario, PAYMENT_MOCK_AMOUNT_USDC:String(amount), EMAIL_PROVIDER:'MOCK', EMAIL_MOCK_SCENARIO:emailScenario };
 }
 
 function tx(seed) {
