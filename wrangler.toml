@@ -25,6 +25,7 @@ crons = [
   "0 21 * * *",    # Daily CEO Report (00:00 Asia/Riyadh)
   "*/30 * * * *",  # Smart Revenue Watch (every 30 min)
   "*/15 * * * *",  # Telegraph Monitor (every 15 min)
+  "*/5 * * * *",   # Safe Telegram event recovery (PENDING -> terminal)
 ]
 
 [vars]
