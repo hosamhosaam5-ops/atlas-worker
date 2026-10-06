@@ -64,6 +64,12 @@ export async function handleChatGptBridge(request,env,adapters=defaultAdapters){
   if(diff!==0)return new Response(JSON.stringify({status:'UNAUTHORIZED'}),{status:401,headers:{'content-type':'application/json'}});
   let body={};try{body=await request.json();}catch(e){}
   const meta=parseAndAuthorize(body),out=await buildBridgeResponse(env,meta,adapters,body);
-  try{await env.DB.prepare('INSERT INTO bridge_audit (request_id, operation, status, auth_result, timestamp, error_summary) VALUES (?,?,?,?,?,?)').bind(out.audit.request_id,out.audit.operation,out.audit.status,out.audit.auth_result,out.audit.timestamp,out.audit.error_summary).run();}catch(e){}
+  try{
+    const callerIp=String(request.headers.get('cf-connecting-ip')||'').slice(0,128);
+    const userAgent=String(request.headers.get('user-agent')||'').slice(0,512);
+    const chatId=String(body?.chat_id || env.FOUNDER_CHAT_ID || '').slice(0,128);
+    await env.DB.prepare('INSERT INTO bridge_audit (request_id, operation, status, auth_result, timestamp, error_summary, caller_ip, user_agent, chat_id) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind(out.audit.request_id,out.audit.operation,out.audit.status,out.audit.auth_result,out.audit.timestamp,out.audit.error_summary,callerIp,userAgent,chatId).run();
+  }catch(e){}
   return new Response(JSON.stringify(out.response),{status:out.response.status==='ERROR'?400:200,headers:{'content-type':'application/json'}});
 }
