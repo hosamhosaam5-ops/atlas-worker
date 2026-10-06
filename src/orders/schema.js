@@ -83,7 +83,7 @@ export async function ensureOrderSchema(db) {
   const quoteHave = new Set((quoteCols || []).map(c => c.name));
   if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT').bind().run();
 
-  const ledgerColsAfter = await db.prepare('PRAGMA table_info(order_ledger)').all();
+  const ledgerColsAfter = await db.prepare('PRAGMA table_xinfo(order_ledger)').all();
   const ledgerHaveAfter = new Set((ledgerColsAfter.results || []).map(r => r.name));
   if (ledgerHaveAfter.has('settlement_mode') && ledgerHaveAfter.has('chain_id') && !ledgerHaveAfter.has('settlement_integrity')) {
     await db.prepare(`ALTER TABLE order_ledger ADD COLUMN settlement_integrity INTEGER AS (
