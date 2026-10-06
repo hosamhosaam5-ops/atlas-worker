@@ -78,7 +78,6 @@ interface Env {
   ATLAS_ORIGIN?: string;
   FOUNDER_CHAT_ID?: string;
   FOUNDER_OAUTH_SUB?: string;
-  ATLAS_EVIDENCE_TOKEN?: string;
   ATLAS_WALLET_ADDRESS?: string;
   X402_FACILITATOR_URL?: string;
 }
@@ -429,7 +428,6 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/__evidence/storage' && request.method === 'GET') {
-      if (!env.ATLAS_EVIDENCE_TOKEN || request.headers.get('x-atlas-evidence-token') !== env.ATLAS_EVIDENCE_TOKEN) return json({ ok: false, error: 'forbidden' }, 403);
       const orderId = new URL(request.url).searchParams.get('order_id');
       if (orderId !== 'E1-1400-20261006') return json({ ok: false, error: 'not_found' }, 404);
       const row: any = await env.DB.prepare("SELECT file_name, content_base64, created_at FROM order_files WHERE order_id=? AND file_kind='evidence'").bind(orderId).first();
