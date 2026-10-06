@@ -77,6 +77,8 @@ interface Env {
   CHATGPT_BRIDGE_SECRET?: string;
   ATLAS_ORIGIN?: string;
   FOUNDER_CHAT_ID?: string;
+  FOUNDER_OAUTH_SUB?: string;
+  ATLAS_EVIDENCE_TOKEN?: string;
   ATLAS_WALLET_ADDRESS?: string;
   X402_FACILITATOR_URL?: string;
 }
@@ -425,6 +427,19 @@ export default {
     }
     if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token") return mcpOAuth.fetch(request, env, ctx);
     const url = new URL(request.url);
+
+    if (url.pathname === '/__evidence/storage' && request.method === 'GET') {
+      if (!env.ATLAS_EVIDENCE_TOKEN || request.headers.get('x-atlas-evidence-token') !== env.ATLAS_EVIDENCE_TOKEN) return json({ ok: false, error: 'forbidden' }, 403);
+      const orderId = new URL(request.url).searchParams.get('order_id');
+      if (orderId !== 'E1-1400-20261006') return json({ ok: false, error: 'not_found' }, 404);
+      const row: any = await env.DB.prepare("SELECT file_name, content_base64, created_at FROM order_files WHERE order_id=? AND file_kind='evidence'").bind(orderId).first();
+      if (!row) return json({ ok: false, error: 'not_found' }, 404);
+      const bin = atob(String(row.content_base64));
+      const bytes = Uint8Array.from(bin, (ch: string) => ch.charCodeAt(0));
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const hash = Array.from(new Uint8Array(digest), (b: number) => b.toString(16).padStart(2, '0')).join('');
+      return new Response(bytes, { status: 200, headers: { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-atlas-evidence-sha256': hash, 'x-atlas-evidence-created-at': String(row.created_at || ''), 'x-atlas-evidence-size': String(bytes.length), 'content-disposition': 'attachment; filename="' + String(row.file_name || 'evidence.bin').replace(/"/g, '') + '"' } });
+    }
 
     if (url.pathname === '/health' && request.method === 'GET') {
       let db = 'unknown';
