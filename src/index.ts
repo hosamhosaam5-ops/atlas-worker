@@ -247,6 +247,39 @@ export default {
     const origin = new URL(request.url).origin;
     if (pathname === "/.well-known/agent-card.json") return new Response(JSON.stringify(agentCard(origin)),{headers:{"content-type":"application/json"}});
     if (pathname === "/catalog.json" && request.method === "GET") { await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"catalog.json"); return new Response(a?.content||"{}",{headers:{"content-type":"application/json","cache-control":"public, max-age=300"}}); }
+    // Agent-native x402 discovery: Agent402 crawls the origin-level manifest
+    // before probing paid routes. Keep this public and free; it contains no secrets.
+    if (pathname === "/.well-known/x402" && request.method === "GET") {
+      return json({
+        version: 1,
+        resources: [origin + "/x402/atlas_ai_data_qa_v1"],
+        instructions: "ATLAS AI Agent Data QA & Transformation. Pay 15 USDC on Base via x402 v2, then submit client_email and one CSV/XLSX file to the resource endpoint."
+      });
+    }
+    if (pathname === "/openapi.json" && request.method === "GET") {
+      return json({
+        openapi: "3.1.0",
+        info: {
+          title: "ATLAS AI Agent Data QA & Transformation API",
+          version: "1.0.0",
+          description: "Machine-ready CSV/XLSX data cleaning and QA for AI agents. Payment is required through x402 v2 on the paid resource route."
+        },
+        servers: [{ url: origin }],
+        paths: {
+          "/x402/atlas_ai_data_qa_v1": {
+            get: {
+              summary: "Get x402 payment requirements",
+              responses: { "402": { description: "Payment Required" } }
+            },
+            post: {
+              summary: "Submit a dataset for paid QA and transformation",
+              requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["client_email", "file_upload"], properties: { client_email: { type: "string", format: "email" }, file_upload: { type: "string", format: "binary" } } } } } },
+              responses: { "200": { description: "Dataset processed and delivered" }, "402": { description: "Payment Required" } }
+            }
+          }
+        }
+      });
+    }
     if (pathname === "/llms.txt" && request.method === "GET") { await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"llms.txt"); return new Response(a?.content||"# ATLAS",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"public, max-age=300"}}); }
     if (pathname === "/robots.txt" && request.method === "GET") return new Response("User-agent: *\nAllow: /\nAllow: /.well-known/\nAllow: /catalog.json\nAllow: /llms.txt\nDisallow: /dev/\nDisallow: /bridge/\nDisallow: /webhook/\n", {headers:{"content-type":"text/plain"}});
     if (pathname.startsWith("/r/") && request.method === "GET") { const code=decodeURIComponent(pathname.slice(3)).slice(0,100); await trackReferral(env.DB,{code,path:pathname,user_agent:request.headers.get("user-agent"),source:request.headers.get("referer")}); return Response.redirect(origin+"/catalog.json?ref="+encodeURIComponent(code),302); }
