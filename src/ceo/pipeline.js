@@ -126,6 +126,8 @@ export async function processUpdate(env, update, eventPk, timings) {
   const msg = update.message || update.edited_message || {};
   const founderMessage = String(msg.text || '');
   const chatId = String(msg.chat && msg.chat.id || '');
+  const founderId = String(msg.from && msg.from.id || '');
+  const approvalSource = String(update.__source || 'telegram');
   const messageId = msg.message_id;
   const currentDatetime = currentDatetimeRiyadh();
 
@@ -217,6 +219,9 @@ export async function processUpdate(env, update, eventPk, timings) {
       correlation_id: correlationId,
       founder_message: founderMessage,
       chat_id: chatId,
+      founder_id: founderId,
+      founder_chat_id: String(env.FOUNDER_CHAT_ID || ''),
+      approval_source: approvalSource,
       reply: JSON.stringify({ reply: parsed.reply, actions: parsed.actions, memories: parsed.memories }),
       state_rows: stateRows.filter(r => r.entity_type),
     }, {});
