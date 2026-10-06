@@ -77,7 +77,7 @@ interface Env {
   CHATGPT_BRIDGE_SECRET?: string;
   ATLAS_ORIGIN?: string;
   FOUNDER_CHAT_ID?: string;
-  ATLAS_WALLET_ADDRESS?: string;
+  ATLAS_WALLET_ADDRESS?: string;\n  X402_FACILITATOR_URL?: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -253,13 +253,50 @@ export default {
     if (pathname === "/a2a") return handleA2A(request,env);
     if (pathname === "/commerce.json" && request.method === "GET") return json(commerceManifest(origin));
     if (pathname === "/trust.json" && request.method === "GET") return json(await trustSnapshot(env.DB));
-    if (request.method === "GET" && pathname === "/x402/atlas_ai_data_qa_v1") {
-      const wallet=String(env.ATLAS_WALLET_ADDRESS||"").trim();
-      if(!wallet)return json({ok:false,error:"X402_WALLET_NOT_CONFIGURED"},503);
-      const req=x402Requirements(origin,{wallet,asset:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"});
-      const payload=JSON.stringify(req);
-      const encoded=btoa(payload);
-      return new Response(payload,{status:402,headers:{"content-type":"application/json","cache-control":"no-store","PAYMENT-REQUIRED":encoded}});
+    if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1") {
+      const wallet = String(env.ATLAS_WALLET_ADDRESS || "").trim();
+      if (!wallet) return json({ ok: false, error: "X402_WALLET_NOT_CONFIGURED" }, 503);
+      const product = await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
+      if (!product || String(product.status) !== "ACTIVE" || Number(product.price_usdc) !== 15) return json({ ok: false, error: "X402_PRODUCT_NOT_READY" }, 503);
+      const req = x402Requirements(origin, { wallet, asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" });
+      const paymentRequirements = req.accepts[0];
+      const paymentRequiredHeader = btoa(JSON.stringify(req));
+      if (request.method === "GET") return new Response(JSON.stringify(req), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+      const signatureHeader = request.headers.get("PAYMENT-SIGNATURE");
+      if (!signatureHeader) return new Response(JSON.stringify({ ok: false, error: "PAYMENT-SIGNATURE header is required" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+      let paymentPayload;
+      try { paymentPayload = JSON.parse(atob(signatureHeader)); } catch { return new Response(JSON.stringify({ ok: false, error: "INVALID_PAYMENT_SIGNATURE" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } }); }
+      if (paymentPayload?.x402Version !== 2 || !paymentPayload?.accepted || !paymentPayload?.payload) return new Response(JSON.stringify({ ok: false, error: "INVALID_PAYMENT_PAYLOAD" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+      const facilitator = String(env.X402_FACILITATOR_URL || "https://facilitator.openx402.ai").replace(/\\/$/, "");
+      const facilitatorBody = JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements });
+      let verifyResponse;
+      try { verifyResponse = await fetch(facilitator + "/verify", { method: "POST", headers: { "content-type": "application/json" }, body: facilitatorBody, signal: AbortSignal.timeout(15000) }); } catch (e) { return json({ ok: false, error: "X402_VERIFY_UNAVAILABLE", detail: String(e?.message || e) }, 503); }
+      let verifyData; try { verifyData = await verifyResponse.json(); } catch { verifyData = { isValid: false, invalidReason: "invalid_facilitator_response" }; }
+      if (!verifyResponse.ok || verifyData?.isValid !== true) return new Response(JSON.stringify({ ok: false, error: "PAYMENT_NOT_VERIFIED", reason: verifyData?.invalidReason || "facilitator_rejected_payment" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+      let settleResponse;
+      try { settleResponse = await fetch(facilitator + "/settle", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "x402-" + String(paymentPayload.payload?.authorization?.nonce || "unknown") }, body: facilitatorBody, signal: AbortSignal.timeout(30000) }); } catch (e) { return json({ ok: false, error: "X402_SETTLE_UNAVAILABLE", detail: String(e?.message || e) }, 503); }
+      let settleData; try { settleData = await settleResponse.json(); } catch { settleData = { success: false, errorReason: "invalid_facilitator_response" }; }
+      if (!settleResponse.ok || settleData?.success !== true || !/^0x[0-9a-fA-F]{64}$/.test(String(settleData?.transaction || ""))) return json({ ok: false, error: "PAYMENT_NOT_SETTLED", reason: settleData?.errorReason || "facilitator_settlement_failed", settlement: settleData }, 503);
+      let input: any = {};
+      const ct = request.headers.get("content-type") || "";
+      try {
+        if (ct.includes("multipart/form-data")) {
+          const form = await request.formData(); const file = form.get("file_upload");
+          input.client_email = form.get("client_email"); input.__file_name = file && typeof file === "object" && "name" in file ? String(file.name) : String(form.get("file_name") || "upload.csv");
+          if (file && typeof file === "object" && "arrayBuffer" in file) input.__file_bytes = new Uint8Array(await file.arrayBuffer());
+        } else {
+          const body: any = await request.json(); input.client_email = body.client_email; input.__file_name = body.file_name || "upload.csv";
+          if (body.file_base64) { const bin = atob(String(body.file_base64)); input.__file_bytes = Uint8Array.from(bin, (c: string) => c.charCodeAt(0)); }
+        }
+      } catch { return json({ ok: false, error: "bad request body" }, 400); }
+      if (!input.client_email || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: "client_email and file_upload/file_base64 are required" }, 400);
+      input.tx_hash = String(settleData.transaction); input.__order_id = "X402-" + String(settleData.transaction).slice(2, 18);
+      input.__x402_expected_amount = Number(paymentRequirements.amount) / 1e6; input.__x402_product_id = "atlas_ai_data_qa_v1";
+      const order = await processOrder(env.DB, env, input);
+      const paymentResponse = JSON.stringify(settleData);
+      const headers: Record<string,string> = { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-RESPONSE": btoa(paymentResponse) };
+      if (order.order_status === "DELIVERED") return new Response(JSON.stringify({ ok: true, payment: settleData, order }), { status: 200, headers });
+      return new Response(JSON.stringify({ ok: false, payment: settleData, order }), { status: 500, headers });
     }
     if (request.method === "GET" && pathname === "/.well-known/oauth-authorization-server") {
       return new Response(JSON.stringify({
