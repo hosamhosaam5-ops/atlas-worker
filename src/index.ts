@@ -323,20 +323,50 @@ export default {
       const signatureHeader = request.headers.get("PAYMENT-SIGNATURE");
       if (!signatureHeader) return new Response(JSON.stringify({ ok: false, error: "PAYMENT-SIGNATURE header is required" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
       let paymentPayload;
-      try { paymentPayload = JSON.parse(atob(signatureHeader)); } catch { return new Response(JSON.stringify({ ok: false, error: "INVALID_PAYMENT_SIGNATURE" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+      try { paymentPayload = JSON.parse(atob(signatureHeader)); } catch { return new Response(JSON.stringify({ ok: false, error: "INVALID_PAYMENT_SIGNATURE" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } }); }
       if (paymentPayload?.x402Version !== 2 || !paymentPayload?.accepted || !paymentPayload?.payload) return new Response(JSON.stringify({ ok: false, error: "INVALID_PAYMENT_PAYLOAD" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+      const accepted = paymentPayload.accepted;
+      const requirementsMatch = String(accepted.network || "") === String(paymentRequirements.network)
+        && String(accepted.asset || "").toLowerCase() === String(paymentRequirements.asset).toLowerCase()
+        && String(accepted.payTo || "").toLowerCase() === String(paymentRequirements.payTo).toLowerCase()
+        && String(accepted.amount || "") === String(paymentRequirements.amount);
+      if (!requirementsMatch) return new Response(JSON.stringify({ ok: false, error: "PAYMENT_REQUIREMENTS_MISMATCH" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+
+      const nonce = String(paymentPayload.payload?.authorization?.nonce || "").trim();
+      if (!nonce) return new Response(JSON.stringify({ ok: false, error: "PAYMENT_NONCE_REQUIRED" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+
+      // Idempotency is claimed before settlement. A unique D1 key prevents the same
+      // EIP-3009 nonce from reaching /settle twice.
+      const nonceKey = "x402_nonce|" + nonce;
+      const nonceClaim = await env.DB.prepare(
+        "INSERT INTO execution_state (idempotency_key,record_kind,status,payload_json,updated_at) VALUES (?,?,?,?,datetime('now')) ON CONFLICT(idempotency_key) DO NOTHING"
+      ).bind(nonceKey, "x402_nonce", "SETTLEMENT_RESERVED", JSON.stringify({ nonce, product_id: "atlas_ai_data_qa_v1" })).run();
+      if (Number(nonceClaim.meta?.changes || 0) !== 1) return json({ ok: false, error: "PAYMENT_NONCE_ALREADY_USED" }, 409);
 
       const facilitator = String(env.X402_FACILITATOR_URL || "https://facilitator.openx402.ai").replace(/\/$/, "");
       const facilitatorBody = JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements });
       let verifyResponse;
-      try { verifyResponse = await fetch(facilitator + "/verify", { method: "POST", headers: { "content-type": "application/json" }, body: facilitatorBody, signal: AbortSignal.timeout(15000) }); } catch (e) { return json({ ok: false, error: "X402_VERIFY_UNAVAILABLE", detail: String(e?.message || e) }, 503); }
+      try { verifyResponse = await fetch(facilitator + "/verify", { method: "POST", headers: { "content-type": "application/json" }, body: facilitatorBody, signal: AbortSignal.timeout(15000) }); } catch (e) {
+        await env.DB.prepare("DELETE FROM execution_state WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'").bind(nonceKey).run();
+        return json({ ok: false, error: "X402_VERIFY_UNAVAILABLE", detail: String(e?.message || e) }, 503);
+      }
       let verifyData; try { verifyData = await verifyResponse.json(); } catch { verifyData = { isValid: false, invalidReason: "invalid_facilitator_response" }; }
-      if (!verifyResponse.ok || verifyData?.isValid !== true) return new Response(JSON.stringify({ ok: false, error: "PAYMENT_NOT_VERIFIED", reason: verifyData?.invalidReason || "facilitator_rejected_payment" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+      if (!verifyResponse.ok || verifyData?.isValid !== true) {
+        await env.DB.prepare("DELETE FROM execution_state WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'").bind(nonceKey).run();
+        return new Response(JSON.stringify({ ok: false, error: "PAYMENT_NOT_VERIFIED", reason: verifyData?.invalidReason || "facilitator_rejected_payment" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
+      }
 
       let settleResponse;
-      try { settleResponse = await fetch(facilitator + "/settle", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "x402-" + String(paymentPayload.payload?.authorization?.nonce || "unknown") }, body: facilitatorBody, signal: AbortSignal.timeout(30000) }); } catch (e) { return json({ ok: false, error: "X402_SETTLE_UNAVAILABLE", detail: String(e?.message || e) }, 503); }
+      try { settleResponse = await fetch(facilitator + "/settle", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "x402-" + nonce }, body: facilitatorBody, signal: AbortSignal.timeout(30000) }); } catch (e) {
+        await env.DB.prepare("DELETE FROM execution_state WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'").bind(nonceKey).run();
+        return json({ ok: false, error: "X402_SETTLE_UNAVAILABLE", detail: String(e?.message || e) }, 503);
+      }
       let settleData; try { settleData = await settleResponse.json(); } catch { settleData = { success: false, errorReason: "invalid_facilitator_response" }; }
-      if (!settleResponse.ok || settleData?.success !== true || !/^0x[0-9a-fA-F]{64}$/.test(String(settleData?.transaction || ""))) return json({ ok: false, error: "PAYMENT_NOT_SETTLED", reason: settleData?.errorReason || "facilitator_settlement_failed", settlement: settleData }, 503);
+      if (!settleResponse.ok || settleData?.success !== true || !/^0x[0-9a-fA-F]{64}$/.test(String(settleData?.transaction || ""))) {
+        await env.DB.prepare("DELETE FROM execution_state WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'").bind(nonceKey).run();
+        return json({ ok: false, error: "PAYMENT_NOT_SETTLED", reason: settleData?.errorReason || "facilitator_settlement_failed", settlement: settleData }, 503);
+      }
+      await env.DB.prepare("UPDATE execution_state SET status='SETTLED', payload_json=?, updated_at=datetime('now') WHERE idempotency_key=?").bind(JSON.stringify({ nonce, tx_hash: String(settleData.transaction), product_id: "atlas_ai_data_qa_v1" }), nonceKey).run();
 
       input.tx_hash = String(settleData.transaction);
       input.__order_id = "X402-" + String(settleData.transaction).slice(2, 18);
