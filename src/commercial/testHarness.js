@@ -60,7 +60,7 @@ export async function runCommercialIntegration(db, env, options={}) {
   await createQuote(db,{client_email:stressEmail,agreed_amount:amount,note:'synthetic concurrency test',product_id:productId});
   const calls=Array.from({length:8},(_,i)=>safeProcess('stress-'+i,{
     client_email:stressEmail,tx_hash:tx('3'+suffix),__order_id:'STRESS-'+suffix+'-'+i,__file_name:'input.csv',__file_bytes:csvBytes
-  },envForTest(env,'valid','success')));
+  },envForTest(env,'valid','success',amount)));
   const stress=await Promise.all(calls);
 
   const counts={
