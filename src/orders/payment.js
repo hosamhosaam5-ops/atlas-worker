@@ -8,7 +8,7 @@
 
 // M5: production USDC payment config PINNED here (Base Mainnet). These values are the
 // same ones audited on the n8n side; changing them requires a founder decision.
-export const WALLET = '0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F'; // recipient
+export const WALLET = '0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F'; // legacy test fallback only; production must use env.ATLAS_WALLET_ADDRESS
 export const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // approved contract
 export const USDC_DECIMALS = 6;
 export const BASE_NETWORK = 'eip155:8453'; // Base Mainnet (CAIP-2)
