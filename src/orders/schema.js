@@ -6,6 +6,8 @@ const M4_LEDGER_COLUMNS = [
   ['amount_paid', 'REAL'], ['price_source', 'TEXT'], ['expected_amount', 'REAL'],
   ['file_name', 'TEXT'], ['file_ext', 'TEXT'], ['rows_in', 'INTEGER'], ['rows_out', 'INTEGER'],
   ['delivery_channel', 'TEXT'], ['delivery_status', 'TEXT'], ['product_id', 'TEXT'],
+  ['settlement_mode', "TEXT NOT NULL DEFAULT 'MOCK' CHECK (settlement_mode IN ('REAL','TESTNET','SIMULATION','MOCK'))"],
+  ['chain_id', 'TEXT'],
 ];
 
 export async function ensureOrderSchema(db) {
@@ -80,6 +82,18 @@ export async function ensureOrderSchema(db) {
   const { results: quoteCols } = quotePragma.bind ? await quotePragma.bind().all() : (quotePragma.all ? await quotePragma.all() : { results: [] });
   const quoteHave = new Set((quoteCols || []).map(c => c.name));
   if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT').bind().run();
+
+  const ledgerColsAfter = await db.prepare('PRAGMA table_info(order_ledger)').all();
+  const ledgerHaveAfter = new Set((ledgerColsAfter.results || []).map(r => r.name));
+  if (ledgerHaveAfter.has('settlement_mode') && ledgerHaveAfter.has('chain_id') && !ledgerHaveAfter.has('settlement_integrity')) {
+    await db.prepare(`ALTER TABLE order_ledger ADD COLUMN settlement_integrity INTEGER AS (
+      CASE WHEN (
+        (settlement_mode IN ('REAL','TESTNET') AND tx_hash IS NOT NULL AND tx_hash!='' AND chain_id IS NOT NULL AND chain_id!='')
+        OR
+        (settlement_mode IN ('SIMULATION','MOCK') AND (tx_hash IS NULL OR tx_hash='') AND (chain_id IS NULL OR chain_id=''))
+      ) THEN 1 ELSE NULL END
+    ) VIRTUAL NOT NULL`).run();
+  }
 
   await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_order_ledger_tx_hash
     ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''`);
