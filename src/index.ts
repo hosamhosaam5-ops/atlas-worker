@@ -511,7 +511,7 @@ export default {
       try {
         const configuredStaleMinutes = Number(env.RECOVERY_STALE_MINUTES ?? 30);
         const staleMinutes = Number.isFinite(configuredStaleMinutes) ? Math.max(5, configuredStaleMinutes) : 30;
-        const events = await env.DB.prepare("UPDATE event_log SET status='RECOVERY_REVIEW', error=COALESCE(error, 'Stale PENDING event requires safe review; automatic replay suppressed') WHERE status='PENDING' AND created_at < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
+        const events = await env.DB.prepare("UPDATE event_log SET status='RECOVERY_REVIEW', error=COALESCE(error, 'Stale PENDING event requires safe review; automatic replay suppressed') WHERE status='PENDING' AND source != 'telegram' AND created_at < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
         const orders = await env.DB.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED', error=COALESCE(error, 'Stale PENDING order requires payment/provider reconciliation'), updated_at=datetime('now') WHERE status='PENDING' AND created_at < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
         // A stale SENDING outbox row is provider-outcome-ambiguous: never retry it automatically,
         // because the provider may already have accepted the message before the Worker crashed.
