@@ -76,6 +76,8 @@ interface Env {
   GITHUB_MODELS_MODEL?: string;
   CHATGPT_BRIDGE_SECRET?: string;
   ATLAS_ORIGIN?: string;
+  FOUNDER_CHAT_ID?: string;
+  ATLAS_WALLET_ADDRESS?: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -136,7 +138,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    {name:"advance_commerce_session",description:"Advance one bounded commerce lifecycle stage. This records state only and never sends funds.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{session_id:{type:"string"},stage:{type:"string"},quote_id:{type:["integer","null"]},payment_ref:{type:["string","null"]},order_id:{type:["string","null"]}},required:["session_id","stage"],additionalProperties:false}},
    {name:"run_commercial_integration",description:"Run a real D1-backed order/quote/payment-gate/QA/delivery/idempotency/recovery integration suite using only MOCK payment and email adapters. Defaults to the active commercial catalog product when product_id is omitted; an explicit product_id may target another ACTIVE product.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{product_id:{type:"string"}},additionalProperties:false}},
    {name:"replay_pending_events",description:"Explicitly replay one durably logged Telegram event stuck in PENDING. Atomic claim; no payment execution is performed by this tool itself.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{event_id:{type:"integer",minimum:1}},required:["event_id"],additionalProperties:false}},
-   {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
+   {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","message_id"],additionalProperties:false}}
   ]}});
   if(msg.method!=="tools/call")return result({error:{code:-32601,message:"Method not found"}});
   const name=msg.params?.name,args=msg.params?.arguments||{};let out:any;
@@ -188,7 +190,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="advance_commerce_session"){out=await advanceCommerceSession(env.DB,args);}
    else if(name==="run_commercial_integration"){out=await runCommercialIntegration(env.DB,env,{product_id:args.product_id || "atlas_ai_data_qa_v1"});}
    else if(name==="replay_pending_events"){out=await replayPendingTelegramEvent(env,Number(args.event_id));}
-   else if(name==="execute_ceo"){const secret=env.CHATGPT_BRIDGE_SECRET;if(!secret)throw new Error("CHATGPT_BRIDGE_NOT_CONFIGURED");const r2=new Request(new URL("/bridge/chatgpt",request.url),{method:"POST",headers:{"content-type":"application/json","x-atlas-bridge-key":secret},body:JSON.stringify({operation:"execute_ceo",founder_message:args.founder_message,chat_id:args.chat_id,message_id:Number(args.message_id)})});const rr=await handleChatGptBridge(r2,env);const body=await rr.json();if(!rr.ok)throw new Error(String(body?.status||"EXECUTE_CEO_FAILED"));out=body;}
+   else if(name==="execute_ceo"){const secret=env.CHATGPT_BRIDGE_SECRET;if(!secret)throw new Error("CHATGPT_BRIDGE_NOT_CONFIGURED");const r2=new Request(new URL("/bridge/chatgpt",request.url),{method:"POST",headers:{"content-type":"application/json","x-atlas-bridge-key":secret},body:JSON.stringify({operation:"execute_ceo",founder_message:args.founder_message,chat_id:String(args.chat_id||env.FOUNDER_CHAT_ID||"").trim(),message_id:Number(args.message_id)})});const rr=await handleChatGptBridge(r2,env);const body=await rr.json();if(!rr.ok)throw new Error(String(body?.status||"EXECUTE_CEO_FAILED"));out=body;}
    else return result({error:{code:-32602,message:"Unknown tool"}});
   }catch(err:any){return result({result:{isError:true,content:[{type:"text",text:String(err?.message||err).slice(0,2000)}]}});}
   return result({result:{content:[{type:"text",text:JSON.stringify(out)}],structuredContent:out}});
@@ -251,7 +253,9 @@ export default {
     if (pathname === "/commerce.json" && request.method === "GET") return json(commerceManifest(origin));
     if (pathname === "/trust.json" && request.method === "GET") return json(await trustSnapshot(env.DB));
     if (request.method === "GET" && pathname === "/x402/atlas_ai_data_qa_v1") {
-      const req=x402Requirements(origin,{wallet:"0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F",asset:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"});
+      const wallet=String(env.ATLAS_WALLET_ADDRESS||"").trim();
+      if(!wallet)return json({ok:false,error:"X402_WALLET_NOT_CONFIGURED"},503);
+      const req=x402Requirements(origin,{wallet,asset:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"});
       const payload=JSON.stringify(req);
       const encoded=btoa(payload);
       return new Response(payload,{status:402,headers:{"content-type":"application/json","cache-control":"no-store","PAYMENT-REQUIRED":encoded}});
