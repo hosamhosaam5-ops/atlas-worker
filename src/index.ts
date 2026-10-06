@@ -135,6 +135,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    {name:"create_commerce_session",description:"Start an inbound agent commerce session at DISCOVER. No payment or outbound action occurs.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{agent_id:{type:"string"},product_id:{type:"string"}},additionalProperties:false}},
    {name:"advance_commerce_session",description:"Advance one bounded commerce lifecycle stage. This records state only and never sends funds.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{session_id:{type:"string"},stage:{type:"string"},quote_id:{type:["integer","null"]},payment_ref:{type:["string","null"]},order_id:{type:["string","null"]}},required:["session_id","stage"],additionalProperties:false}},
    {name:"run_commercial_integration",description:"Run a real D1-backed order/quote/payment-gate/QA/delivery/idempotency/recovery integration suite using only MOCK payment and email adapters. Defaults to the active commercial catalog product when product_id is omitted; an explicit product_id may target another ACTIVE product.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{product_id:{type:"string"}},additionalProperties:false}},
+   {name:"replay_pending_events",description:"Explicitly replay one durably logged Telegram event stuck in PENDING. Atomic claim; no payment execution is performed by this tool itself.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{event_id:{type:"integer",minimum:1}},required:["event_id"],additionalProperties:false}},
    {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},chat_id:{type:["string","number"]},message_id:{type:"integer"}},required:["founder_message","chat_id","message_id"],additionalProperties:false}}
   ]}});
   if(msg.method!=="tools/call")return result({error:{code:-32601,message:"Method not found"}});
@@ -145,7 +146,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
     list_products:"mcp:read",list_financial_approvals:"mcp:read",list_capabilities:"mcp:read",autonomy_snapshot:"mcp:read",get_autonomy_policy:"mcp:read",check_autonomy_budget:"mcp:read",
     write_state:"mcp:write",write_memory:"mcp:write",upsert_product:"mcp:write",create_quote:"mcp:write",
     request_financial_approval:"mcp:write",decide_financial_approval:"mcp:write",
-    run_commercial_integration:"mcp:execute",discover_agent_marketplaces:"mcp:execute",prepare_offer:"mcp:execute",negotiate_offer:"mcp:execute",product_intelligence:"mcp:read",create_agent_webhook:"mcp:write",list_agent_webhooks:"mcp:read",growth_snapshot:"mcp:read",run_growth_cycle:"mcp:execute",execute_ceo:"mcp:execute"
+    run_commercial_integration:"mcp:execute",discover_agent_marketplaces:"mcp:execute",prepare_offer:"mcp:execute",negotiate_offer:"mcp:execute",product_intelligence:"mcp:read",create_agent_webhook:"mcp:write",list_agent_webhooks:"mcp:read",growth_snapshot:"mcp:read",run_growth_cycle:"mcp:execute",replay_pending_events:"mcp:execute",execute_ceo:"mcp:execute"
   };
   const requiredScope=requiredScopeByTool[name];
   if(!requiredScope)return result({error:{code:-32602,message:"Unknown tool"}});
@@ -186,10 +187,41 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="create_commerce_session"){out=await createCommerceSession(env.DB,args);}
    else if(name==="advance_commerce_session"){out=await advanceCommerceSession(env.DB,args);}
    else if(name==="run_commercial_integration"){out=await runCommercialIntegration(env.DB,env,{product_id:args.product_id || "atlas_ai_data_qa_v1"});}
+   else if(name==="replay_pending_events"){out=await replayPendingTelegramEvent(env,Number(args.event_id));}
    else if(name==="execute_ceo"){const secret=env.CHATGPT_BRIDGE_SECRET;if(!secret)throw new Error("CHATGPT_BRIDGE_NOT_CONFIGURED");const r2=new Request(new URL("/bridge/chatgpt",request.url),{method:"POST",headers:{"content-type":"application/json","x-atlas-bridge-key":secret},body:JSON.stringify({operation:"execute_ceo",founder_message:args.founder_message,chat_id:args.chat_id,message_id:Number(args.message_id)})});const rr=await handleChatGptBridge(r2,env);const body=await rr.json();if(!rr.ok)throw new Error(String(body?.status||"EXECUTE_CEO_FAILED"));out=body;}
    else return result({error:{code:-32602,message:"Unknown tool"}});
   }catch(err:any){return result({result:{isError:true,content:[{type:"text",text:String(err?.message||err).slice(0,2000)}]}});}
   return result({result:{content:[{type:"text",text:JSON.stringify(out)}],structuredContent:out}});
+}
+
+
+// Recovery tool: explicitly replay one Telegram event that was durably logged but not completed.
+// Claim is atomic so the same event cannot be replayed concurrently by two callers.
+async function replayPendingTelegramEvent(env: Env, eventId: number) {
+  const id = Number(eventId);
+  if (!Number.isInteger(id) || id < 1) throw new Error('INVALID_EVENT_ID');
+  const row: any = await env.DB.prepare("SELECT id, source, status, payload_json FROM event_log WHERE id=?").bind(id).first();
+  if (!row) throw new Error('EVENT_NOT_FOUND');
+  if (String(row.source) !== 'telegram') throw new Error('EVENT_SOURCE_NOT_TELEGRAM');
+  if (String(row.status) !== 'PENDING') return { event_id: id, status: row.status, replayed: false };
+  const claim = await env.DB.prepare("UPDATE event_log SET status='PROCESSING', error=NULL WHERE id=? AND status='PENDING'").bind(id).run();
+  if (Number(claim.meta?.changes || 0) !== 1) return { event_id: id, status: 'NOT_CLAIMED', replayed: false };
+  let update: any;
+  try {
+    update = JSON.parse(String(row.payload_json || '{}'));
+  } catch (e: any) {
+    await env.DB.prepare("UPDATE event_log SET status='PIPELINE_ERROR', error=? WHERE id=?").bind('INVALID_EVENT_PAYLOAD', id).run();
+    throw new Error('INVALID_EVENT_PAYLOAD');
+  }
+  const timings: Record<string, number> = {};
+  try {
+    const result = await processUpdate(env, update, id, timings);
+    return { event_id: id, replayed: true, pipeline: result, timings };
+  } catch (e: any) {
+    const error = String(e?.message || e);
+    await env.DB.prepare("UPDATE event_log SET status='PIPELINE_ERROR', error=? WHERE id=? AND status='PROCESSING'").bind(error, id).run();
+    return { event_id: id, replayed: true, pipeline: { outcome: 'PIPELINE_ERROR', error }, timings };
+  }
 }
 
 const mcpOAuth = new OAuthProvider({
