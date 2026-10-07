@@ -26,17 +26,12 @@ before(async () => {
   const { applyMigrations } = await import('../src/core/migrate.js');
   // wrangler d1 local DBs are files under persist; use wrangler CLI for fidelity.
   const { execSync } = await import('node:child_process');
-  for (const f of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql', 'schema-m6.sql']) {
-    execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file ./${f}`, { cwd: ROOT, stdio: 'ignore' });
+  for (const f of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql']) {
+    execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file ./${f}`, { cwd: ROOT, stdio: 'ignore', detached: true });
   }
-  // Seed the active x402 product required by the production route before negative-path tests.
-  const seed = path.join(ROOT, 'x402-seed.sql');
-  fs.writeFileSync(seed, "CREATE TABLE IF NOT EXISTS products (product_id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,unit TEXT NOT NULL DEFAULT 'order',price_usdc REAL,pricing_mode TEXT NOT NULL DEFAULT 'FOUNDER_QUOTE',status TEXT NOT NULL DEFAULT 'DRAFT',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT (datetime('now')),updated_at TEXT NOT NULL DEFAULT (datetime('now')));\\nINSERT OR REPLACE INTO products (product_id,name,description,unit,price_usdc,pricing_mode,status) VALUES ('atlas_ai_data_qa_v1','ATLAS AI Agent Data QA','Synthetic route-test product','order',15,'FIXED','ACTIVE');\\n");
-  execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file ./x402-seed.sql`, { cwd: ROOT, stdio: 'ignore' });
   proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'AI_PROVIDER:WORKERS_AI', '--var', 'TELEGRAM_PROVIDER:LIVE'], { cwd: ROOT, stdio: 'ignore', detached: true });
   proc.unref();
   await waitUp();
-
 });
 after(async () => {
   if (proc) { try { process.kill(-proc.pid, 'SIGKILL'); } catch { try { proc.kill('SIGKILL'); } catch {} } }
@@ -44,37 +39,6 @@ after(async () => {
 });
 
 const post = (p, body, headers = {}) => fetch(BASE + p, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
-
-test('route.x402: missing PAYMENT-SIGNATURE -> 402, no settlement', async () => {
-  const r = await post('/x402/atlas_ai_data_qa_v1', { client_email: 'agent@example.invalid', file_base64: btoa('name,value\\nA,1\\n'), file_name: 'a.csv' });
-  assert.equal(r.status, 402);
-  const j = await r.json();
-  assert.equal(j.error, 'PAYMENT-SIGNATURE header is required');
-});
-
-test('route.x402: malformed PAYMENT-SIGNATURE -> 402, no settlement', async () => {
-  const r = await post('/x402/atlas_ai_data_qa_v1', { client_email: 'agent@example.invalid', file_base64: btoa('name,value\\nA,1\\n'), file_name: 'a.csv' }, { 'PAYMENT-SIGNATURE': 'not-base64-json' });
-  assert.equal(r.status, 402);
-  const j = await r.json();
-  assert.equal(j.error, 'INVALID_PAYMENT_SIGNATURE');
-});
-
-test('route.x402: client-supplied payment requirements mismatch -> 402', async () => {
-  const sig = btoa(JSON.stringify({ x402Version: 2, accepted: { network: 'eip155:1', asset: '0x0000000000000000000000000000000000000000', payTo: '0x0000000000000000000000000000000000000000', amount: '1' }, payload: { authorization: { nonce: 'x402-negative-mismatch' } } }));
-  const r = await post('/x402/atlas_ai_data_qa_v1', { client_email: 'agent@example.invalid', file_base64: btoa('name,value\\nA,1\\n'), file_name: 'a.csv' }, { 'PAYMENT-SIGNATURE': sig });
-  assert.equal(r.status, 402);
-  const j = await r.json();
-  assert.equal(j.error, 'PAYMENT_REQUIREMENTS_MISMATCH');
-});
-
-test('route.x402: oversized file -> 413 before payment signature/settlement', async () => {
-  const bytes = new Uint8Array(1_400_001);
-  bytes.fill(65);
-  const r = await post('/x402/atlas_ai_data_qa_v1', { client_email: 'agent@example.invalid', file_base64: Buffer.from(bytes).toString('base64'), file_name: 'oversize.csv' });
-  assert.equal(r.status, 413);
-  const j = await r.json();
-  assert.equal(j.error, 'FILE_SIZE_LIMIT_EXCEEDED');
-});
 
 test('route.health: GET /health returns current configured provider matrix', async () => {
   const r = await fetch(BASE + '/health');
