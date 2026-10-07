@@ -18,7 +18,7 @@ async function executeCeo(env, body, requestId) {
   const chatId=founderChatId;
   // Deterministic identity: retries of the same ChatGPT request must not create a new event.
   const externalId='chatgpt|' + chatId + '|' + String(messageId);
-  const update={update_id:externalId,__source:'bridge',message:{message_id:messageId,chat:{id:chatId},from:{id:Number(founderChatId)||founderChatId},text:message}};
+  const update={update_id:externalId,__source:'bridge',message:{message_id:messageId,chat:{id:chatId},from:{id:0},text:message}};
   const inserted=await env.DB.prepare('INSERT INTO event_log (source, external_id, payload_json, status) VALUES (?,?,?,"QUEUED") ON CONFLICT(source, external_id) DO NOTHING').bind('chatgpt',externalId,JSON.stringify(update)).run();
   const row=await env.DB.prepare('SELECT id,status FROM event_log WHERE source=? AND external_id=?').bind('chatgpt',externalId).first();
   if(!row?.id) throw new Error('EVENT_LOG_INSERT_FAILED');
