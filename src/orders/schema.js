@@ -87,13 +87,15 @@ export async function ensureOrderSchema(db) {
   const ledgerColsAfter = ledgerPragmaAfter.bind ? await ledgerPragmaAfter.bind().all() : (ledgerPragmaAfter.all ? await ledgerPragmaAfter.all() : { results: [] });
   const ledgerHaveAfter = new Set((ledgerColsAfter.results || []).map(r => r.name));
   if (ledgerHaveAfter.has('settlement_mode') && ledgerHaveAfter.has('chain_id') && !ledgerHaveAfter.has('settlement_integrity')) {
-    await db.prepare(`ALTER TABLE order_ledger ADD COLUMN settlement_integrity INTEGER AS (
+    const integrityStmt = db.prepare(`ALTER TABLE order_ledger ADD COLUMN settlement_integrity INTEGER AS (
       CASE WHEN (
         (settlement_mode IN ('REAL','TESTNET') AND tx_hash IS NOT NULL AND tx_hash!='' AND chain_id IS NOT NULL AND chain_id!='')
         OR
         (settlement_mode IN ('SIMULATION','MOCK') AND (chain_id IS NULL OR chain_id=''))
       ) THEN 1 ELSE NULL END
-    ) VIRTUAL NOT NULL`).run();
+    ) VIRTUAL NOT NULL`);
+    if (integrityStmt.bind) await integrityStmt.bind().run();
+    else await integrityStmt.run();
   }
 
   await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_order_ledger_tx_hash
