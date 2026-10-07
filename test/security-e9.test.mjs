@@ -73,3 +73,9 @@ test('E6: bridge whitelist no longer exposes state or memory writes', () => {
   assert.equal(parseAndAuthorize({ operation: 'write_memory' }).whitelisted, false);
   assert.equal(parseAndAuthorize({ operation: 'execute_ceo' }).whitelisted, true);
 });
+
+test('E7: bridge-like founder approval cannot become verified Telegram approval', () => {
+  const out = run('أوافق task_approve_1', 'bridge', '5246182877', '5246182877');
+  assert.ok(!out.state_rows.some(r => r.entity_type === 'task' && r.entity_id === 'task_approve_1' && r.status === 'READY'));
+  assert.ok(out.events.some(e => e.type === 'APPROVAL_REJECTED'));
+});
