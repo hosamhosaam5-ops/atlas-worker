@@ -34,6 +34,9 @@ before(async () => {
   fs.writeFileSync(seed, "INSERT OR REPLACE INTO products (product_id,name,description,unit,price_usdc,pricing_mode,status) VALUES ('atlas_ai_data_qa_v1','ATLAS AI Agent Data QA','Synthetic route-test product','order',15,'FIXED','ACTIVE');\\n");
   const { execSync: seedExec } = await import('node:child_process');
   seedExec(`npx wrangler d1 execute atlas_db --local --persist-to ${JSON.stringify(persist)} --file ${JSON.stringify(seed)}`, { cwd: ROOT, stdio: 'ignore' });
+  const seed = path.join(ROOT, 'x402-seed.sql');
+  fs.writeFileSync(seed, "CREATE TABLE IF NOT EXISTS products (product_id TEXT PRIMARY KEY,name TEXT NOT NULL,description TEXT NOT NULL,unit TEXT NOT NULL DEFAULT 'order',price_usdc REAL,pricing_mode TEXT NOT NULL DEFAULT 'FOUNDER_QUOTE',status TEXT NOT NULL DEFAULT 'DRAFT',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT (datetime('now')),updated_at TEXT NOT NULL DEFAULT (datetime('now')));\\nINSERT OR REPLACE INTO products (product_id,name,description,unit,price_usdc,pricing_mode,status) VALUES ('atlas_ai_data_qa_v1','ATLAS AI Agent Data QA','Synthetic route-test product','order',15,'FIXED','ACTIVE');\\n");
+  execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file ./x402-seed.sql`, { cwd: ROOT, stdio: 'ignore' });
   proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'AI_PROVIDER:WORKERS_AI', '--var', 'TELEGRAM_PROVIDER:LIVE'], { cwd: ROOT, stdio: 'ignore', detached: true });
   proc.unref();
   await waitUp();
