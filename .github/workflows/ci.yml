@@ -1,4 +1,5 @@
 name: ATLAS CI
+# Canonical repository test gate: npm ci + npm test
 
 on:
   push:
