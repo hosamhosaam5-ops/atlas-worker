@@ -427,42 +427,6 @@ export default {
     if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token") return mcpOAuth.fetch(request, env, ctx);
     const url = new URL(request.url);
 
-    if (url.pathname === '/__evidence/verify-http' && request.method === 'GET') {
-      const orderId = new URL(request.url).searchParams.get('order_id');
-      if (orderId !== 'E1-1400-20261006') return json({ ok: false, error: 'not_found' }, 404);
-      const target = origin + '/__evidence/storage?order_id=' + encodeURIComponent(orderId);
-      const started = Date.now();
-      const response = await fetch(target, { method: 'GET', cache: 'no-store' });
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      const digest = await crypto.subtle.digest('SHA-256', bytes);
-      const hash = Array.from(new Uint8Array(digest), (b: number) => b.toString(16).padStart(2, '0')).join('');
-      const createdAt = response.headers.get('x-atlas-evidence-created-at') || '';
-      const createdMs = Date.parse(createdAt.replace(' ', 'T') + 'Z');
-      return json({
-        ok: response.status === 200,
-        target,
-        http_status: response.status,
-        raw_size: bytes.length,
-        sha256: hash,
-        response_hash_header: response.headers.get('x-atlas-evidence-sha256') || '',
-        created_at: createdAt,
-        elapsed_ms: Number.isFinite(createdMs) ? Math.max(0, started - createdMs) : null,
-        elapsed_ms_at_response: Number.isFinite(createdMs) ? Math.max(0, Date.now() - createdMs) : null
-      });
-    }
-
-    if (url.pathname === '/__evidence/storage' && request.method === 'GET') {
-      const orderId = new URL(request.url).searchParams.get('order_id');
-      if (orderId !== 'E1-1400-20261006') return json({ ok: false, error: 'not_found' }, 404);
-      const row: any = await env.DB.prepare("SELECT file_name, content_base64, created_at FROM order_files WHERE order_id=? AND file_kind='evidence'").bind(orderId).first();
-      if (!row) return json({ ok: false, error: 'not_found' }, 404);
-      const bin = atob(String(row.content_base64));
-      const bytes = Uint8Array.from(bin, (ch: string) => ch.charCodeAt(0));
-      const digest = await crypto.subtle.digest('SHA-256', bytes);
-      const hash = Array.from(new Uint8Array(digest), (b: number) => b.toString(16).padStart(2, '0')).join('');
-      return new Response(bytes, { status: 200, headers: { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-atlas-evidence-sha256': hash, 'x-atlas-evidence-created-at': String(row.created_at || ''), 'x-atlas-evidence-size': String(bytes.length), 'content-disposition': 'attachment; filename="' + String(row.file_name || 'evidence.bin').replace(/"/g, '') + '"' } });
-    }
-
     if (url.pathname === '/health' && request.method === 'GET') {
       let db = 'unknown';
       try {
