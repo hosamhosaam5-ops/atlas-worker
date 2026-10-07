@@ -47,7 +47,7 @@ function makeD1(dbfile) {
 async function freshDb(file) {
   try { (await import('node:fs')).unlinkSync(file); } catch {}
   const db = makeD1(file);
-  for (const f of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m5.sql']) {
+  for (const f of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m5.sql', 'schema-m6.sql']) {
     await db.execRaw(readFileSync(new URL('../' + f, import.meta.url).pathname, 'utf8'));
   }
   await ensureOrderSchema(db);
