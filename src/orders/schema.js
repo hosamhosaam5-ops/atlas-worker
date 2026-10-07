@@ -83,14 +83,15 @@ export async function ensureOrderSchema(db) {
   const quoteHave = new Set((quoteCols || []).map(c => c.name));
   if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT').bind().run();
 
-  const ledgerColsAfter = await db.prepare('PRAGMA table_xinfo(order_ledger)').all();
+  const ledgerPragmaAfter = db.prepare('PRAGMA table_xinfo(order_ledger)');
+  const ledgerColsAfter = ledgerPragmaAfter.bind ? await ledgerPragmaAfter.bind().all() : (ledgerPragmaAfter.all ? await ledgerPragmaAfter.all() : { results: [] });
   const ledgerHaveAfter = new Set((ledgerColsAfter.results || []).map(r => r.name));
   if (ledgerHaveAfter.has('settlement_mode') && ledgerHaveAfter.has('chain_id') && !ledgerHaveAfter.has('settlement_integrity')) {
     await db.prepare(`ALTER TABLE order_ledger ADD COLUMN settlement_integrity INTEGER AS (
       CASE WHEN (
         (settlement_mode IN ('REAL','TESTNET') AND tx_hash IS NOT NULL AND tx_hash!='' AND chain_id IS NOT NULL AND chain_id!='')
         OR
-        (settlement_mode IN ('SIMULATION','MOCK') AND (tx_hash IS NULL OR tx_hash='') AND (chain_id IS NULL OR chain_id=''))
+        (settlement_mode IN ('SIMULATION','MOCK') AND (chain_id IS NULL OR chain_id=''))
       ) THEN 1 ELSE NULL END
     ) VIRTUAL NOT NULL`).run();
   }

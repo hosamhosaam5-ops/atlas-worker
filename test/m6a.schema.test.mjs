@@ -144,3 +144,13 @@ test('import.ceo_memory: exact n8n export name imports idempotently', async () =
   assert.equal(r2.inserted, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM ceo_memory').get().c, 1);
 });
+
+test('schema.settlement-integrity: REAL/TESTNET require tx_hash+chain_id; MOCK/SIMULATION cannot carry chain_id', async () => {
+  const db = freshDb();
+  await applyMigrations(db);
+  assert.throws(() => db.prepare("INSERT INTO order_ledger (order_id,status,settlement_mode,chain_id) VALUES ('REAL-NO-TX','DELIVERED','REAL','eip155:8453')").run(), /NOT NULL|constraint/i);
+  assert.throws(() => db.prepare("INSERT INTO order_ledger (order_id,status,settlement_mode,tx_hash) VALUES ('TESTNET-NO-CHAIN','DELIVERED','TESTNET','0xabc')").run(), /NOT NULL|constraint/i);
+  db.prepare("INSERT INTO order_ledger (order_id,status,settlement_mode,tx_hash,chain_id) VALUES ('REAL-OK','DELIVERED','REAL','0xabc','eip155:8453')").run();
+  db.prepare("INSERT INTO order_ledger (order_id,status,settlement_mode,tx_hash) VALUES ('MOCK-OK','DELIVERED','MOCK','0xsynthetic')").run();
+  assert.throws(() => db.prepare("INSERT INTO order_ledger (order_id,status,settlement_mode,chain_id) VALUES ('MOCK-CHAIN','DELIVERED','MOCK','eip155:8453')").run(), /NOT NULL|constraint/i);
+});
