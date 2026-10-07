@@ -294,6 +294,11 @@ export default {
     if (pathname === "/commerce.json" && request.method === "GET") return json(commerceManifest(origin));
     if (pathname === "/trust.json" && request.method === "GET") return json(await trustSnapshot(env.DB));
     if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1") {
+      if (String((env as any).X402_TEST_MODE || "") === "1") {
+        await ensureCommercialSchema(env.DB);
+        const testProduct = await env.DB.prepare("SELECT product_id FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
+        if (!testProduct) await upsertProduct(env.DB,{product_id:"atlas_ai_data_qa_v1",name:"ATLAS AI Agent Data QA",description:"Synthetic route-test product",unit:"order",price_usdc:15,pricing_mode:"FIXED",status:"ACTIVE"});
+      }
       const wallet = String(env.ATLAS_WALLET_ADDRESS || "").trim();
       if (!wallet) return json({ ok: false, error: "X402_WALLET_NOT_CONFIGURED" }, 503);
       const product = await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
