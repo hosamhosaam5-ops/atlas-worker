@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { applyMigrations, migrationFiles, MIGRATIONS_DIR } from '../src/core/migrate.js';
+import { ensureOrderSchema } from '../src/orders/schema.js';
 import { importRows, TABLE_MAP, validateRows, checksumRows } from '../src/core/importer.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -148,6 +149,7 @@ test('import.ceo_memory: exact n8n export name imports idempotently', async () =
 test('schema.settlement-integrity: REAL/TESTNET require tx_hash+chain_id; MOCK/SIMULATION cannot carry chain_id', async () => {
   const db = freshDb();
   await applyMigrations(db);
+  await ensureOrderSchema(db);
   assert.throws(() => db.prepare("INSERT INTO order_ledger (order_id,status,settlement_mode,chain_id) VALUES ('REAL-NO-TX','DELIVERED','REAL','eip155:8453')").run(), /NOT NULL|constraint/i);
   assert.throws(() => db.prepare("INSERT INTO order_ledger (order_id,status,settlement_mode,tx_hash) VALUES ('TESTNET-NO-CHAIN','DELIVERED','TESTNET','0xabc')").run(), /NOT NULL|constraint/i);
   db.prepare("INSERT INTO order_ledger (order_id,status,settlement_mode,tx_hash,chain_id) VALUES ('REAL-OK','DELIVERED','REAL','0xabc','eip155:8453')").run();
