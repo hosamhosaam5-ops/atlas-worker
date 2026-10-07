@@ -10,7 +10,7 @@ import path from 'node:path';
 
 export const MIGRATIONS_DIR = path.resolve(import.meta.dirname, '..', '..');
 export function migrationFiles() {
-  return ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql'];
+  return ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql', 'schema-m6.sql'];
 }
 
 // Minimal uniform wrapper so the same code drives node:sqlite (sync) and D1 (async).
