@@ -16,12 +16,20 @@ export async function ensureOrderSchema(db) {
     if (db.exec) return db.exec(sql);
     return db.prepare(sql).run();
   };
+  const pragmaRows = async (stmt) => {
+    if (stmt.bind) {
+      const r = await stmt.bind().all();
+      return r?.results || [];
+    }
+    const r = await stmt.all();
+    return Array.isArray(r) ? r : (r?.results || []);
+  };
   await execSql(`CREATE TABLE IF NOT EXISTS order_files (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL, file_kind TEXT NOT NULL, file_name TEXT NOT NULL, content_base64 TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(order_id,file_kind))`);
   await execSql(`CREATE TABLE IF NOT EXISTS delivery_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, dedupe_key TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL, channel TEXT NOT NULL, recipient TEXT NOT NULL, subject TEXT, body TEXT, attachment_names TEXT, status TEXT NOT NULL DEFAULT 'PENDING', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, provider_message_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)`);
   await execSql(`CREATE TABLE IF NOT EXISTS order_quotes (quote_id INTEGER PRIMARY KEY AUTOINCREMENT, client_email TEXT NOT NULL, agreed_amount REAL NOT NULL, status TEXT NOT NULL DEFAULT 'ACTIVE', note TEXT, product_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`);
   const pragma = db.prepare('PRAGMA table_info(order_ledger)');
-  const { results } = pragma.bind ? await pragma.bind().all() : (pragma.all ? await pragma.all() : { results: [] });
-  const have = new Set((results || []).map(r => r.name));
+  const results = await pragmaRows(pragma);
+  const have = new Set(results.map(r => r.name));
   for (const [name, type] of M4_LEDGER_COLUMNS) {
     if (!have.has(name)) {
       const stmt = db.prepare(`ALTER TABLE order_ledger ADD COLUMN ${name} ${type}`);
@@ -59,8 +67,8 @@ export async function ensureOrderSchema(db) {
   )`);
 
   const outboxPragma = db.prepare('PRAGMA table_info(delivery_outbox)');
-  const { results: outboxCols } = outboxPragma.bind ? await outboxPragma.bind().all() : (outboxPragma.all ? await outboxPragma.all() : { results: [] });
-  const obHave = new Set((outboxCols || []).map(c => c.name));
+  const outboxCols = await pragmaRows(outboxPragma);
+  const obHave = new Set(outboxCols.map(c => c.name));
   if (!obHave.has('dedupe_key')) {
     await db.prepare('ALTER TABLE delivery_outbox ADD COLUMN dedupe_key TEXT').bind().run();
     await db.prepare("UPDATE delivery_outbox SET dedupe_key = 'order|' || order_id || '|' || channel WHERE dedupe_key IS NULL").bind().run();
@@ -79,13 +87,13 @@ export async function ensureOrderSchema(db) {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   const quotePragma = db.prepare('PRAGMA table_info(order_quotes)');
-  const { results: quoteCols } = quotePragma.bind ? await quotePragma.bind().all() : (quotePragma.all ? await quotePragma.all() : { results: [] });
-  const quoteHave = new Set((quoteCols || []).map(c => c.name));
+  const quoteCols = await pragmaRows(quotePragma);
+  const quoteHave = new Set(quoteCols.map(c => c.name));
   if (!quoteHave.has('product_id')) await db.prepare('ALTER TABLE order_quotes ADD COLUMN product_id TEXT').bind().run();
 
   const ledgerPragmaAfter = db.prepare('PRAGMA table_xinfo(order_ledger)');
-  const ledgerColsAfter = ledgerPragmaAfter.bind ? await ledgerPragmaAfter.bind().all() : (ledgerPragmaAfter.all ? await ledgerPragmaAfter.all() : { results: [] });
-  const ledgerHaveAfter = new Set((ledgerColsAfter.results || []).map(r => r.name));
+  const ledgerColsAfter = await pragmaRows(ledgerPragmaAfter);
+  const ledgerHaveAfter = new Set(ledgerColsAfter.map(r => r.name));
   if (ledgerHaveAfter.has('settlement_mode') && ledgerHaveAfter.has('chain_id') && !ledgerHaveAfter.has('settlement_integrity')) {
     const integrityStmt = db.prepare(`ALTER TABLE order_ledger ADD COLUMN settlement_integrity INTEGER AS (
       CASE WHEN (
