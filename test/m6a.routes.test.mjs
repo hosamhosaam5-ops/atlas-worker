@@ -40,6 +40,37 @@ after(async () => {
 
 const post = (p, body, headers = {}) => fetch(BASE + p, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
+test('route.x402: missing PAYMENT-SIGNATURE -> 402, no settlement', async () => {
+  const r = await post('/x402/atlas_ai_data_qa_v1', { client_email: 'agent@example.invalid', file_base64: btoa('name,value\\nA,1\\n'), file_name: 'a.csv' });
+  assert.equal(r.status, 402);
+  const j = await r.json();
+  assert.equal(j.error, 'PAYMENT-SIGNATURE header is required');
+});
+
+test('route.x402: malformed PAYMENT-SIGNATURE -> 402, no settlement', async () => {
+  const r = await post('/x402/atlas_ai_data_qa_v1', { client_email: 'agent@example.invalid', file_base64: btoa('name,value\\nA,1\\n'), file_name: 'a.csv' }, { 'PAYMENT-SIGNATURE': 'not-base64-json' });
+  assert.equal(r.status, 402);
+  const j = await r.json();
+  assert.equal(j.error, 'INVALID_PAYMENT_SIGNATURE');
+});
+
+test('route.x402: client-supplied payment requirements mismatch -> 402', async () => {
+  const sig = btoa(JSON.stringify({ x402Version: 2, accepted: { network: 'eip155:1', asset: '0x0000000000000000000000000000000000000000', payTo: '0x0000000000000000000000000000000000000000', amount: '1' }, payload: { authorization: { nonce: 'x402-negative-mismatch' } } }));
+  const r = await post('/x402/atlas_ai_data_qa_v1', { client_email: 'agent@example.invalid', file_base64: btoa('name,value\\nA,1\\n'), file_name: 'a.csv' }, { 'PAYMENT-SIGNATURE': sig });
+  assert.equal(r.status, 402);
+  const j = await r.json();
+  assert.equal(j.error, 'PAYMENT_REQUIREMENTS_MISMATCH');
+});
+
+test('route.x402: oversized file -> 413 before payment signature/settlement', async () => {
+  const bytes = new Uint8Array(1_400_001);
+  bytes.fill(65);
+  const r = await post('/x402/atlas_ai_data_qa_v1', { client_email: 'agent@example.invalid', file_base64: Buffer.from(bytes).toString('base64'), file_name: 'oversize.csv' });
+  assert.equal(r.status, 413);
+  const j = await r.json();
+  assert.equal(j.error, 'FILE_SIZE_LIMIT_EXCEEDED');
+});
+
 test('route.health: GET /health returns current configured provider matrix', async () => {
   const r = await fetch(BASE + '/health');
   const j = await r.json();
