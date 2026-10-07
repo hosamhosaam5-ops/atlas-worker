@@ -94,6 +94,24 @@ export async function ensureOrderSchema(db) {
   const ledgerPragmaAfter = db.prepare('PRAGMA table_xinfo(order_ledger)');
   const ledgerColsAfter = await pragmaRows(ledgerPragmaAfter);
   const ledgerHaveAfter = new Set(ledgerColsAfter.map(r => r.name));
+  if (ledgerHaveAfter.has('settlement_mode') && ledgerHaveAfter.has('chain_id') && ledgerHaveAfter.has('settlement_integrity')) {
+    const schemaRow = await db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='order_ledger'").first();
+    const schemaSql = String(schemaRow?.sql || '');
+    // Repair the pre-M6 integrity expression if it incorrectly required MOCK/SIMULATION
+    // rows to have a NULL tx_hash. MOCK/SIMULATION may retain a synthetic tx hash for
+    // idempotency; only chain_id must be absent. REAL/TESTNET still require both proof fields.
+    if (schemaSql.includes("AND (tx_hash IS NULL OR tx_hash='')")) {
+      await execSql('ALTER TABLE order_ledger DROP COLUMN settlement_integrity');
+      await execSql(`ALTER TABLE order_ledger ADD COLUMN settlement_integrity INTEGER AS (
+        CASE WHEN (
+          (settlement_mode IN ('REAL','TESTNET') AND tx_hash IS NOT NULL AND tx_hash!='' AND chain_id IS NOT NULL AND chain_id!='')
+          OR
+          (settlement_mode IN ('SIMULATION','MOCK') AND (chain_id IS NULL OR chain_id=''))
+        ) THEN 1 ELSE NULL END
+      ) VIRTUAL NOT NULL`);
+    }
+  }
+
   if (ledgerHaveAfter.has('settlement_mode') && ledgerHaveAfter.has('chain_id') && !ledgerHaveAfter.has('settlement_integrity')) {
     const integrityStmt = db.prepare(`ALTER TABLE order_ledger ADD COLUMN settlement_integrity INTEGER AS (
       CASE WHEN (
