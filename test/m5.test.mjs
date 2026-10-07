@@ -234,6 +234,9 @@ async function addQuote(db, email, amount) {
   const env = { DB: db, CHATGPT_BRIDGE_SECRET: 'test-secret-123' };
   const unauth = await handleChatGptBridge(new Request('http://x/bridge/chatgpt', { method: 'POST', headers: { 'x-atlas-bridge-key': 'WRONG', 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'health' }) }), env);
   T('bridge.chatgpt wrong key -> 401 UNAUTHORIZED', unauth.status === 401);
+  const sameLengthWrong = await handleChatGptBridge(new Request('http://x/bridge/chatgpt', { method: 'POST', headers: { 'x-atlas-bridge-key': 'test-secret-XYZ', 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'health' }) }), env);
+  T('bridge.chatgpt same-length wrong key -> 401 UNAUTHORIZED', sameLengthWrong.status === 401);
+
   const auth = await handleChatGptBridge(new Request('http://x/bridge/chatgpt', { method: 'POST', headers: { 'x-atlas-bridge-key': 'test-secret-123', 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'health' }) }), env);
   const body = await auth.json();
   T('bridge.chatgpt correct key -> 200 SUCCESS contract', auth.status === 200 && body.status === 'SUCCESS' && body.data.service === 'ATLAS ChatGPT Bridge');
