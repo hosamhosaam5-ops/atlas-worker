@@ -18,9 +18,9 @@ function freshDb() { return new DatabaseSync(':memory:'); }
 test('schema.migration-path: empty DB reaches full current schema via migrations', async () => {
   const db = freshDb();
   const applied = await applyMigrations(db);
-  assert.deepEqual(applied, ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql']);
+  assert.deepEqual(applied, ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql', 'schema-m6.sql']);
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r => r.name);
-  for (const t of ['event_log','order_quotes','order_ledger','execution_state','ceo_memory','bridge_audit','zatca_experiment_requests','acquisition_assets','channel_watch','publications','order_files','delivery_outbox']) {
+  for (const t of ['event_log','order_quotes','order_ledger','execution_state','ceo_memory','bridge_audit','zatca_experiment_requests','acquisition_assets','channel_watch','publications','order_files','delivery_outbox','bridge_audit']) {
     assert.ok(tables.includes(t), 'missing table ' + t);
   }
 });
