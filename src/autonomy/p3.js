@@ -46,10 +46,10 @@ export function commerceManifest(origin, { product_id = 'atlas_ai_data_qa_v1', p
 
 export async function trustSnapshot(db) {
   await ensureP3Schema(db);
-  // Only non-MOCK ledger rows with a product and non-placeholder customer identity
-  // count as production evidence. Synthetic harness/stress fixtures must never inflate
-  // public delivery or payment reputation.
-  const verifiedWhere = "COALESCE(settlement_mode,'MOCK')!='MOCK' AND product_id IS NOT NULL AND COALESCE(client_email,'') NOT LIKE '%@example.invalid'";
+  // Only verifiable REAL Base settlements with a transaction hash, product, and
+  // non-placeholder customer identity count as production trust/revenue evidence.
+  // TESTNET, SIMULATION, MOCK, and unverified records must never inflate reputation.
+  const verifiedWhere = "settlement_mode='REAL' AND chain_id='eip155:8453' AND tx_hash IS NOT NULL AND tx_hash!='' AND product_id IS NOT NULL AND COALESCE(client_email,'') NOT LIKE '%@example.invalid'";
   const delivered = await db.prepare(`SELECT COUNT(*) count FROM order_ledger WHERE status='DELIVERED' AND ${verifiedWhere}`).first();
   const failed = await db.prepare(`SELECT COUNT(*) count FROM order_ledger WHERE status IN ('DELIVERY_FAILED','FAILED','REVIEW_REQUIRED','QA_FAILED') AND ${verifiedWhere}`).first();
   const paid = await db.prepare(`SELECT COUNT(*) count FROM order_ledger WHERE payment_status='PAID' AND ${verifiedWhere}`).first();
@@ -65,7 +65,7 @@ export async function trustSnapshot(db) {
   return {
     ok: true,
     verified: true,
-    verification_scope: 'LIVE_LEDGER_QUERY; MOCK_SETTLEMENTS_EXCLUDED',
+    verification_scope: 'LIVE_LEDGER_QUERY; REAL_BASE_TX_HASH_REQUIRED; MOCK_TESTNET_SIMULATION_EXCLUDED',
     metrics: {
       delivered_orders: d,
       failed_or_review_orders: f,
@@ -76,7 +76,7 @@ export async function trustSnapshot(db) {
       verified_production_orders: Number(verifiedOrders?.count || 0)
     },
     recent: recent.results || [],
-    methodology: "Production trust metrics include only non-MOCK settlement rows with a product_id and non-placeholder customer identity. MOCK/test/stress records are excluded; simulated counts are reported separately."
+    methodology: "Production trust metrics include only settlement_mode=REAL rows on Base (eip155:8453) with a non-empty tx_hash, product_id, and non-placeholder customer identity. MOCK/test/stress records are excluded; simulated counts are reported separately."
   };
 }
 
