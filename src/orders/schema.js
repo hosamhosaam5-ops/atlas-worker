@@ -160,7 +160,9 @@ export async function ensureOrderSchema(db) {
   // Production D1 supports atomic batch/exec migrations. Lightweight test adapters may
   // omit those primitives; keep their legacy idempotent path and test the migration helper
   // directly against SQLite in test/order-index-migration.test.mjs.
-  if (typeof db.batch === 'function' || typeof db.exec === 'function' || typeof db.execRaw === 'function') {
+  const indexProbe = db.prepare('SELECT 1');
+  const canInspectIndex = typeof indexProbe.first === 'function' || typeof indexProbe.get === 'function' || typeof indexProbe.all === 'function';
+  if (typeof db.batch === 'function' || (typeof db.exec === 'function' && canInspectIndex)) {
     await ensureOrderLedgerTxHashIndex(db);
   } else {
     await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''").run();
