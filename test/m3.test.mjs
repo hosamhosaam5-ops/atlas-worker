@@ -132,11 +132,15 @@ function T(name, cond, extra) {
   const today = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
   const dayStart = today + 'T00:00:00';
   const input = {
-    state: [
-      { idempotency_key: 'agent|a1', payload_json: JSON.stringify({ agent: { agent_id: 'a1', name: 'Agent One', status: 'ACTIVE', execution_count: 5, success_count: 4, failure_count: 1, health_status: 'OK' } }) },
-      { idempotency_key: 'task|t1', payload_json: JSON.stringify({ task: { task_id: 't1', status: 'PARKED', objective: 'test objective', failure_reason: 'no channel' } }) },
-      { idempotency_key: 'evt|e1', payload_json: JSON.stringify({ event: { type: 'AGENT_CREATED', timestamp: dayStart + 'T10:00:00', agent: 'a1' } }) },
-    ],
+    state: [],
+    events: [{ source: 'telegram', status: 'PROCESSED', created_at: dayStart + 'T10:00:00' }],
+    tasks: [{ task_id: 't1', source: 'A2A', status: 'SUBMITTED', created_at: dayStart + 'T10:00:00' }],
+    agents: [{ identity_id: 'a1', display_name: 'Agent One', status: 'ACTIVE' }],
+    growthRuns: [{ run_id: 'g1', status: 'COMPLETED', started_at: dayStart + 'T10:00:00' }],
+    growthAssets: [{ asset_id: 'ga1', asset_type: 'catalog', status: 'PUBLISHED' }],
+    orders: [],
+    approvals: [],
+    products: [{ product_id: 'p1', name: 'Active Product', status: 'ACTIVE', pricing_mode: 'FOUNDER_QUOTE', price_usdc: 15 }],
     zatca: [{ request_key: 'rk1', qualified: 'yes', submitted_at: dayStart + 'T11:00:00', attr_source: 'telegraph' }],
     pubs: [],
     assets: [{ asset: 'a', status: 'ready' }],
@@ -148,7 +152,7 @@ function T(name, cond, extra) {
   const rep = buildReport(input);
   T('daily.buildReport not skipped', rep.skip === false && rep.report_id === 'report|' + today);
   const text = rep.chunks.join('\n');
-  T('daily.report contains sections + stats', text.includes('تقرير أطلس اليومي') && text.includes('أحداث اليوم: 1') && text.includes('وكلاء نشطون: 1/1'));
+  T('daily.report contains sections + stats', text.includes('ATLAS | التقرير اليومي') && text.includes('1 مهام جديدة، 1 دورات نمو، 1 أحداث واردة') && text.includes('وكلاء نشطون: 1 | أصول اكتشاف منشورة: 1') && text.includes('إيراد موثق: 0 USDC'));
   const items = sanitizeForHtml(splitChunks(rep));
   T('daily.split+sanitize html-escapes', items.length >= 1 && !items[0].text.includes('<') || items[0].text.includes('&lt;'));
   const skipped = buildReport({ ...input, already_sent: true });
