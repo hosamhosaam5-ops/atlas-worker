@@ -261,6 +261,16 @@ async function addQuote(db, email, amount) {
     async loadPublications() { return []; },
     async loadAcquisitionAssets() { return []; },
     async loadChannelWatch() { return []; },
+    // This legacy cron fixture uses only M5 schema; newer operational tables are
+    // covered by production integration and are intentionally empty in this unit test.
+    async loadEvents() { return []; },
+    async loadAgentTasks() { return []; },
+    async loadAgents() { return []; },
+    async loadGrowthRuns() { return []; },
+    async loadGrowthAssets() { return []; },
+    async loadOrders() { return []; },
+    async loadApprovals() { return []; },
+    async loadProducts() { return []; },
   };
   const r1 = await runDailyReport(env, ad, mkAdapter('ok'));
   T('cron.daily first run SENT', r1.status === 'SENT' && r1.chunks_sent >= 1);
@@ -289,7 +299,7 @@ async function addQuote(db, email, amount) {
   const env2b = { DB: db2b, TELEGRAM_PROVIDER: 'MOCK' };
   const ad2b = { ...manyAgents, async loadExecutionState() { const { results } = await db2b.prepare('SELECT * FROM execution_state').bind().all(); return results; } };
   const rpFail = await runDailyReport(env2b, ad2b, mkAdapter('fail_all'));
-  T('cron.daily all-chunks failure -> DELIVERY_FAILED, no SENT row', rpFail.status === 'DELIVERY_FAILED' && rpFail.recorded === false);
+  T('cron.daily all-chunks failure -> DELIVERY_FAILED, persisted for review (not SENT)', rpFail.status === 'DELIVERY_FAILED' && rpFail.recorded === true);
   const noSent = await db2b.prepare("SELECT COUNT(*) c FROM execution_state WHERE status='SENT' AND tool='daily_report'").bind().first();
   T('cron.daily failed run leaves NO SENT record (no fake delivery)', noSent.c === 0);
 

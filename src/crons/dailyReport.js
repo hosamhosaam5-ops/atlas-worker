@@ -4,121 +4,128 @@
 // Idempotency: report|YYYY-MM-DD (Riyadh) — a second run on the same day skips, exactly
 // like the backup's already_sent check.
 
-// ---- Assemble Inputs (ported from backup "Assemble Inputs") ----
+// ---- Assemble Inputs: load the live operational sources used by the report ----
 export async function assembleInputs(env, adapters) {
-  const state = await adapters.loadExecutionState(env);
-  const zatca = await adapters.loadZatcaRequests(env);
-  const pubs = await adapters.loadPublications(env);
-  const assets = (await adapters.loadAcquisitionAssets(env)).filter(r => Object.keys(r).length > 0);
-  const watch = (await adapters.loadChannelWatch(env)).filter(r => Object.keys(r).length > 0);
+  const [state, zatca, pubs, assetsRaw, watchRaw, events, tasks, agents, growthRuns, growthAssets, orders, approvals, products] = await Promise.all([
+    adapters.loadExecutionState(env),
+    adapters.loadZatcaRequests(env),
+    adapters.loadPublications(env),
+    adapters.loadAcquisitionAssets(env),
+    adapters.loadChannelWatch(env),
+    adapters.loadEvents ? adapters.loadEvents(env) : [],
+    adapters.loadAgentTasks ? adapters.loadAgentTasks(env) : [],
+    adapters.loadAgents ? adapters.loadAgents(env) : [],
+    adapters.loadGrowthRuns ? adapters.loadGrowthRuns(env) : [],
+    adapters.loadGrowthAssets ? adapters.loadGrowthAssets(env) : [],
+    adapters.loadOrders ? adapters.loadOrders(env) : [],
+    adapters.loadApprovals ? adapters.loadApprovals(env) : [],
+    adapters.loadProducts ? adapters.loadProducts(env) : [],
+  ]);
   const RIYADH = 3 * 3600 * 1000;
   const date = new Date(Date.now() + RIYADH).toISOString().slice(0, 10);
   const reportId = 'report|' + date;
   const alreadySent = state.some(r => r.idempotency_key === reportId && r.status === 'SENT');
-  return { state, zatca, pubs, assets, watch, date, report_id: reportId, already_sent: alreadySent };
+  return {
+    state, zatca, pubs,
+    assets: (assetsRaw || []).filter(r => Object.keys(r).length > 0),
+    watch: (watchRaw || []).filter(r => Object.keys(r).length > 0),
+    events: events || [], tasks: tasks || [], agents: agents || [],
+    growthRuns: growthRuns || [], growthAssets: growthAssets || [],
+    orders: orders || [], approvals: approvals || [], products: products || [],
+    date, report_id: reportId, already_sent: alreadySent
+  };
 }
 
-// ---- Build Report (ported VERBATIM from backup "Build Report" code node) ----
+// Compare SQL/ISO timestamps against the Riyadh calendar day using UTC boundaries.
+// Riyadh is UTC+03:00 year-round; stored D1 timestamps are UTC.
+function dayBounds(date) {
+  const start = new Date(date + 'T00:00:00+03:00');
+  const end = new Date(start.getTime() + 86400000);
+  const sql = d => d.toISOString().slice(0, 19).replace('T', ' ');
+  return { start: sql(start), end: sql(end) };
+}
+function inDay(value, bounds) {
+  if (!value) return false;
+  const ts = String(value).slice(0, 19).replace('T', ' ');
+  return ts >= bounds.start && ts < bounds.end;
+}
+
+// ---- Build Report: concise, sourced metrics; distinguish activity from revenue ----
 export function buildReport(input) {
   if (input.already_sent) return { skip: true, report_id: input.report_id, chunks: [] };
-  const dayStart = input.date + "T00:00:00";
-  function parse(r) { try { return r.payload_json ? JSON.parse(r.payload_json) : {}; } catch (e) { return {}; } }
-  const agents = {}, tasks = {}, events = [];
-  for (const r of input.state) {
-    const key = String(r.idempotency_key || ""); const pay = parse(r);
-    if (key.indexOf("agent|") === 0) agents[(pay.agent || {}).agent_id || key] = pay.agent || {};
-    else if (key.indexOf("task|") === 0) tasks[(pay.task || {}).task_id || key] = pay.task || {};
-    else if (key.indexOf("evt|") === 0) events.push(pay.event || {});
-  }
-  const todayEvents = events.filter(e => String(e.timestamp || "") >= dayStart);
-  const todayZatca = input.zatca.filter(r => String(r.submitted_at || "") >= dayStart);
-  const todayPubs = input.pubs.filter(r => String(r.publication_time || "") >= dayStart);
-  const assets = input.assets || []; const watch = input.watch || [];
-  const readyAssets = assets.filter(a => a.status === "ready");
-  const todayWatch = watch.filter(w => String(w.check_date || "") === input.date);
-  const newChannel = todayWatch.filter(w => w.verdict !== "NO_SELF_SERVE_CHANNEL_TODAY" && w.status !== "excluded" && w.status !== "conclusion");
-  const excludedToday = todayWatch.filter(w => w.status === "excluded");
-  const agentList = Object.keys(agents).map(k => agents[k]);
-  const taskList = Object.keys(tasks).map(k => tasks[k]);
-  const active = agentList.filter(a => a.status === "ACTIVE").length;
-  const parked = taskList.filter(t => t.status === "PARKED");
-  const completedToday = taskList.filter(t => String(t.completed_at || "") >= dayStart);
-  const recoveries = todayEvents.filter(e => e.type === "TASK_RECOVERY");
-  const created = todayEvents.filter(e => e.type === "AGENT_CREATED");
-  const qual = todayZatca.filter(r => r.qualified === "yes").length;
-  const paid = todayZatca.filter(r => r.paid_interest_volunteered === "volunteered").length;
+  const bounds = dayBounds(input.date);
+  const todayEvents = (input.events || []).filter(e => inDay(e.created_at, bounds));
+  const todayTasks = (input.tasks || []).filter(t => inDay(t.created_at, bounds));
+  const todayRuns = (input.growthRuns || []).filter(r => inDay(r.started_at, bounds));
+  const todayZatca = (input.zatca || []).filter(r => inDay(r.submitted_at, bounds));
+  const todayPubs = (input.pubs || []).filter(r => inDay(r.publication_time, bounds));
+  const activeAgents = (input.agents || []).filter(a => String(a.status || '').toUpperCase() === 'ACTIVE');
+  const publishedAssets = (input.growthAssets || []).filter(a => String(a.status || '').toUpperCase() === 'PUBLISHED');
+  const activeProducts = (input.products || []).filter(p => String(p.status || '').toUpperCase() === 'ACTIVE');
+  const pendingApprovals = (input.approvals || []).filter(a => String(a.status || '').toUpperCase() === 'PENDING');
+  const realLedgerClaims = (input.orders || []).filter(o =>
+    String(o.settlement_mode || '').toUpperCase() === 'REAL' &&
+    String(o.payment_status || '').toUpperCase() === 'PAID' &&
+    String(o.chain_id || '') === 'eip155:8453' &&
+    /^0x[0-9a-fA-F]{64}$/.test(String(o.tx_hash || '')) &&
+    String(o.product_id || '').trim() !== '' &&
+    String(o.client_email || '').trim() !== ''
+  );
+  const mockOrders = (input.orders || []).filter(o => ['MOCK','SIMULATION','TESTNET'].includes(String(o.settlement_mode || '').toUpperCase()));
+  const completedTasks = todayTasks.filter(t => ['COMPLETED','SUCCEEDED','DONE','DELIVERED'].includes(String(t.status || '').toUpperCase()));
+  const failedEvents = todayEvents.filter(e => /FAIL|ERROR|REVIEW|CRASH/i.test(String(e.status || '')));
+  const failedOrdersToday = (input.orders || []).filter(o => inDay(o.created_at, bounds) && /FAIL|ERROR|REVIEW|REJECT/i.test(String(o.status || '')));
+  const bySource = {};
+  for (const t of todayTasks) { const k = t.source || 'غير محدد'; bySource[k] = (bySource[k] || 0) + 1; }
   const L = [];
-  L.push("📊 تقرير أطلس اليومي — " + input.date);
-  L.push("");
-  L.push("1) الملخص التنفيذي");
-  L.push("• أحداث اليوم: " + todayEvents.length + " | مهام مكتملة: " + completedToday.length + " | متوقفة: " + parked.length);
-  L.push("• وكلاء نشطون: " + active + "/" + agentList.length + " | جدد اليوم: " + created.length);
-  L.push("• طلبات زاتكا اليوم: " + todayZatca.length + " (مؤهل: " + qual + "، اهتمام مدفوع: " + paid + ")");
-  if (todayEvents.length === 0 && todayZatca.length === 0) L.push("• لا توجد بيانات موثقة جديدة اليوم.");
-  L.push("");
-  L.push("2) الوكلاء");
-  for (const a of agentList) L.push("• " + (a.name || a.agent_id) + " [" + a.status + "] — تنفيذات: " + (a.execution_count || 0) + ", نجاح: " + (a.success_count || 0) + ", فشل: " + (a.failure_count || 0) + ", صحة: " + (a.health_status || "-"));
-  L.push("");
-  L.push("3) المنتجات");
-  L.push("• فحص جاهزية زاتكا (Wave 25) — منشور: HTTP 200 عام. طلبات اليوم: " + todayZatca.length + ".");
-  L.push("");
-  L.push("4) التسويق");
-  if (todayPubs.length === 0) L.push("• لا نشر جديد موثق اليوم.");
-  for (const p of todayPubs) L.push("• " + (p.channel || "-") + ": " + (p.asset || "-") + " — " + (p.status || "-"));
-  L.push("");
-  L.push("5) المبيعات");
-  L.push("• Revenue: 0 — لا مبيعات موثقة. فرص (طلبات مؤهلة): " + qual + ".");
-  L.push("");
-  L.push("6) العملاء");
-  L.push("• طلبات جديدة: " + todayZatca.length + " — تُدار عبر تجربة زاتكا.");
-  L.push("");
-  L.push("7) التجارب");
-  L.push("• EXP-ZATCA-W25-2026-09 — نشطة. إجمالي: " + input.zatca.length + "، اليوم: " + todayZatca.length + ".");
-  L.push("");
-  L.push("8) الأعطال والاسترداد");
-  if (recoveries.length === 0) L.push("• لا أعطال مسجلة اليوم.");
-  for (const e of recoveries) L.push("• " + (e.task || "-") + ": " + (e.failure_class || "?") + " → " + (e.action || "?"));
-  L.push("");
-  L.push("9) المهام المتوقفة (PARKED)");
-  for (const t of parked) { const rs = (t.blockers && t.blockers[0] && t.blockers[0].reason) || t.failure_reason || "-"; L.push("• " + t.task_id + " — " + String(t.objective || "").slice(0, 60) + " | السبب: " + rs); }
-  if (parked.length === 0) L.push("• لا شيء.");
-  L.push("");
-  L.push("10) المالية");
-  L.push("• Revenue: 0 | Expenses: 0 | Net: 0 — لا بيانات مالية موثقة.");
-  L.push("");
-  L.push("11) مؤشرات الأداء");
-  L.push("• مهام: " + taskList.length + " | وكلاء: " + agentList.length + " | طلبات: " + input.zatca.length + " | أحداث اليوم: " + todayEvents.length);
-  L.push("");
-  L.push("12) قرارات ذاتية");
-  const decisions = todayEvents.filter(e => e.type === "ALTERNATIVE_SELECTED" || e.type === "AGENT_CREATED");
-  if (decisions.length === 0) L.push("• لا قرارات ذاتية موثقة اليوم.");
-  for (const d of decisions) L.push("• " + d.type + ": " + (d.agent || d.to || "-"));
-  L.push("");
-  L.push("13) موافقات المؤسس المطلوبة");
-  const approvals = parked.filter(t => t.blockers && t.blockers[0] && t.blockers[0].needs === "founder_approval");
-  if (approvals.length === 0) L.push("• لا شيء يتطلب موافقتك الآن.");
-  for (const t of approvals) L.push("• " + t.task_id + ": " + String(t.objective || "").slice(0, 60));
-  L.push("");
-  L.push("14) خطة الغد");
-  L.push("• متابعة تجربة زاتكا، معالجة المهام المتوقفة عند توفر القدرات، استمرار دورة الشركة الذاتية.");
-  L.push("");
-  L.push("16) أصول الاكتساب والقنوات");
-  L.push("• مخزون الأصول الجاهزة: " + readyAssets.length + " (منشور الآن: 0 — لا نشر جماعي بدون قناة حقيقية).");
-  if (todayWatch.length === 0) L.push("• فحص القنوات اليوم: لم يُسجَّل فحص جديد اليوم.");
-  else L.push("• فحص القنوات اليوم: " + todayWatch.length + " سجل (مستبعد: " + excludedToday.length + ").");
-  if (newChannel.length > 0) { L.push("• قناة ذاتية جديدة محتملة:"); for (const c of newChannel) L.push("  - " + (c.channel || "-") + " → " + (c.verdict || "-")); }
-  else L.push("• لا قناة اكتساب ذاتية حقيقية متاحة اليوم — الاستثمار في الأصول بدل تكرار البحث.");
-  const bySource = {}; for (const r of input.zatca) { const s = r.attr_source || r.source || "unknown"; bySource[s] = (bySource[s] || 0) + 1; }
-  const srcKeys = Object.keys(bySource);
-  if (srcKeys.length === 0) L.push("• مصادر الزيارات: لا طلبات مسجلة بعد — نظام القياس جاهز (attr_source/campaign/content).");
-  else { L.push("• مصادر الطلبات:"); for (const s of srcKeys) L.push("  - " + s + ": " + bySource[s]); }
-  L.push("");
-  L.push("15) الأدلة");
-  L.push("• report_id=" + input.report_id + " | أحداث=" + todayEvents.length + " | وكلاء=" + agentList.length + " | مهام=" + taskList.length);
-  const MAX = 3600; const chunks = []; let cur = "";
-  for (const line of L) { const next = cur ? cur + "\n" + line : line; if (next.length > MAX) { chunks.push(cur); cur = line; } else cur = next; }
+  L.push('📊 ATLAS | التقرير اليومي');
+  L.push('📅 ' + input.date + ' — توقيت الرياض (UTC+3)');
+  L.push('');
+  L.push('━━━━━━━━━━━━━━━━');
+  L.push('🔎 الملخص التنفيذي');
+  L.push('• نشاط تشغيلي: ' + todayTasks.length + ' مهام جديدة، ' + todayRuns.length + ' دورات نمو، ' + todayEvents.length + ' أحداث واردة.');
+  L.push('• وكلاء نشطون: ' + activeAgents.length + ' | أصول اكتشاف منشورة: ' + publishedAssets.length);
+  L.push('• عملاء/طلبات زاتكا اليوم: ' + todayZatca.length + ' | طلبات مدفوعة موثقة: 0');
+  L.push('');
+  L.push('⚙️ التشغيل اليوم');
+  L.push('• مهام مكتملة: ' + completedTasks.length + ' من ' + todayTasks.length + ' مهمة جديدة.');
+  if (Object.keys(bySource).length) L.push('• مصادر المهام: ' + Object.entries(bySource).map(([k,v]) => k + ' ' + v).join('، '));
+  else L.push('• لا توجد مهام جديدة مسجلة في جدول المهام اليوم.');
+  L.push('• دورات النمو المكتملة: ' + todayRuns.filter(r => String(r.status).toUpperCase() === 'COMPLETED').length + ' من ' + todayRuns.length + '.');
+  L.push('');
+  L.push('🧩 المنتج والظهور');
+  if (activeProducts.length) {
+    for (const p of activeProducts.slice(0, 3)) L.push('• ' + (p.name || p.product_id) + ' — ' + (p.pricing_mode === 'FOUNDER_QUOTE' ? 'السعر يتطلب عرضًا معتمدًا' : (p.price_usdc != null ? p.price_usdc + ' USDC' : 'السعر غير محدد')));
+  } else L.push('• لم يُعثر على منتج ACTIVE في مصدر المنتجات.');
+  L.push('• أصول الاكتشاف المنشورة: ' + publishedAssets.map(a => a.asset_type || a.title || a.slug).join('، ') + (publishedAssets.length ? '' : 'لا يوجد'));
+  if (todayPubs.length) for (const p of todayPubs) L.push('• نشر مسجل: ' + (p.channel || '-') + ' — ' + (p.status || '-'));
+  else L.push('• لا توجد عملية نشر جديدة مسجلة اليوم؛ لم ننشئ إدراجات أو نرسل مراسلات.');
+  L.push('');
+  L.push('💰 المبيعات والمالية');
+  L.push('• إيراد موثق: 0 USDC — لا توجد دفعة حقيقية مثبتة على السلسلة في بيانات السجل الحالية.');
+  L.push('• سجلات الطلبات التجريبية/المحاكاة المستبعدة: ' + mockOrders.length + ' (ليست إيرادًا).');
+  L.push('• سجلات REAL المستوفية لحقول الفحص الأولي: ' + realLedgerClaims.length + '؛ لا تُعد إثباتًا on-chain دون تحقق مستقل.');
+  L.push('• المصروفات: لا يوجد سجل مصروفات موثق؛ لا أستنتج أنها صفر من غياب البيانات.');
+  L.push('');
+  L.push('🛡️ الأعطال والموافقات');
+  L.push('• أحداث اليوم التي تحمل حالة فشل/مراجعة: ' + failedEvents.length);
+  L.push('• طلبات اليوم المرفوضة أو التي تحتاج مراجعة: ' + failedOrdersToday.length);
+  L.push('• موافقات المؤسس المعلقة: ' + pendingApprovals.length);
+  L.push('');
+  L.push('📚 نطاق البيانات');
+  L.push('• المصادر: event_log، agent_tasks، agent_identity، growth_runs، growth_assets، order_ledger، financial_approvals، publications، طلبات زاتكا.');
+  L.push('• صفر في مقياس معين يعني عدم وجود سجل مطابق في مصدره ضمن يوم الرياض؛ لا يعني أن النظام كله لم يعمل.');
+  L.push('• التقرير لا ينشئ إدراجات ولا يرسل رسائل تسويقية أو التزامات خارجية.');
+  L.push('');
+  L.push('🧭 الخطوة التالية');
+  L.push('• استمرار فحص الروابط العامة وأصول الاكتشاف الحالية مجانًا، ومراقبة صحة الخدمة والقياس دون مراسلات أو إدراجات جديدة.');
+  L.push('');
+  L.push('🧾 الدليل: ' + input.report_id + ' | مهام اليوم=' + todayTasks.length + ' | دورات النمو=' + todayRuns.length + ' | إيراد موثق=0');
+  const MAX = 3600; const chunks = []; let cur = '';
+  for (const line of L) { const next = cur ? cur + '\n' + line : line; if (next.length > MAX) { chunks.push(cur); cur = line; } else cur = next; }
   if (cur) chunks.push(cur);
-  return { skip: false, report_id: input.report_id, date: input.date, chunks, total_chunks: chunks.length, stats: { events_today: todayEvents.length, agents: agentList.length, parked: parked.length, zatca_today: todayZatca.length } };
+  return { skip: false, report_id: input.report_id, date: input.date, chunks, total_chunks: chunks.length,
+    stats: { events_today: todayEvents.length, tasks_today: todayTasks.length, growth_runs_today: todayRuns.length, agents_active: activeAgents.length, zatca_today: todayZatca.length, verified_revenue_usdc: 0 } };
 }
 
 // ---- Split Chunks (ported from backup "Split Chunks") ----
@@ -153,18 +160,25 @@ export function recordDelivery(sentMessageIds, reportId) {
 }
 
 // Default D1 adapters (production wiring; tests inject fixtures).
+// Default D1 adapters. Every metric is sourced from the table that actually owns it.
 export const defaultAdapters = {
-  async loadExecutionState(env) { const { results } = await env.DB.prepare('SELECT * FROM execution_state').all(); return results || []; },
-  async loadZatcaRequests(env) { const { results } = await env.DB.prepare('SELECT * FROM zatca_experiment_requests').all(); return results || []; },
-  async loadPublications(env) { const { results } = await env.DB.prepare('SELECT * FROM publications').all(); return results || []; },
-  async loadAcquisitionAssets(env) { const { results } = await env.DB.prepare('SELECT * FROM acquisition_assets').all(); return results || []; },
-  async loadChannelWatch(env) { const { results } = await env.DB.prepare('SELECT * FROM channel_watch').all(); return results || []; },
+  async loadExecutionState(env) { const { results } = await env.DB.prepare('SELECT * FROM execution_state').bind().all(); return results || []; },
+  async loadZatcaRequests(env) { const { results } = await env.DB.prepare('SELECT * FROM zatca_experiment_requests').bind().all(); return results || []; },
+  async loadPublications(env) { const { results } = await env.DB.prepare('SELECT * FROM publications').bind().all(); return results || []; },
+  async loadAcquisitionAssets(env) { const { results } = await env.DB.prepare('SELECT * FROM acquisition_assets').bind().all(); return results || []; },
+  async loadChannelWatch(env) { const { results } = await env.DB.prepare('SELECT * FROM channel_watch').bind().all(); return results || []; },
+  async loadEvents(env) { const { results } = await env.DB.prepare('SELECT source, status, created_at FROM event_log').bind().all(); return results || []; },
+  async loadAgentTasks(env) { const { results } = await env.DB.prepare('SELECT task_id, source, status, created_at, updated_at FROM agent_tasks').bind().all(); return results || []; },
+  async loadAgents(env) { const { results } = await env.DB.prepare('SELECT identity_id, display_name, status FROM agent_identity').bind().all(); return results || []; },
+  async loadGrowthRuns(env) { const { results } = await env.DB.prepare('SELECT run_id, status, started_at, finished_at FROM growth_runs').bind().all(); return results || []; },
+  async loadGrowthAssets(env) { const { results } = await env.DB.prepare('SELECT asset_id, asset_type, slug, title, status, updated_at FROM growth_assets').bind().all(); return results || []; },
+  async loadOrders(env) { const { results } = await env.DB.prepare('SELECT order_id, client_email, tx_hash, status, payment_status, settlement_mode, chain_id, product_id, created_at FROM order_ledger').bind().all(); return results || []; },
+  async loadApprovals(env) { const { results } = await env.DB.prepare('SELECT approval_id, status, action, created_at FROM financial_approvals').bind().all(); return results || []; },
+  async loadProducts(env) { const { results } = await env.DB.prepare('SELECT product_id, name, status, pricing_mode, price_usdc FROM products').bind().all(); return results || []; },
 };
 
-// Orchestration. deliveryAdapter.send(chatId, text, {parse_mode}) must return {message_id} on
-// real success and throw/return falsy on failure (MOCK default — no real Telegram).
-// A delivery is recorded SENT only when the adapter reports real success (same as backup:
-// Record Delivery returns [] when no message_ids, so no state row is written).
+// Orchestration with an atomic daily claim. Only one concurrent cron invocation
+// can create the report row; every other invocation exits before Telegram is called.
 export async function runDailyReport(env, adapters = defaultAdapters, deliveryAdapter) {
   const input = await assembleInputs(env, adapters);
   const report = buildReport(input);
@@ -172,25 +186,35 @@ export async function runDailyReport(env, adapters = defaultAdapters, deliveryAd
   if (report.skip || items.length === 0) {
     return { status: report.skip ? 'SKIPPED_ALREADY_SENT' : 'NO_CONTENT', report_id: report.report_id, chunks_sent: 0 };
   }
-  const chatId = env.FOUNDER_CHAT_ID || '5246182877'; // same chat as backup
+
+  const now = new Date().toISOString();
+  // The PRIMARY KEY on idempotency_key is the concurrency guard. Claim before send,
+  // not after send: simultaneous cron triggers cannot all pass a read-then-send check.
+  const claim = await env.DB.prepare(
+    "INSERT OR IGNORE INTO execution_state (idempotency_key, record_kind, tool, status, payload_json, created_at, updated_at, delivery_state, entity_type, entity_id) VALUES (?, 'atlas_report', 'daily_report', 'SENDING', ?, ?, ?, 'SENDING', 'report', ? ) RETURNING idempotency_key"
+  ).bind(report.report_id, JSON.stringify({ report: { date: report.date, state: 'SENDING', claimed_at: now } }), now, now, report.report_id).first();
+  if (!claim) {
+    return { status: 'SKIPPED_DUPLICATE_OR_REVIEW', report_id: report.report_id, chunks_sent: 0 };
+  }
+
+  const chatId = env.FOUNDER_CHAT_ID || '5246182877';
   const messageIds = [];
+  let sendErrors = 0;
   for (const it of items) {
-    const res = await deliveryAdapter.send(chatId, it.text, { parse_mode: 'HTML' });
-    if (res && res.message_id) messageIds.push(res.message_id);
+    try {
+      const res = await deliveryAdapter.send(chatId, it.text, { parse_mode: 'HTML' });
+      if (res && res.message_id) messageIds.push(String(res.message_id));
+      else sendErrors++;
+    } catch (e) {
+      sendErrors++;
+    }
   }
-  const row = recordDelivery(messageIds, report.report_id);
-  if (row) {
-    await env.DB.prepare(
-      `INSERT INTO execution_state (idempotency_key, record_kind, correlation_id, action_id, tool, status, payload_json, error_code, attempt_count, created_at, expires_at, delivery_state, message_key, chunk_index, request_id, entity_type, entity_id, progress, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(idempotency_key) DO UPDATE SET status=excluded.status, payload_json=excluded.payload_json, delivery_state=excluded.delivery_state, message_key=excluded.message_key, updated_at=excluded.updated_at`
-    ).bind(row.idempotency_key, row.record_kind, row.correlation_id, row.action_id, row.tool, row.status, row.payload_json, row.error_code, row.attempt_count, row.created_at, row.expires_at, row.delivery_state, row.message_key, row.chunk_index, row.request_id, row.entity_type, row.entity_id, row.progress, row.updated_at).run();
-  }
-  return {
-    status: messageIds.length === items.length ? 'SENT' : (messageIds.length > 0 ? 'PARTIAL' : 'DELIVERY_FAILED'),
-    report_id: report.report_id,
-    chunks_sent: messageIds.length,
-    chunks_total: items.length,
-    recorded: !!row,
-  };
+  const finalStatus = messageIds.length === items.length ? 'SENT' : (messageIds.length > 0 ? 'PARTIAL' : 'DELIVERY_FAILED');
+  const deliveryRecord = recordDelivery(messageIds, report.report_id);
+  const payload = JSON.stringify({ report: { date: report.date, message_ids: messageIds, message_key: deliveryRecord?.message_key || report.report_id + '|msg|' + messageIds.join(','), chunks_total: items.length, chunks_sent: messageIds.length, send_errors: sendErrors, sent_at: new Date().toISOString(), stats: report.stats } });
+  await env.DB.prepare(
+    "UPDATE execution_state SET status=?, payload_json=?, delivery_state=?, message_key=?, progress=?, updated_at=? WHERE idempotency_key=? AND status='SENDING'"
+  ).bind(finalStatus, payload, finalStatus, report.report_id + '|msg|' + messageIds.join(','), items.length ? messageIds.length / items.length : 0, new Date().toISOString(), report.report_id).run();
+
+  return { status: finalStatus, report_id: report.report_id, chunks_sent: messageIds.length, chunks_total: items.length, recorded: true, stats: report.stats };
 }
