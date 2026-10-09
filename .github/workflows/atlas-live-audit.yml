@@ -94,7 +94,10 @@ jobs:
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
-          import { fetchReceipt, evaluatePaymentSafe, WALLET, USDC_CONTRACT, BASE_NETWORK } from './src/orders/payment.js';
+          import { fetchReceipt, evaluatePaymentSafe, USDC_CONTRACT, BASE_NETWORK } from './src/orders/payment.js';
+          import { readFileSync } from 'node:fs';
+          const WALLET = readFileSync('wrangler.toml', 'utf8').match(/^ATLAS_WALLET_ADDRESS\s*=\s*\"(0x[a-fA-F0-9]{40})\"/m)?.[1];
+          if (!WALLET) throw new Error('ATLAS_WALLET_ADDRESS missing or invalid in wrangler.toml');
 
           // Deliberately non-existent, syntactically valid 32-byte transaction hash.
           // This is a read-only eth_getTransactionReceipt call; it cannot broadcast or spend funds.
@@ -120,7 +123,10 @@ jobs:
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
-          import { evaluatePaymentSafe, WALLET, USDC_CONTRACT, BASE_NETWORK } from './src/orders/payment.js';
+          import { evaluatePaymentSafe, USDC_CONTRACT, BASE_NETWORK } from './src/orders/payment.js';
+          import { readFileSync } from 'node:fs';
+          const WALLET = readFileSync('wrangler.toml', 'utf8').match(/^ATLAS_WALLET_ADDRESS\s*=\s*\"(0x[a-fA-F0-9]{40})\"/m)?.[1];
+          if (!WALLET) throw new Error('ATLAS_WALLET_ADDRESS missing or invalid in wrangler.toml');
 
           const rpc = 'https://mainnet.base.org';
           const call = async (method, params) => {

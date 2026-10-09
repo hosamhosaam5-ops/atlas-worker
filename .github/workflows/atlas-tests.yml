@@ -213,6 +213,7 @@ jobs:
           curl --fail-with-body --silent --show-error "$BASE/.well-known/agent-card.json" -o agent-card-consistency.json
           jq -e '.name=="ATLAS" and any(.supportedInterfaces[]; .url=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding=="JSONRPC" and .protocolVersion=="1.0")' agent-card-consistency.json
           jq -e 'any(.capabilities.extensions[]; .uri=="https://a2a-registry.org/extensions/registry/v1" and .params.identity.provider=="github" and .params.identity.username=="hosamhosaam5-ops" and .params.identity.packageName=="github.hosamhosaam5-ops.atlas")' agent-card-consistency.json
+          jq -e 'any(.capabilities.extensions[]; .uri=="https://atlas-worker.hosamhosaam5.workers.dev/extensions/commerce/v1" and .params.settlement=="BASE_RPC_INBOUND" and .params.x402Settlement=="NOT_ACTIVE")' agent-card-consistency.json
 
       - name: Upload A2A evidence
         if: always()
