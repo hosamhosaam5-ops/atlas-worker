@@ -162,19 +162,19 @@ export function recordDelivery(sentMessageIds, reportId) {
 // Default D1 adapters (production wiring; tests inject fixtures).
 // Default D1 adapters. Every metric is sourced from the table that actually owns it.
 export const defaultAdapters = {
-  async loadExecutionState(env) { const { results } = await env.DB.prepare('SELECT * FROM execution_state').all(); return results || []; },
-  async loadZatcaRequests(env) { const { results } = await env.DB.prepare('SELECT * FROM zatca_experiment_requests').all(); return results || []; },
-  async loadPublications(env) { const { results } = await env.DB.prepare('SELECT * FROM publications').all(); return results || []; },
-  async loadAcquisitionAssets(env) { const { results } = await env.DB.prepare('SELECT * FROM acquisition_assets').all(); return results || []; },
-  async loadChannelWatch(env) { const { results } = await env.DB.prepare('SELECT * FROM channel_watch').all(); return results || []; },
-  async loadEvents(env) { const { results } = await env.DB.prepare('SELECT source, status, created_at FROM event_log').all(); return results || []; },
-  async loadAgentTasks(env) { const { results } = await env.DB.prepare('SELECT task_id, source, status, created_at, updated_at FROM agent_tasks').all(); return results || []; },
-  async loadAgents(env) { const { results } = await env.DB.prepare('SELECT identity_id, display_name, status FROM agent_identity').all(); return results || []; },
-  async loadGrowthRuns(env) { const { results } = await env.DB.prepare('SELECT run_id, status, started_at, finished_at FROM growth_runs').all(); return results || []; },
-  async loadGrowthAssets(env) { const { results } = await env.DB.prepare('SELECT asset_id, asset_type, slug, title, status, updated_at FROM growth_assets').all(); return results || []; },
-  async loadOrders(env) { const { results } = await env.DB.prepare('SELECT order_id, client_email, tx_hash, status, payment_status, settlement_mode, chain_id, product_id, created_at FROM order_ledger').all(); return results || []; },
-  async loadApprovals(env) { const { results } = await env.DB.prepare('SELECT approval_id, status, action, created_at FROM financial_approvals').all(); return results || []; },
-  async loadProducts(env) { const { results } = await env.DB.prepare('SELECT product_id, name, status, pricing_mode, price_usdc FROM products').all(); return results || []; },
+  async loadExecutionState(env) { const { results } = await env.DB.prepare('SELECT * FROM execution_state').bind().all(); return results || []; },
+  async loadZatcaRequests(env) { const { results } = await env.DB.prepare('SELECT * FROM zatca_experiment_requests').bind().all(); return results || []; },
+  async loadPublications(env) { const { results } = await env.DB.prepare('SELECT * FROM publications').bind().all(); return results || []; },
+  async loadAcquisitionAssets(env) { const { results } = await env.DB.prepare('SELECT * FROM acquisition_assets').bind().all(); return results || []; },
+  async loadChannelWatch(env) { const { results } = await env.DB.prepare('SELECT * FROM channel_watch').bind().all(); return results || []; },
+  async loadEvents(env) { const { results } = await env.DB.prepare('SELECT source, status, created_at FROM event_log').bind().all(); return results || []; },
+  async loadAgentTasks(env) { const { results } = await env.DB.prepare('SELECT task_id, source, status, created_at, updated_at FROM agent_tasks').bind().all(); return results || []; },
+  async loadAgents(env) { const { results } = await env.DB.prepare('SELECT identity_id, display_name, status FROM agent_identity').bind().all(); return results || []; },
+  async loadGrowthRuns(env) { const { results } = await env.DB.prepare('SELECT run_id, status, started_at, finished_at FROM growth_runs').bind().all(); return results || []; },
+  async loadGrowthAssets(env) { const { results } = await env.DB.prepare('SELECT asset_id, asset_type, slug, title, status, updated_at FROM growth_assets').bind().all(); return results || []; },
+  async loadOrders(env) { const { results } = await env.DB.prepare('SELECT order_id, client_email, tx_hash, status, payment_status, settlement_mode, chain_id, product_id, created_at FROM order_ledger').bind().all(); return results || []; },
+  async loadApprovals(env) { const { results } = await env.DB.prepare('SELECT approval_id, status, action, created_at FROM financial_approvals').bind().all(); return results || []; },
+  async loadProducts(env) { const { results } = await env.DB.prepare('SELECT product_id, name, status, pricing_mode, price_usdc FROM products').bind().all(); return results || []; },
 };
 
 // Orchestration with an atomic daily claim. Only one concurrent cron invocation
@@ -210,7 +210,8 @@ export async function runDailyReport(env, adapters = defaultAdapters, deliveryAd
     }
   }
   const finalStatus = messageIds.length === items.length ? 'SENT' : (messageIds.length > 0 ? 'PARTIAL' : 'DELIVERY_FAILED');
-  const payload = JSON.stringify({ report: { date: report.date, message_ids: messageIds, chunks_total: items.length, chunks_sent: messageIds.length, send_errors: sendErrors, sent_at: new Date().toISOString(), stats: report.stats } });
+  const deliveryRecord = recordDelivery(messageIds, report.report_id);
+  const payload = JSON.stringify({ report: { date: report.date, message_ids: messageIds, message_key: deliveryRecord?.message_key || report.report_id + '|msg|' + messageIds.join(','), chunks_total: items.length, chunks_sent: messageIds.length, send_errors: sendErrors, sent_at: new Date().toISOString(), stats: report.stats } });
   await env.DB.prepare(
     "UPDATE execution_state SET status=?, payload_json=?, delivery_state=?, message_key=?, progress=?, updated_at=? WHERE idempotency_key=? AND status='SENDING'"
   ).bind(finalStatus, payload, finalStatus, report.report_id + '|msg|' + messageIds.join(','), items.length ? messageIds.length / items.length : 0, new Date().toISOString(), report.report_id).run();
