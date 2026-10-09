@@ -53,6 +53,23 @@ test('tx-hash index migration repairs stale predicate atomically and preserves r
   }
 });
 
+test('tx-hash index migration repairs an index with the right predicate but wrong uniqueness definition', async () => {
+  const sqlite = new DatabaseSync(':memory:');
+  try {
+    sqlite.exec('CREATE TABLE order_ledger (id INTEGER PRIMARY KEY, tx_hash TEXT)');
+    sqlite.exec("INSERT INTO order_ledger (tx_hash) VALUES ('0xabc')");
+    sqlite.exec("CREATE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''");
+    const db = makeD1(sqlite);
+
+    assert.deepEqual(await ensureOrderLedgerTxHashIndex(db), { changed: true, reason: 'recreated' });
+    const indexSql = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_order_ledger_tx_hash'").get().sql;
+    assert.match(indexSql, /^CREATE UNIQUE INDEX/i);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM order_ledger').get().count, 1);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test('tx-hash index migration refuses duplicate non-empty hashes without dropping the old index', async () => {
   const sqlite = new DatabaseSync(':memory:');
   try {
