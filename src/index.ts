@@ -672,12 +672,17 @@ export default {
         const deliveries = await env.DB.prepare("UPDATE delivery_outbox SET status='REVIEW_REQUIRED', last_error=COALESCE(last_error, 'Stale SENDING delivery requires provider reconciliation; automatic retry suppressed'), updated_at=datetime('now') WHERE status='SENDING' AND COALESCE(updated_at, created_at) < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
         results.recovery_sweep = { stale_minutes: staleMinutes, events_flagged: events.meta?.changes || 0, orders_flagged: orders.meta?.changes || 0, deliveries_flagged: deliveries.meta?.changes || 0 };
       } catch (e: any) { results.recovery_sweep = { error: String(e?.message || e) }; }
-      for (const [name, fn] of [
-        ['daily_report', () => runDailyReport(env, undefined, alertAdapter)],
-        ['revenue_watch', () => runRevenueWatch(env, undefined, alertAdapter)],
-        ['telegraph_monitor', () => runTelegraphMonitor(env, undefined, alertAdapter)],
-        ['growth_cycle', () => runGrowthCycle(env.DB,env.ATLAS_ORIGIN || 'https://atlas-worker.hosamhosaam5.workers.dev')],
-      ] as const) {
+      // Route each engine only from its declared schedule. Previously every non-recovery
+      // cron invoked the daily report, revenue watch, and telegraph monitor together.
+      // That wasted reads and made overlapping report sends possible at schedule boundaries.
+      const scheduledJobs = [
+        ['daily_report', '0 21 * * *', () => runDailyReport(env, undefined, alertAdapter)],
+        ['revenue_watch', '*/30 * * * *', () => runRevenueWatch(env, undefined, alertAdapter)],
+        ['telegraph_monitor', '*/15 * * * *', () => runTelegraphMonitor(env, undefined, alertAdapter)],
+        ['growth_cycle', '*/15 * * * *', () => runGrowthCycle(env.DB, env.ATLAS_ORIGIN || 'https://atlas-worker.hosamhosaam5.workers.dev')],
+      ] as const;
+      for (const [name, expectedCron, fn] of scheduledJobs) {
+        if (event.cron !== expectedCron) continue;
         try { results[name] = await fn(); }
         catch (e: any) { results[name] = { error: String(e?.message || e) }; }
       }
