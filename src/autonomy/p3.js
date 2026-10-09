@@ -38,7 +38,7 @@ export function commerceManifest(origin, { product_id = 'atlas_ai_data_qa_v1', p
       asset: USDC,
       payTo: String(wallet || WALLET),
       settlement: 'BASE_RPC_INBOUND',
-      x402_settlement: 'NOT_ACTIVE'
+      x402_settlement: 'ENABLED_CUSTOMER_INITIATED'
     },
     safety: { outbound_spend_usdc: 0, external_outreach: 'FOUNDER_CONTROLLED', automatic_payouts: false }
   };
