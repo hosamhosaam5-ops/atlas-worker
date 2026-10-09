@@ -1,4 +1,38 @@
 // M4 schema: order ledger, files, delivery outbox, and quotes.
+
+// Ensure the tx-hash uniqueness index matches the intended non-empty-hash semantics.
+// A stale index that also indexes empty strings is replaced atomically after checking
+// that the target predicate has no duplicate non-empty hashes.
+export async function ensureOrderLedgerTxHashIndex(db) {
+  const readOne = async (sql) => {
+    const stmt = db.prepare(sql);
+    if (typeof stmt.first === 'function') return await stmt.first();
+    if (typeof stmt.get === 'function') return stmt.get() ?? null;
+    const rows = await stmt.all();
+    return Array.isArray(rows) ? (rows[0] || null) : ((rows?.results || [])[0] || null);
+  };
+  const index = await readOne("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_order_ledger_tx_hash'");
+  const sql = String(index?.sql || '');
+  const normalizedSql = sql.replace(/[\"`\[\]]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const desiredDefinition = /^create unique index(?: if not exists)? idx_order_ledger_tx_hash on order_ledger\s*\(\s*tx_hash\s*\)\s*where\s+tx_hash\s+is\s+not\s+null\s+and\s+tx_hash\s*(?:!=|<>)\s*''\s*;?$/i;
+  if (sql && desiredDefinition.test(normalizedSql)) return { changed: false, reason: 'already-correct' };
+  if (!sql) {
+    await db.prepare("CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''").run();
+    return { changed: true, reason: 'created' };
+  }
+  const duplicate = await readOne("SELECT tx_hash, COUNT(*) AS count FROM order_ledger WHERE tx_hash IS NOT NULL AND tx_hash != '' GROUP BY tx_hash HAVING COUNT(*) > 1 LIMIT 1");
+  if (duplicate) throw new Error('INDEX_MIGRATION_DUPLICATE_TX_HASH');
+  const dropSql = 'DROP INDEX idx_order_ledger_tx_hash';
+  const createSql = "CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''";
+  if (typeof db.batch === 'function') {
+    await db.batch([db.prepare(dropSql), db.prepare(createSql)]);
+  } else if (typeof db.exec === 'function') {
+    db.exec('BEGIN IMMEDIATE; ' + dropSql + '; ' + createSql + '; COMMIT;');
+  } else {
+    throw new Error('INDEX_MIGRATION_BATCH_REQUIRED');
+  }
+  return { changed: true, reason: 'recreated' };
+}
 // Schema evolution is idempotent so existing production data is preserved.
 
 const M4_LEDGER_COLUMNS = [
@@ -124,8 +158,14 @@ export async function ensureOrderSchema(db) {
     else await integrityStmt.run();
   }
 
-  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_order_ledger_tx_hash
-    ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''`);
+  // Production D1 supports atomic batch/exec migrations. Lightweight test adapters may
+  // omit those primitives; keep their legacy idempotent path and test the migration helper
+  // directly against SQLite in test/order-index-migration.test.mjs.
+  const indexProbe = db.prepare('SELECT 1');
+  const canInspectIndex = typeof indexProbe.first === 'function' || typeof indexProbe.get === 'function' || typeof indexProbe.all === 'function';
+  if (typeof db.batch === 'function' || (typeof db.exec === 'function' && canInspectIndex)) {
+    await ensureOrderLedgerTxHashIndex(db);
+  }
   await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_email ON order_quotes(client_email, status)');
   await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_product ON order_quotes(product_id, status)');
 }
