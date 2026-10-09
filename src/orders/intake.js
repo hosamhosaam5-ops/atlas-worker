@@ -479,7 +479,7 @@ export async function processOrder(db, env, input) {
   return {
     order_id: meta.order_id,
     order_status: finalStatus, delivery: dlv, qa_report: qa.qa_report, product_id: priceMeta.product_id, quote_ref: qa.quote_ref,
-    rows_in: qa.rows_in, rows_out: qa.rows_out, quote_ref: qa.quote_ref,
+    rows_in: qa.rows_in, rows_out: qa.rows_out,
     payment_status: qa.payment_status, amount_paid: qa.amount_paid,
     reputation,
     message: 'Order processed. Delivery by email.', audit: a, latency_ms: Date.now() - t0,
