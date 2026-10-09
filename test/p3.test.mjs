@@ -5,7 +5,7 @@ import { commerceManifest, createCommerceSession, advanceCommerceSession, trustS
 test('P3 manifest preserves zero-spend and x402 fail-closed posture', () => {
   const m = commerceManifest('https://atlas.example');
   assert.deepEqual(m.lifecycle, ['DISCOVER', 'QUOTE', 'PAY', 'VERIFY', 'EXECUTE', 'DELIVER', 'REPUTATION', 'REPEAT']);
-  assert.equal(m.payment.x402_settlement, 'NOT_ACTIVE');
+  assert.equal(m.payment.x402_settlement, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(m.payment.payTo, '0x59Ea688b36464133E71873d8BeE8Fcb3BC369383');
   assert.equal(m.safety.outbound_spend_usdc, 0);
 });
