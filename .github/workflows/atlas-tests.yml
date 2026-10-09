@@ -200,7 +200,13 @@ jobs:
           # The deploy workflow and this workflow start on the same push. Only wait
           # for this exact SHA when the commit changes deployable Worker source/config.
           expected_sha="$GITHUB_SHA"
-          deploy_relevant="$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -E '^(src/|wrangler\.toml$|package\.json$|package-lock\.json$|schema.*\.sql$|migrations/|\.github/workflows/atlas-worker-deploy\.yml$)' || true)"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            deploy_relevant="true"
+          else
+            deploy_relevant="$(jq -r '[
+              ((.head_commit.added // []) + (.head_commit.modified // []) + (.head_commit.removed // []))[]
+            ] | any(test("^(src/|wrangler\\.toml$|package\\.json$|package-lock\\.json$|schema.*\\.sql$|migrations/|\\.github/workflows/atlas-worker-deploy\\.yml$)"))' "$GITHUB_EVENT_PATH")"
+          fi
           actual_sha=""
           for attempt in $(seq 1 30); do
             health_json="$(curl --fail --silent --show-error --max-time 10 https://atlas-worker.hosamhosaam5.workers.dev/health || true)"
