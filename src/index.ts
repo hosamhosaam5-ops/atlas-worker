@@ -372,13 +372,19 @@ export default {
 
       let settleResponse;
       try { settleResponse = await fetch(facilitator + "/settle", { method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "x402-" + nonce }, body: facilitatorBody, signal: AbortSignal.timeout(30000) }); } catch (e) {
-        await env.DB.prepare("DELETE FROM execution_state WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'").bind(nonceKey).run();
-        return json({ ok: false, error: "X402_SETTLE_UNAVAILABLE", detail: String(e?.message || e) }, 503);
+        // The facilitator may have settled before the connection failed. Never release
+        // this nonce on an ambiguous outcome: doing so could allow a duplicate settle.
+        await env.DB.prepare("UPDATE execution_state SET status='SETTLEMENT_REVIEW', payload_json=?, updated_at=datetime('now') WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'")
+          .bind(JSON.stringify({ nonce, product_id: "atlas_ai_data_qa_v1", settlement_state: "UNKNOWN", reason: "settle_request_outcome_unknown" }), nonceKey).run();
+        return json({ ok: false, error: "X402_SETTLEMENT_REVIEW_REQUIRED", detail: "Settlement outcome is unknown; nonce locked to prevent duplicate settlement." }, 503);
       }
       let settleData; try { settleData = await settleResponse.json(); } catch { settleData = { success: false, errorReason: "invalid_facilitator_response" }; }
       if (!settleResponse.ok || settleData?.success !== true || !/^0x[0-9a-fA-F]{64}$/.test(String(settleData?.transaction || ""))) {
-        await env.DB.prepare("DELETE FROM execution_state WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'").bind(nonceKey).run();
-        return json({ ok: false, error: "PAYMENT_NOT_SETTLED", reason: settleData?.errorReason || "facilitator_settlement_failed", settlement: settleData }, 503);
+        // A malformed or negative settlement response is not enough to prove no funds
+        // moved. Keep the nonce locked and require reconciliation before any retry.
+        await env.DB.prepare("UPDATE execution_state SET status='SETTLEMENT_REVIEW', payload_json=?, updated_at=datetime('now') WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'")
+          .bind(JSON.stringify({ nonce, product_id: "atlas_ai_data_qa_v1", settlement_state: "UNKNOWN_OR_UNCONFIRMED", http_status: settleResponse.status, reason: String(settleData?.errorReason || "invalid_facilitator_settlement_response") }), nonceKey).run();
+        return json({ ok: false, error: "X402_SETTLEMENT_REVIEW_REQUIRED", reason: "Facilitator did not provide a confirmed settlement transaction; nonce locked to prevent duplicate settlement." }, 503);
       }
       await env.DB.prepare("UPDATE execution_state SET status='SETTLED', payload_json=?, updated_at=datetime('now') WHERE idempotency_key=?").bind(JSON.stringify({ nonce, tx_hash: String(settleData.transaction), product_id: "atlas_ai_data_qa_v1" }), nonceKey).run();
 
