@@ -206,6 +206,7 @@ jobs:
             deploy_relevant="$(jq -r '[
               ((.head_commit.added // []) + (.head_commit.modified // []) + (.head_commit.removed // []))[]
             ] | any(test("^(src/|wrangler\\.toml$|package\\.json$|package-lock\\.json$|schema.*\\.sql$|migrations/|\\.github/workflows/atlas-worker-deploy\\.yml$)"))' "$GITHUB_EVENT_PATH")"
+            if [ "$deploy_relevant" != "true" ]; then deploy_relevant=""; fi
           fi
           actual_sha=""
           for attempt in $(seq 1 30); do
