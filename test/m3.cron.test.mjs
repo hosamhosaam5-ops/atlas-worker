@@ -68,6 +68,22 @@ T('daily second run SKIPPED_ALREADY_SENT (idempotent)', r2.status === 'SKIPPED_A
 const reportRows = await env.DB.prepare("SELECT COUNT(*) c FROM execution_state WHERE idempotency_key = ?").bind('report|' + today).all();
 T('daily exactly one report row in D1', reportRows.results[0].c === 1);
 
+// Concurrent duplicate delivery regression: remove today's test row, race two cron calls,
+// and prove only the atomic claimant invokes Telegram.
+await env.DB.prepare("DELETE FROM execution_state WHERE idempotency_key = ?").bind('report|' + today).run();
+const callsBeforeRace = mockDelivery.calls.length;
+const raced = await Promise.all([
+  runDailyReport(env, adapters, mockDelivery),
+  runDailyReport(env, adapters, mockDelivery),
+]);
+T('concurrent daily report: exactly one sender wins',
+  raced.filter(r => r.status === 'SENT').length === 1 &&
+  raced.filter(r => r.status === 'SKIPPED_DUPLICATE_OR_REVIEW').length === 1,
+  JSON.stringify(raced));
+T('concurrent daily report: only one Telegram send',
+  mockDelivery.calls.length === callsBeforeRace + 1,
+  'calls=' + mockDelivery.calls.length + ', before=' + callsBeforeRace);
+
 // ---- Telegraph monitor: insert 2 requests, run twice ----
 await env.DB.prepare("INSERT INTO zatca_experiment_requests (request_key, business_type, revenue_band, qualified, submitted_at, attr_source, attr_campaign, attr_content) VALUES ('rk-t1','متجر','1M','yes',?, 'telegraph','EXP-ZATCA-W25-2026-09','c1')").bind(today + 'T09:00:00').run();
 await env.DB.prepare("INSERT INTO zatca_experiment_requests (request_key, business_type, revenue_band, qualified, submitted_at, attr_source, attr_campaign, attr_content) VALUES ('rk-t2','شركة','2M','review',?, 'telegraph','EXP-ZATCA-W25-2026-09','c2')").bind(today + 'T09:30:00').run();
