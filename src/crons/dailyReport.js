@@ -97,7 +97,7 @@ export function buildReport(input) {
   if (activeProducts.length) {
     for (const p of activeProducts.slice(0, 3)) L.push('• ' + (p.name || p.product_id) + ' — ' + (p.pricing_mode === 'FOUNDER_QUOTE' ? 'السعر يتطلب عرضًا معتمدًا' : (p.price_usdc != null ? p.price_usdc + ' USDC' : 'السعر غير محدد')));
   } else L.push('• لم يُعثر على منتج ACTIVE في مصدر المنتجات.');
-  L.push('• أصول الاكتشاف المنشورة: ' + publishedAssets.map(a => a.asset_type || a.title || a.slug).join('، ' || '، ') + (publishedAssets.length ? '' : 'لا يوجد'));
+  L.push('• أصول الاكتشاف المنشورة: ' + publishedAssets.map(a => a.asset_type || a.title || a.slug).join('، ') + (publishedAssets.length ? '' : 'لا يوجد'));
   if (todayPubs.length) for (const p of todayPubs) L.push('• نشر مسجل: ' + (p.channel || '-') + ' — ' + (p.status || '-'));
   else L.push('• لا توجد عملية نشر جديدة مسجلة اليوم؛ لم ننشئ إدراجات أو نرسل مراسلات.');
   L.push('');
