@@ -79,6 +79,7 @@ interface Env {
   FOUNDER_CHAT_ID?: string;
   FOUNDER_OAUTH_SUB?: string;
   ATLAS_WALLET_ADDRESS?: string;
+  ATLAS_GIT_SHA?: string;
   X402_FACILITATOR_URL?: string;
 }
 
@@ -440,7 +441,7 @@ export default {
       } catch (e) {
         db = 'error';
       }
-      return json({ ok: true, service: 'atlas-worker', phase: 'M6', db, ai_provider: env.AI_PROVIDER || 'MOCK', brave: env.BRAVE || 'MOCK', telegram: env.TELEGRAM_PROVIDER || 'MOCK', email: env.EMAIL_PROVIDER || 'MOCK', payment: env.PAYMENT_PROVIDER || 'MOCK' });
+      return json({ ok: true, service: 'atlas-worker', phase: 'M6', git_sha: env.ATLAS_GIT_SHA || 'unknown', db, ai_provider: env.AI_PROVIDER || 'MOCK', brave: env.BRAVE || 'MOCK', telegram: env.TELEGRAM_PROVIDER || 'MOCK', email: env.EMAIL_PROVIDER || 'MOCK', payment: env.PAYMENT_PROVIDER || 'MOCK' });
     }
 
     // ---- M3 bridges (same contracts as backup workflows; MOCK adapters by default) ----
