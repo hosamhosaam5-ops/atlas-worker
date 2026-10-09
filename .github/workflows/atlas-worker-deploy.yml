@@ -47,7 +47,16 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
-          npx wrangler deploy
+          test -n "$GITHUB_SHA"
+          npx wrangler deploy --var ATLAS_GIT_SHA:$GITHUB_SHA
+      - name: Verify deployed source SHA
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-all-errors https://atlas-worker.hosamhosaam5.workers.dev/health -o health.json
+          cat health.json
+          ACTUAL_SHA="$(jq -er '.git_sha' health.json)"
+          test "$ACTUAL_SHA" = "$GITHUB_SHA"
+          echo "DEPLOYED_SOURCE_SHA=$ACTUAL_SHA"
 # Deployment trigger: deploy current main, including commit 32bea5f8a473b461db3096c8cfc5784aa1e560f7
 # Force deployment after Workers AI migration: 2026-10-02
 # Verified source refresh trigger: pipeline/provider/index/current MCP OAuth tests on main.
