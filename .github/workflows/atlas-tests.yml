@@ -197,21 +197,23 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
-          # The deploy workflow and this workflow start on the same push. Wait for the
-          # public Worker to serve this exact commit before asserting production metadata.
+          # The deploy workflow and this workflow start on the same push. Only wait
+          # for this exact SHA when the commit changes deployable Worker source/config.
           expected_sha="$GITHUB_SHA"
+          deploy_relevant="$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -E '^(src/|wrangler\.toml$|package\.json$|package-lock\.json$|schema.*\.sql$|migrations/|\.github/workflows/atlas-worker-deploy\.yml$)' || true)"
           actual_sha=""
           for attempt in $(seq 1 30); do
             health_json="$(curl --fail --silent --show-error --max-time 10 https://atlas-worker.hosamhosaam5.workers.dev/health || true)"
             actual_sha="$(printf '%s' "$health_json" | jq -r '.git_sha // ""' 2>/dev/null || true)"
-            if [ "$actual_sha" = "$expected_sha" ]; then
+            if [ -n "$actual_sha" ] && { [ -z "$deploy_relevant" ] || [ "$actual_sha" = "$expected_sha" ]; }; then
               echo "Production Worker source verified: $actual_sha"
               break
             fi
-            echo "Waiting for deployment propagation: expected=$expected_sha actual=${actual_sha:-missing} attempt=$attempt"
+            echo "Waiting for deployment propagation: expected=${expected_sha} actual=${actual_sha:-missing} deploy_relevant=${deploy_relevant:+yes} attempt=$attempt"
             sleep 2
           done
-          test "$actual_sha" = "$expected_sha"
+          test -n "$actual_sha"
+          if [ -n "$deploy_relevant" ]; then test "$actual_sha" = "$expected_sha"; fi
           BASE='https://atlas-worker.hosamhosaam5.workers.dev'
           curl --fail-with-body --silent --show-error "$BASE/commerce.json" -o commerce.json
           curl --fail-with-body --silent --show-error "$BASE/trust.json" -o trust.json
