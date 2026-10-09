@@ -194,8 +194,24 @@ jobs:
           grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
 
       - name: Verify public commerce, trust, and discovery consistency
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
+          # The deploy workflow and this workflow start on the same push. Wait for the
+          # public Worker to serve this exact commit before asserting production metadata.
+          expected_sha="$GITHUB_SHA"
+          actual_sha=""
+          for attempt in $(seq 1 30); do
+            health_json="$(curl --fail --silent --show-error --max-time 10 https://atlas-worker.hosamhosaam5.workers.dev/health || true)"
+            actual_sha="$(printf '%s' "$health_json" | jq -r '.git_sha // ""' 2>/dev/null || true)"
+            if [ "$actual_sha" = "$expected_sha" ]; then
+              echo "Production Worker source verified: $actual_sha"
+              break
+            fi
+            echo "Waiting for deployment propagation: expected=$expected_sha actual=${actual_sha:-missing} attempt=$attempt"
+            sleep 2
+          done
+          test "$actual_sha" = "$expected_sha"
           BASE='https://atlas-worker.hosamhosaam5.workers.dev'
           curl --fail-with-body --silent --show-error "$BASE/commerce.json" -o commerce.json
           curl --fail-with-body --silent --show-error "$BASE/trust.json" -o trust.json
@@ -205,7 +221,7 @@ jobs:
           echo '--- llms.txt (head) ---'; sed -n '1,120p' llms.txt
           jq -e '.schema_version=="atlas.commerce.v1" and .provider=="ATLAS" and .audience=="AI agents and agent systems" and .product_id=="atlas_ai_data_qa_v1"' commerce.json
           jq -e '.pricing.mode=="FOUNDER_QUOTE" and (.pricing.indicative_usdc|tonumber)==15' commerce.json
-          jq -e '.protocols.a2a=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocols.x402_requirements=="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1" and .payment.network=="eip155:8453" and .payment.asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .payment.payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .payment.x402_settlement=="NOT_ACTIVE"' commerce.json
+          jq -e '.protocols.a2a=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocols.x402_requirements=="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1" and .payment.network=="eip155:8453" and .payment.asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .payment.payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .payment.x402_settlement=="IMPLEMENTED_UNVERIFIED"' commerce.json
           jq -e '.ok==true and .verified==true and (.metrics.delivered_orders|tonumber)>=0 and (.metrics.paid_orders|tonumber)>=0 and (.metrics.failed_or_review_orders|tonumber)>=0 and .verification_scope=="LIVE_LEDGER_QUERY; REAL_BASE_TX_HASH_REQUIRED; MOCK_TESTNET_SIMULATION_EXCLUDED" and (.metrics.simulated_orders_excluded|tonumber)>=0 and (.metrics.simulated_paid_orders_excluded|tonumber)>=0 and (.metrics.verified_production_orders|tonumber)>=0 and (.recent|length)<=20' trust.json
           grep -Fq 'atlas_ai_data_qa_v1' llms.txt
           grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/a2a' llms.txt
@@ -213,7 +229,7 @@ jobs:
           curl --fail-with-body --silent --show-error "$BASE/.well-known/agent-card.json" -o agent-card-consistency.json
           jq -e '.name=="ATLAS" and any(.supportedInterfaces[]; .url=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding=="JSONRPC" and .protocolVersion=="1.0")' agent-card-consistency.json
           jq -e 'any(.capabilities.extensions[]; .uri=="https://a2a-registry.org/extensions/registry/v1" and .params.identity.provider=="github" and .params.identity.username=="hosamhosaam5-ops" and .params.identity.packageName=="github.hosamhosaam5-ops.atlas")' agent-card-consistency.json
-          jq -e 'any(.capabilities.extensions[]; .uri=="https://atlas-worker.hosamhosaam5.workers.dev/extensions/commerce/v1" and .params.settlement=="BASE_RPC_INBOUND" and .params.x402Settlement=="NOT_ACTIVE")' agent-card-consistency.json
+          jq -e 'any(.capabilities.extensions[]; .uri=="https://atlas-worker.hosamhosaam5.workers.dev/extensions/commerce/v1" and .params.settlement=="BASE_RPC_INBOUND" and .params.x402Settlement=="IMPLEMENTED_UNVERIFIED")' agent-card-consistency.json
 
       - name: Upload A2A evidence
         if: always()
