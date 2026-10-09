@@ -1,5 +1,5 @@
 // P3: agent commerce trust and verified reputation. Read-heavy, additive, zero outbound spend.
-const WALLET = '0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F';
+const WALLET = '0x59Ea688b36464133E71873d8BeE8Fcb3BC369383';
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const NETWORK = 'eip155:8453';
 
