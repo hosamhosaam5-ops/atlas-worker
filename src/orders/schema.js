@@ -124,8 +124,7 @@ export async function ensureOrderSchema(db) {
     else await integrityStmt.run();
   }
 
-  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_order_ledger_tx_hash
-    ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''`);
+  await ensureOrderLedgerTxHashIndex(db);
   await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_email ON order_quotes(client_email, status)');
   await db.prepare('CREATE INDEX IF NOT EXISTS idx_order_quotes_product ON order_quotes(product_id, status)');
 }
