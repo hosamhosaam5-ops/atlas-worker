@@ -4,7 +4,14 @@
 // A stale index that also indexes empty strings is replaced atomically after checking
 // that the target predicate has no duplicate non-empty hashes.
 export async function ensureOrderLedgerTxHashIndex(db) {
-  const index = await db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_order_ledger_tx_hash'").first();
+  const readOne = async (sql) => {
+    const stmt = db.prepare(sql);
+    if (typeof stmt.first === 'function') return await stmt.first();
+    if (typeof stmt.get === 'function') return stmt.get() ?? null;
+    const rows = await stmt.all();
+    return Array.isArray(rows) ? (rows[0] || null) : ((rows?.results || [])[0] || null);
+  };
+  const index = await readOne("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_order_ledger_tx_hash'");
   const sql = String(index?.sql || '');
   const desiredPredicate = /where\s+tx_hash\s+is\s+not\s+null\s+and\s+tx_hash\s*(?:!=|<>)\s*''/i;
   if (sql && desiredPredicate.test(sql)) return { changed: false, reason: 'already-correct' };
@@ -12,13 +19,17 @@ export async function ensureOrderLedgerTxHashIndex(db) {
     await db.prepare("CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''").run();
     return { changed: true, reason: 'created' };
   }
-  const duplicate = await db.prepare("SELECT tx_hash, COUNT(*) AS count FROM order_ledger WHERE tx_hash IS NOT NULL AND tx_hash != '' GROUP BY tx_hash HAVING COUNT(*) > 1 LIMIT 1").first();
+  const duplicate = await readOne("SELECT tx_hash, COUNT(*) AS count FROM order_ledger WHERE tx_hash IS NOT NULL AND tx_hash != '' GROUP BY tx_hash HAVING COUNT(*) > 1 LIMIT 1");
   if (duplicate) throw new Error('INDEX_MIGRATION_DUPLICATE_TX_HASH');
-  if (typeof db.batch !== 'function') throw new Error('INDEX_MIGRATION_BATCH_REQUIRED');
-  await db.batch([
-    db.prepare('DROP INDEX idx_order_ledger_tx_hash'),
-    db.prepare("CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''")
-  ]);
+  const dropSql = 'DROP INDEX idx_order_ledger_tx_hash';
+  const createSql = "CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''";
+  if (typeof db.batch === 'function') {
+    await db.batch([db.prepare(dropSql), db.prepare(createSql)]);
+  } else if (typeof db.exec === 'function') {
+    db.exec('BEGIN IMMEDIATE; ' + dropSql + '; ' + createSql + '; COMMIT;');
+  } else {
+    throw new Error('INDEX_MIGRATION_BATCH_REQUIRED');
+  }
   return { changed: true, reason: 'recreated' };
 }
 // Schema evolution is idempotent so existing production data is preserved.
