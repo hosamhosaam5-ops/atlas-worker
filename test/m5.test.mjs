@@ -261,6 +261,16 @@ async function addQuote(db, email, amount) {
     async loadPublications() { return []; },
     async loadAcquisitionAssets() { return []; },
     async loadChannelWatch() { return []; },
+    // This legacy cron fixture uses only M5 schema; newer operational tables are
+    // covered by production integration and are intentionally empty in this unit test.
+    async loadEvents() { return []; },
+    async loadAgentTasks() { return []; },
+    async loadAgents() { return []; },
+    async loadGrowthRuns() { return []; },
+    async loadGrowthAssets() { return []; },
+    async loadOrders() { return []; },
+    async loadApprovals() { return []; },
+    async loadProducts() { return []; },
   };
   const r1 = await runDailyReport(env, ad, mkAdapter('ok'));
   T('cron.daily first run SENT', r1.status === 'SENT' && r1.chunks_sent >= 1);
