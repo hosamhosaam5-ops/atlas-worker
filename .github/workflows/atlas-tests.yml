@@ -182,7 +182,7 @@ jobs:
           PAYMENT_REQUIRED="$(awk 'BEGIN{IGNORECASE=1} /^PAYMENT-REQUIRED:/{sub(/\r$/,""); sub(/^[^:]*:[[:space:]]*/,""); print}' x402-headers.txt | tail -1)"
           test -n "$PAYMENT_REQUIRED"
           printf '%s' "$PAYMENT_REQUIRED" | base64 -d > x402-decoded.json
-          jq -e '.x402Version==2 and .error=="PAYMENT-SIGNATURE header is required" and (.accepts|length)>0 and .accepts[0].scheme=="exact" and .accepts[0].network=="eip155:8453" and .accepts[0].amount=="15000000" and .accepts[0].payTo=="0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F" and .accepts[0].asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"' x402-decoded.json
+          jq -e '.x402Version==2 and .error=="PAYMENT-SIGNATURE header is required" and (.accepts|length)>0 and .accepts[0].scheme=="exact" and .accepts[0].network=="eip155:8453" and .accepts[0].amount=="15000000" and .accepts[0].payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .accepts[0].asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"' x402-decoded.json
           printf 'x402_status='; cat x402-status.txt; echo
           echo '--- x402 headers ---'; sed -n '1,80p' x402-headers.txt
           echo '--- x402 body bytes ---'; wc -c x402-body.json
@@ -205,7 +205,7 @@ jobs:
           echo '--- llms.txt (head) ---'; sed -n '1,120p' llms.txt
           jq -e '.schema_version=="atlas.commerce.v1" and .provider=="ATLAS" and .audience=="AI agents and agent systems" and .product_id=="atlas_ai_data_qa_v1"' commerce.json
           jq -e '.pricing.mode=="FOUNDER_QUOTE" and (.pricing.indicative_usdc|tonumber)==15' commerce.json
-          jq -e '.protocols.a2a=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocols.x402_requirements=="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1" and .payment.network=="eip155:8453" and .payment.asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .payment.payTo=="0xAC2Af2Dd2343F4EAab2de64C89129b7B9283666F" and .payment.x402_settlement=="NOT_ACTIVE"' commerce.json
+          jq -e '.protocols.a2a=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocols.x402_requirements=="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1" and .payment.network=="eip155:8453" and .payment.asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .payment.payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .payment.x402_settlement=="NOT_ACTIVE"' commerce.json
           jq -e '.ok==true and .verified==true and (.metrics.delivered_orders|tonumber)>=0 and (.metrics.paid_orders|tonumber)>=0 and (.metrics.failed_or_review_orders|tonumber)>=0 and .methodology=="Derived only from ATLAS order ledger and reputation events; no synthetic records are included."' trust.json
           grep -Fq 'atlas_ai_data_qa_v1' llms.txt
           grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/a2a' llms.txt
