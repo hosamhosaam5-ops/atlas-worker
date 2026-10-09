@@ -206,7 +206,7 @@ jobs:
           jq -e '.schema_version=="atlas.commerce.v1" and .provider=="ATLAS" and .audience=="AI agents and agent systems" and .product_id=="atlas_ai_data_qa_v1"' commerce.json
           jq -e '.pricing.mode=="FOUNDER_QUOTE" and (.pricing.indicative_usdc|tonumber)==15' commerce.json
           jq -e '.protocols.a2a=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocols.x402_requirements=="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1" and .payment.network=="eip155:8453" and .payment.asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .payment.payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .payment.x402_settlement=="NOT_ACTIVE"' commerce.json
-          jq -e '.ok==true and .verified==true and (.metrics.delivered_orders|tonumber)>=0 and (.metrics.paid_orders|tonumber)>=0 and (.metrics.failed_or_review_orders|tonumber)>=0 and .methodology=="Derived only from ATLAS order ledger and reputation events; no synthetic records are included."' trust.json
+          jq -e '.ok==true and .verified==true and (.metrics.delivered_orders|tonumber)>=0 and (.metrics.paid_orders|tonumber)>=0 and (.metrics.failed_or_review_orders|tonumber)>=0 and .verification_scope=="LIVE_LEDGER_QUERY; MOCK_SETTLEMENTS_EXCLUDED" and (.metrics.simulated_orders_excluded|tonumber)>=0 and (.metrics.simulated_paid_orders_excluded|tonumber)>=0 and (.metrics.verified_production_orders|tonumber)>=0 and (.recent|length)<=20' trust.json
           grep -Fq 'atlas_ai_data_qa_v1' llms.txt
           grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/a2a' llms.txt
           grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1' llms.txt
