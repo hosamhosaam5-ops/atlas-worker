@@ -192,7 +192,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="growth_snapshot"){out=await growthSnapshot(env.DB);}
    else if(name==="run_growth_cycle"){out=await runGrowthCycle(env.DB,new URL(request.url).origin);}
    else if(name==="trust_snapshot"){out=await trustSnapshot(env.DB);}
-   else if(name==="commerce_manifest"){out=commerceManifest(new URL(request.url).origin,args);}
+   else if(name==="commerce_manifest"){out=commerceManifest(new URL(request.url).origin,{...args,wallet:env.ATLAS_WALLET_ADDRESS});}
    else if(name==="commerce_snapshot"){out=await commerceSnapshot(env.DB);}
    else if(name==="create_commerce_session"){out=await createCommerceSession(env.DB,args);}
    else if(name==="advance_commerce_session"){out=await advanceCommerceSession(env.DB,args);}
@@ -291,7 +291,7 @@ export default {
     if (pathname === "/robots.txt" && request.method === "GET") return new Response("User-agent: *\nAllow: /\nAllow: /.well-known/\nAllow: /catalog.json\nAllow: /llms.txt\nDisallow: /dev/\nDisallow: /bridge/\nDisallow: /webhook/\n", {headers:{"content-type":"text/plain"}});
     if (pathname.startsWith("/r/") && request.method === "GET") { const code=decodeURIComponent(pathname.slice(3)).slice(0,100); await trackReferral(env.DB,{code,path:pathname,user_agent:request.headers.get("user-agent"),source:request.headers.get("referer")}); return Response.redirect(origin+"/catalog.json?ref="+encodeURIComponent(code),302); }
     if (pathname === "/a2a") return handleA2A(request,env);
-    if (pathname === "/commerce.json" && request.method === "GET") return json(commerceManifest(origin));
+    if (pathname === "/commerce.json" && request.method === "GET") return json(commerceManifest(origin,{wallet:env.ATLAS_WALLET_ADDRESS}));
     if (pathname === "/trust.json" && request.method === "GET") return json(await trustSnapshot(env.DB));
     if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1") {
       if (String((env as any).X402_TEST_MODE || "") === "1") {
