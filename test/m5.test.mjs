@@ -289,7 +289,7 @@ async function addQuote(db, email, amount) {
   const env2b = { DB: db2b, TELEGRAM_PROVIDER: 'MOCK' };
   const ad2b = { ...manyAgents, async loadExecutionState() { const { results } = await db2b.prepare('SELECT * FROM execution_state').bind().all(); return results; } };
   const rpFail = await runDailyReport(env2b, ad2b, mkAdapter('fail_all'));
-  T('cron.daily all-chunks failure -> DELIVERY_FAILED, no SENT row', rpFail.status === 'DELIVERY_FAILED' && rpFail.recorded === false);
+  T('cron.daily all-chunks failure -> DELIVERY_FAILED, persisted for review (not SENT)', rpFail.status === 'DELIVERY_FAILED' && rpFail.recorded === true);
   const noSent = await db2b.prepare("SELECT COUNT(*) c FROM execution_state WHERE status='SENT' AND tool='daily_report'").bind().first();
   T('cron.daily failed run leaves NO SENT record (no fake delivery)', noSent.c === 0);
 
