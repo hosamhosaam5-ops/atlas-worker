@@ -1,4 +1,26 @@
 // M4 schema: order ledger, files, delivery outbox, and quotes.
+
+// Ensure the tx-hash uniqueness index matches the intended non-empty-hash semantics.
+// A stale index that also indexes empty strings is replaced atomically after checking
+// that the target predicate has no duplicate non-empty hashes.
+export async function ensureOrderLedgerTxHashIndex(db) {
+  const index = await db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_order_ledger_tx_hash'").first();
+  const sql = String(index?.sql || '');
+  const desiredPredicate = /where\s+tx_hash\s+is\s+not\s+null\s+and\s+tx_hash\s*(?:!=|<>)\s*''/i;
+  if (sql && desiredPredicate.test(sql)) return { changed: false, reason: 'already-correct' };
+  if (!sql) {
+    await db.prepare("CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''").run();
+    return { changed: true, reason: 'created' };
+  }
+  const duplicate = await db.prepare("SELECT tx_hash, COUNT(*) AS count FROM order_ledger WHERE tx_hash IS NOT NULL AND tx_hash != '' GROUP BY tx_hash HAVING COUNT(*) > 1 LIMIT 1").first();
+  if (duplicate) throw new Error('INDEX_MIGRATION_DUPLICATE_TX_HASH');
+  if (typeof db.batch !== 'function') throw new Error('INDEX_MIGRATION_BATCH_REQUIRED');
+  await db.batch([
+    db.prepare('DROP INDEX idx_order_ledger_tx_hash'),
+    db.prepare("CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''")
+  ]);
+  return { changed: true, reason: 'recreated' };
+}
 // Schema evolution is idempotent so existing production data is preserved.
 
 const M4_LEDGER_COLUMNS = [
