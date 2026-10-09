@@ -13,8 +13,9 @@ export async function ensureOrderLedgerTxHashIndex(db) {
   };
   const index = await readOne("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_order_ledger_tx_hash'");
   const sql = String(index?.sql || '');
-  const desiredPredicate = /where\s+tx_hash\s+is\s+not\s+null\s+and\s+tx_hash\s*(?:!=|<>)\s*''/i;
-  if (sql && desiredPredicate.test(sql)) return { changed: false, reason: 'already-correct' };
+  const normalizedSql = sql.replace(/[\"`\[\]]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const desiredDefinition = /^create unique index(?: if not exists)? idx_order_ledger_tx_hash on order_ledger\s*\(\s*tx_hash\s*\)\s*where\s+tx_hash\s+is\s+not\s+null\s+and\s+tx_hash\s*(?:!=|<>)\s*''\s*;?$/i;
+  if (sql && desiredDefinition.test(normalizedSql)) return { changed: false, reason: 'already-correct' };
   if (!sql) {
     await db.prepare("CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''").run();
     return { changed: true, reason: 'created' };
