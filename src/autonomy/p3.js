@@ -53,6 +53,7 @@ export async function trustSnapshot(db) {
   const delivered = await db.prepare(`SELECT COUNT(*) count FROM order_ledger WHERE status='DELIVERED' AND ${verifiedWhere}`).first();
   const failed = await db.prepare(`SELECT COUNT(*) count FROM order_ledger WHERE status IN ('DELIVERY_FAILED','FAILED','REVIEW_REQUIRED','QA_FAILED') AND ${verifiedWhere}`).first();
   const paid = await db.prepare(`SELECT COUNT(*) count FROM order_ledger WHERE payment_status='PAID' AND ${verifiedWhere}`).first();
+  const verifiedOrders = await db.prepare(`SELECT COUNT(*) count FROM order_ledger WHERE ${verifiedWhere}`).first();
   const simulated = await db.prepare("SELECT COUNT(*) count FROM order_ledger WHERE COALESCE(settlement_mode,'MOCK')='MOCK'").first();
   const simulatedPaid = await db.prepare("SELECT COUNT(*) count FROM order_ledger WHERE COALESCE(settlement_mode,'MOCK')='MOCK' AND payment_status='PAID'").first();
   const rep = await db.prepare("SELECT COUNT(*) count FROM reputation_events").first();
@@ -72,7 +73,7 @@ export async function trustSnapshot(db) {
       reputation_events: Number(rep?.count || 0),
       simulated_orders_excluded: Number(simulated?.count || 0),
       simulated_paid_orders_excluded: Number(simulatedPaid?.count || 0),
-      verified_production_orders: d + f
+      verified_production_orders: Number(verifiedOrders?.count || 0)
     },
     recent: recent.results || [],
     methodology: "Production trust metrics include only non-MOCK settlement rows with a product_id and non-placeholder customer identity. MOCK/test/stress records are excluded; simulated counts are reported separately."
