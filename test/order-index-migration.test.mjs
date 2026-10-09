@@ -7,12 +7,13 @@ function makeD1(db) {
   return {
     prepare(sql) {
       let values = [];
-      const statement = db.prepare(sql);
+      let statement;
+      const getStatement = () => statement || (statement = db.prepare(sql));
       const wrapper = {
         bind(...args) { values = args; return wrapper; },
-        async run() { return statement.run(...values); },
-        async first() { return statement.get(...values) ?? null; },
-        async all() { return { results: statement.all(...values) }; }
+        async run() { return getStatement().run(...values); },
+        async first() { return getStatement().get(...values) ?? null; },
+        async all() { return { results: getStatement().all(...values) }; }
       };
       return wrapper;
     },
