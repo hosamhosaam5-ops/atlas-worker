@@ -149,7 +149,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
   const requiredScopeByTool:any={
     health:"mcp:read",read_state:"mcp:read",read_tables:"mcp:read",read_workflow_metadata:"mcp:read",read_events:"mcp:read",list_capabilities:"mcp:read",autonomy_snapshot:"mcp:read",get_autonomy_policy:"mcp:read",check_autonomy_budget:"mcp:read",select_llm_route:"mcp:read",
     discover_capabilities:"mcp:execute",scan_agent_demand:"mcp:execute",acquisition_cycle:"mcp:execute",trust_snapshot:"mcp:read",commerce_manifest:"mcp:read",commerce_snapshot:"mcp:read",create_commerce_session:"mcp:write",advance_commerce_session:"mcp:write",
-    list_products:"mcp:read",list_financial_approvals:"mcp:read",list_capabilities:"mcp:read",autonomy_snapshot:"mcp:read",get_autonomy_policy:"mcp:read",check_autonomy_budget:"mcp:read",
+    list_products:"mcp:read",list_financial_approvals:"mcp:read",
     write_state:"mcp:write",write_memory:"mcp:write",upsert_product:"mcp:write",create_quote:"mcp:write",
     request_financial_approval:"mcp:write",decide_financial_approval:"mcp:write",
     run_commercial_integration:"mcp:execute",discover_agent_marketplaces:"mcp:execute",prepare_offer:"mcp:execute",negotiate_offer:"mcp:execute",product_intelligence:"mcp:read",create_agent_webhook:"mcp:write",list_agent_webhooks:"mcp:read",growth_snapshot:"mcp:read",run_growth_cycle:"mcp:execute",replay_pending_events:"mcp:execute",execute_ceo:"mcp:execute"
