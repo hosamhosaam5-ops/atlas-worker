@@ -31,14 +31,80 @@ export function getBraveProvider(env) {
       }
     };
   }
-  // LIVE scaffold — never used in M3 (no API key, no network).
+
+  // Tavily is selected explicitly with BRAVE="TAVILY". It uses the existing
+  // web_research action contract, so results remain source-attributed and deduped.
+  // Never fall back to mock results when a live key is missing or the API fails.
+  if (mode === 'TAVILY') {
+    return {
+      async search(query) {
+        const apiKey = String(env.TAVILY_API_KEY || '').trim();
+        if (!apiKey) {
+          return { error: { statusCode: 503, message: 'TAVILY_API_KEY not configured' }, statusCode: 503 };
+        }
+        let response;
+        try {
+          response = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({
+              api_key: apiKey,
+              query: String(query || '').slice(0, 1000),
+              search_depth: 'basic',
+              topic: 'general',
+              max_results: 5,
+              include_answer: false,
+              include_raw_content: false,
+              include_images: false,
+            }),
+            signal: AbortSignal.timeout(10000),
+          });
+        } catch (e) {
+          const message = String(e && e.message || e || 'Tavily network error');
+          return { error: { statusCode: 0, message: /timeout|abort/i.test(message) ? 'Tavily search timeout' : 'Tavily network error' }, statusCode: 0 };
+        }
+        if (!response.ok) {
+          // Do not echo the response body: it may contain provider-specific information.
+          return { error: { statusCode: response.status, message: 'Tavily HTTP ' + response.status }, statusCode: response.status };
+        }
+        let payload;
+        try {
+          payload = await response.json();
+        } catch {
+          return { error: { statusCode: 502, message: 'Tavily returned invalid JSON' }, statusCode: 502 };
+        }
+        if (!payload || !Array.isArray(payload.results)) {
+          return { error: { statusCode: 502, message: 'Tavily response did not contain a results array' }, statusCode: 502 };
+        }
+        const results = payload.results.slice(0, 5).map((r) => ({
+          title: String(r && r.title || ''),
+          url: String(r && r.url || ''),
+          description: String(r && (r.content || r.snippet || r.description) || '').slice(0, 1000),
+        })).filter((r) => {
+          try { const u = new URL(r.url); return (u.protocol === 'https:' || u.protocol === 'http:') && Boolean(r.title || r.description); }
+          catch { return false; }
+        });
+        return { web: { results }, statusCode: response.status };
+      }
+    };
+  }
+
+  // Legacy Brave path remains available when explicitly configured.
   return {
     async search(query) {
-      const res = await fetch('https://api.search.brave.com/res/v1/web/search?q=' + encodeURIComponent(query) + '&count=5', {
-        headers: { 'X-Subscription-Token': env.BRAVE_API_KEY || '' },
-        signal: AbortSignal.timeout(10000),
-      });
-      return res.json();
+      const apiKey = String(env.BRAVE_API_KEY || '').trim();
+      if (!apiKey) return { error: { statusCode: 503, message: 'BRAVE_API_KEY not configured' }, statusCode: 503 };
+      try {
+        const res = await fetch('https://api.search.brave.com/res/v1/web/search?q=' + encodeURIComponent(query) + '&count=5', {
+          headers: { 'X-Subscription-Token': apiKey, accept: 'application/json' },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) return { error: { statusCode: res.status, message: 'Brave HTTP ' + res.status }, statusCode: res.status };
+        return await res.json();
+      } catch (e) {
+        const message = String(e && e.message || e || 'Brave network error');
+        return { error: { statusCode: 0, message: /timeout|abort/i.test(message) ? 'Brave search timeout' : 'Brave network error' }, statusCode: 0 };
+      }
     }
   };
 }
