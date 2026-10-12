@@ -16,6 +16,7 @@ import { getProvider, chatWithTimeout } from './provider.js';
 import { braveSearchRaw } from './webresearch.js';
 import { createOutbox, getTelegramProvider } from '../core/outbox.js';
 import { checkBudget } from '../autonomy/registry.js';
+import { formatResearchReply } from './research-reply.js';
 
 function hashStr(s) { let h = 0; s = String(s); for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; } return Math.abs(h).toString(36); }
 
@@ -266,7 +267,18 @@ export async function processUpdate(env, update, eventPk, timings) {
   if (toolOut.overall_status === 'BLOCKED') {
     finalReply += '\n\n(ملاحظة: تم إيقاف الأدوات تلقائياً لأن الطلب تجاوز حدود الاستقلالية الآمنة. لم تُنفذ الأدوات.)';
   }
-  if (toolOut.tool_used !== 'none' && toolOut.results.length > 0) {
+  // A research-only response already consists of source-attributed titles, URLs, and snippets.
+  // Use it directly instead of risking a second LLM timeout or truncating evidence in a fallback.
+  const onlyWebResearch = Array.isArray(risked.actions) &&
+    risked.actions.length > 0 &&
+    risked.actions.every(a => a && a.tool === 'web_research');
+  const directResearchReply = onlyWebResearch &&
+    toolOut.results.length === risked.actions.length
+    ? formatResearchReply(toolOut.results)
+    : null;
+  if (directResearchReply) {
+    finalReply = directResearchReply;
+  } else if (toolOut.tool_used !== 'none' && toolOut.results.length > 0) {
     try {
       await assertAutonomyBudget({tool_calls: toolOut.results.length, external_requests: 0});
       const r2 = await chatWithTimeout(provider, {
