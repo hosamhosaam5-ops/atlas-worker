@@ -113,3 +113,29 @@ test('ROUTER returns a classified timeout when the only configured route stalls'
     error => error?.code === 'AI_TIMEOUT',
   );
 });
+
+
+test('Workers AI disables unbounded reasoning and caps generated output', async () => {
+  let capturedInput;
+  const provider = getProvider({
+    AI_PROVIDER: 'WORKERS_AI',
+    AI_MODEL: '@cf/zai-org/glm-4.7-flash',
+    AI: {
+      run: async (_model, input) => {
+        capturedInput = input;
+        return { response: '{"reply":"ok","actions":[],"memories":[]}' };
+      },
+    },
+  });
+
+  const result = await provider.chat({
+    model: '@cf/zai-org/glm-4.7-flash',
+    system: 'system prompt',
+    user: 'test request',
+  });
+
+  assert.equal(result.content, '{"reply":"ok","actions":[],"memories":[]}');
+  assert.equal(capturedInput.chat_template_kwargs.enable_thinking, false);
+  assert.equal(capturedInput.chat_template_kwargs.clear_thinking, true);
+  assert.equal(capturedInput.max_completion_tokens, 1536);
+});
