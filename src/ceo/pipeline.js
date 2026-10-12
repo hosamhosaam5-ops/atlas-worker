@@ -17,6 +17,7 @@ import { braveSearchRaw } from './webresearch.js';
 import { createOutbox, getTelegramProvider } from '../core/outbox.js';
 import { checkBudget } from '../autonomy/registry.js';
 import { formatResearchReply } from './research-reply.js';
+import { extractExplicitWebResearchQuery } from './research-reply.js';
 
 function hashStr(s) { let h = 0; s = String(s); for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; } return Math.abs(h).toString(36); }
 
@@ -174,8 +175,19 @@ export async function processUpdate(env, update, eventPk, timings) {
   let ai1Raw;
   const systemPrompt = buildSystemPrompt({ current_datetime: currentDatetime, memory_text: memFmt.memory_text });
   try {
-    const r = await chatWithTimeout(provider, { model, system: systemPrompt, user: founderMessage, phase: 'initial' });
-    ai1Raw = r.content;
+    // If the founder explicitly invokes web_research, the safe read-only tool can run
+    // without an LLM merely to select an already-named tool. All other messages stay on AI1.
+    const directWebResearchQuery = extractExplicitWebResearchQuery(founderMessage);
+    if (directWebResearchQuery) {
+      ai1Raw = JSON.stringify({
+        reply: 'سأنفذ البحث المباشر وأعرض المصادر ومقتطفاتها.',
+        actions: [{ tool: 'web_research', input: { query: directWebResearchQuery } }],
+        memories: [],
+      });
+    } else {
+      const r = await chatWithTimeout(provider, { model, system: systemPrompt, user: founderMessage, phase: 'initial' });
+      ai1Raw = r.content;
+    }
     timings.ai1 = timings.ai1 || 0;
   } catch (e) {
     timings.ai1 = timings.ai1 || 0;
