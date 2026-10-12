@@ -55,6 +55,7 @@ interface Env {
   AI_MODEL?: string;
   AI_MOCK_SCENARIO?: string;
   BRAVE?: string;
+  TAVILY_API_KEY?: string;
   TELEGRAM_PROVIDER?: string;
   EMAIL_PROVIDER?: string;
   EMAIL_MOCK_SCENARIO?: string;
