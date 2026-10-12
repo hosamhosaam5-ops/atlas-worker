@@ -104,6 +104,10 @@ export function getProvider(env) {
                 { role: 'user', content: user },
               ],
               temperature: 0.2,
+              // GLM-4.7-Flash enables reasoning by default. ATLAS needs a bounded,
+              // low-latency JSON response, not long visible/unbounded reasoning.
+              chat_template_kwargs: { enable_thinking: false, clear_thinking: true },
+              max_completion_tokens: 1536,
             },
             { rejectIfBusy: true, signal: ctrl.signal },
           );
