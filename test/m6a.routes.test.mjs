@@ -46,7 +46,7 @@ test('route.health: GET /health returns current configured provider matrix', asy
   assert.equal(r.status, 200);
   assert.equal(j.ok, true);
   assert.equal(j.ai_provider, 'WORKERS_AI');
-  assert.equal(j.brave, 'MOCK');
+  assert.equal(j.brave, 'TAVILY');
   assert.equal(j.telegram, 'LIVE');
   assert.equal(j.email, 'MOCK');
   assert.equal(j.payment, 'BASE_RPC');
