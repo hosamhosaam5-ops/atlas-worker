@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatResearchReply } from '../src/ceo/research-reply.js';
+import { formatResearchReply, extractExplicitWebResearchQuery } from '../src/ceo/research-reply.js';
 
 test('formats all successful web research results without truncating URLs or snippets', () => {
   const firstSnippet = 'A'.repeat(650);
@@ -42,4 +42,28 @@ test('reports failed web research explicitly without claiming success', () => {
 test('returns null if results are empty or mixed with non-research tools', () => {
   assert.equal(formatResearchReply([]), null);
   assert.equal(formatResearchReply([{ tool: 'calculator', status: 'SUCCEEDED', result: '2' }]), null);
+});
+
+
+test('extracts an explicit Arabic web_research request without requiring AI1', () => {
+  const query = extractExplicitWebResearchQuery(
+    'اختبار: ابحث عبر web_research عن وثائق Tavily الرسمية لواجهة POST /search. أعد الروابط دون اختلاق.'
+  );
+  assert.equal(query, 'وثائق Tavily الرسمية لواجهة POST /search');
+});
+
+test('extracts explicit alternative wording and English tool requests', () => {
+  assert.equal(
+    extractExplicitWebResearchQuery('استخدم أداة web_research للبحث عن Tavily API search docs.'),
+    'Tavily API search docs'
+  );
+  assert.equal(
+    extractExplicitWebResearchQuery('Use web_research to search for official Tavily docs.'),
+    'official Tavily docs'
+  );
+});
+
+test('does not bypass AI1 for vague mentions of web_research', () => {
+  assert.equal(extractExplicitWebResearchQuery('اشرح لي ما هي أداة web_research.'), null);
+  assert.equal(extractExplicitWebResearchQuery('أريد مناقشة البحث على الويب لاحقاً.'), null);
 });
