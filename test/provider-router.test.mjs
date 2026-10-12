@@ -1,6 +1,6 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { getProvider } from '../src/ceo/provider.js';
+import { getProvider, AI_ROUTE_TIMEOUT_MS, AI_FALLBACK_TIMEOUT_MS, AI_TIMEOUT_MS } from '../src/ceo/provider.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -138,4 +138,12 @@ test('Workers AI disables unbounded reasoning and caps generated output', async 
   assert.equal(capturedInput.chat_template_kwargs.enable_thinking, false);
   assert.equal(capturedInput.chat_template_kwargs.clear_thinking, true);
   assert.equal(capturedInput.max_completion_tokens, 1536);
+});
+
+
+test('default route time budgets give primary latency while staying inside the global deadline', () => {
+  assert.equal(AI_TIMEOUT_MS, 60000);
+  assert.equal(AI_ROUTE_TIMEOUT_MS, 45000);
+  assert.equal(AI_FALLBACK_TIMEOUT_MS, 14000);
+  assert.ok(AI_ROUTE_TIMEOUT_MS + AI_FALLBACK_TIMEOUT_MS < AI_TIMEOUT_MS);
 });

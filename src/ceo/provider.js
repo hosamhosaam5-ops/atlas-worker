@@ -5,8 +5,8 @@
 // state or fabricate a reply — the caller treats any terminal failure as AI_FAILED.
 
 export const AI_TIMEOUT_MS = 60000;
-export const AI_ROUTE_TIMEOUT_MS = 20000;
-export const AI_FALLBACK_TIMEOUT_MS = 35000;
+export const AI_ROUTE_TIMEOUT_MS = 45000;
+export const AI_FALLBACK_TIMEOUT_MS = 14000;
 
 function makeError(message, code) {
   const e = new Error(message);
