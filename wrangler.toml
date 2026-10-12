@@ -33,7 +33,7 @@ crons = [
 # founder decision and requires its secret (never stored here).
 AI_PROVIDER = "ROUTER"
 AI_MODEL = "@cf/zai-org/glm-4.7-flash"
-BRAVE = "MOCK"
+BRAVE = "TAVILY"
 TELEGRAM_PROVIDER = "LIVE"
 EMAIL_PROVIDER = "MOCK"
 PAYMENT_PROVIDER = "BASE_RPC"
@@ -48,7 +48,7 @@ ATLAS_WALLET_ADDRESS = "0x59Ea688b36464133E71873d8BeE8Fcb3BC369383"
 
 # Secrets (founder enters via `wrangler secret put`, never in this file):
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, OPENROUTER_API_KEY,
-#   BRAVE_API_KEY, RESEND_API_KEY, CHATGPT_BRIDGE_SECRET
+#   BRAVE_API_KEY, TAVILY_API_KEY, RESEND_API_KEY, CHATGPT_BRIDGE_SECRET
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"
