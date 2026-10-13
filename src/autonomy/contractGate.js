@@ -8,7 +8,7 @@ const ALLOWED_TYPES = new Set(['object', 'array', 'string', 'number', 'integer',
 const ALLOWED_KEYWORDS = new Set([
   '$schema', '$id', 'title', 'description', 'type', 'properties', 'required',
   'additionalProperties', 'items', 'enum', 'const',
-  'minimum', 'maximum', 'minLength', 'maxLength', 'minItems', 'maxItems',
+  'minimum', 'maximum', 'minLength', 'maxLength', 'minItems', 'maxItems', 'uniqueItems',
 ]);
 const META_KEYWORDS = new Set(['$schema', '$id', 'title', 'description']);
 const DEFAULTS = Object.freeze({ maxInputBytes: 262144, maxIssues: 100, maxDepth: 32, maxSchemaNodes: 1000 });
@@ -95,6 +95,12 @@ function inspectSchema(schema, path, depth, state) {
   }
   if (Object.prototype.hasOwnProperty.call(schema, 'items') && type !== 'array') {
     addIssue(issues, maxIssues, 'SCHEMA_KEYWORD_TYPE_MISMATCH', pathChild(path, 'items'), 'The items keyword is supported only for array schemas.');
+  }
+  if (Object.prototype.hasOwnProperty.call(schema, 'uniqueItems') && type !== 'array') {
+    addIssue(issues, maxIssues, 'SCHEMA_KEYWORD_TYPE_MISMATCH', pathChild(path, 'uniqueItems'), 'uniqueItems requires an array schema.');
+  }
+  if (Object.prototype.hasOwnProperty.call(schema, 'uniqueItems') && typeof schema.uniqueItems !== 'boolean') {
+    addIssue(issues, maxIssues, 'SCHEMA_INVALID_UNIQUE_ITEMS', pathChild(path, 'uniqueItems'), 'uniqueItems must be a boolean.');
   }
   if (type === 'array' && !Object.prototype.hasOwnProperty.call(schema, 'items')) {
     addIssue(issues, maxIssues, 'SCHEMA_ITEMS_REQUIRED', pathChild(path, 'items'), 'Array contracts must declare an items schema.');
@@ -259,7 +265,7 @@ function report(status, issues, extras = {}) {
  * Validate JSON text at an agent/tool boundary.
  *
  * Supported keywords: type, properties, required, additionalProperties (boolean),
- * items, enum, const, minimum/maximum, minLength/maxLength, minItems/maxItems.
+ * items, enum, const, minimum/maximum, minLength/maxLength, minItems/maxItems, uniqueItems.
  * Unknown keywords, $ref, and combinators are rejected as unsupported; this is not
  * a general JSON Schema validator. Raw values are never included in the report.
  */
