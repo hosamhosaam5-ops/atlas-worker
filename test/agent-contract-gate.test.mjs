@@ -182,3 +182,10 @@ test('rejects excessive payload depth and node count before recursive validation
   assert.equal(nodeResult.validation_status, 'REJECTED_INPUT');
   assert.equal(nodeResult.issues[0].rule_id, 'PAYLOAD_TOO_COMPLEX');
 });
+
+test('duplicate array values remain valid when uniqueItems is omitted', () => {
+  const result = validateAgentContract('[1,1,2]', { type: 'array', items: { type: 'integer' } });
+  assert.equal(result.validation_status, 'PASS');
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.issues, []);
+});
