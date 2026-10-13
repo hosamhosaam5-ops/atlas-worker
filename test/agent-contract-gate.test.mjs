@@ -164,3 +164,21 @@ test('produces deterministic reports for identical input and contract', () => {
   const b = validateAgentContract(input, workflowSchema);
   assert.deepEqual(a, b);
 });
+
+
+test('rejects exponent overflow that JSON.parse maps to a non-finite number', () => {
+  const result = validateAgentContract('1e999', { type: 'number' });
+  assert.equal(result.validation_status, 'REJECTED_INPUT');
+  assert.equal(result.issues[0].rule_id, 'NON_FINITE_NUMBER');
+});
+
+test('rejects excessive payload depth and node count before recursive validation', () => {
+  const deep = JSON.stringify({ a: { b: { c: { d: 1 } } } });
+  const depthResult = validateAgentContract(deep, { type: 'object' }, { maxDepth: 2 });
+  assert.equal(depthResult.validation_status, 'REJECTED_INPUT');
+  assert.equal(depthResult.issues[0].rule_id, 'PAYLOAD_MAX_DEPTH');
+
+  const nodeResult = validateAgentContract('[1,2,3,4]', { type: 'array', items: { type: 'integer' } }, { maxPayloadNodes: 3 });
+  assert.equal(nodeResult.validation_status, 'REJECTED_INPUT');
+  assert.equal(nodeResult.issues[0].rule_id, 'PAYLOAD_TOO_COMPLEX');
+});
