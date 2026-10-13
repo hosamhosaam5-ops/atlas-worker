@@ -34,7 +34,7 @@ These are public issue reports. They are examples of failure patterns, not a sta
 | Report | Relevant failure pattern |
 |---|---|
 | [LangChain #40753](https://github.com/langchain-ai/langchain/issues/40753) | Unbounded retries reported after structured-output validation failures. |
-| [LangChain #40753](https://github.com/langchain-ai/langchain/issues/40753) | Unbounded retries reported after structured-output validation failures. |
+| [LangChain #41169](https://github.com/langchain-ai/langchain/issues/41169) | Generated nested tool-input schema reportedly rejects valid values. |
 | [LangChain #40471](https://github.com/langchain-ai/langchain/issues/40471) | Machine-readable details can be lost on an error path. |
 | [LangChain #38223](https://github.com/langchain-ai/langchain/issues/38223) | A nested Pydantic schema can produce an invalid strict JSON Schema for a downstream API. |
 | [LangChain #37778](https://github.com/langchain-ai/langchain/issues/37778) | A request for bounded retry behavior after tool invocation validation errors. |
@@ -46,10 +46,14 @@ These are public issue reports. They are examples of failure patterns, not a sta
 | [LlamaIndex #21094](https://github.com/run-llama/llama_index/issues/21094) | A direct feature request for output-schema validation in FunctionTool. |
 | [CrewAI #3074](https://github.com/crewAIInc/crewAI/issues/3074) | A reported Pydantic parser edge case with optional union types. |
 
-Official framework documentation also describes native structured-output parsing and validation, which is evidence of competition as well as demand for correctness:
-- [LangChain structured output](https://docs.langchain.com/oss/python/langchain/structured-output)
-- [OpenAI Agents handoffs](https://github.com/openai/openai-agents-python/blob/main/docs/handoffs.md)
-- [Ajv getting started](https://ajv.js.org/guide/getting-started)
+Official documentation also shows that a standalone validator faces strong, low-cost substitutes. This is a significant commercial headwind, not just a technical reference list:
+- [Ajv](https://ajv.js.org/guide/getting-started) supports the JSON Schema standard, compiles schemas, and validates schemas against a meta-schema by default. It is already a mature JavaScript solution.
+- [Zod](https://zod.dev/) describes itself as TypeScript-first, lists zero external dependencies, and supports JSON Schema conversion. This raises the bar for any thin JavaScript wrapper.
+- [Pydantic validation](https://pydantic.dev/docs/validation/latest/get-started/) supports strict and lax validation and JSON Schema output for Python ecosystems.
+- [LangChain structured output](https://docs.langchain.com/oss/python/langchain/structured-output) provides structured output with parsing/validation across schema types and supports retry handling in relevant strategies.
+- [OpenAI Agents handoffs](https://github.com/openai/openai-agents-python/blob/main/docs/handoffs.md) is an existing framework-native workflow surface relevant to tool/agent handoffs.
+
+**Commercial conclusion from desk research:** do not launch a standalone paid validator based on this evidence alone. The prototype's current schema subset is less capable than established tools. Its only possible value is portable, consistent, privacy-conscious validation reporting for an agent/tool boundary that those tools do not already solve for a specific buyer. A few interviews and direct competitor comparison are required to establish that gap.
 
 ## Prototype implemented on this branch
 
