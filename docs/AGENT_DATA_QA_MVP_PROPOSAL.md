@@ -1,120 +1,97 @@
-# ATLAS Agent Data QA Gate — MVP Proposal
+# ATLAS Agent Contract Gate — MVP Decision & Prototype
 
 **Date:** 2026-10-13  
-**Status:** Internal proposal only — NOT approved for launch, NOT an active product feature.  
-**Repository baseline:** `main` at `d02010c365809e8a8369a7c4bb9ea47c5c6f643c`.  
-**Change boundary:** This proposal lives on `proposal/agent-data-qa-mvp-2026-10`; do not merge or deploy without founder review.
+**Status:** INTERNAL PROTOTYPE ONLY — not an approved product, not a public endpoint, not launched.  
+**Production baseline:** `main` at `d02010c365809e8a8369a7c4bb9ea47c5c6f643c`.  
+**Working branch:** `proposal/agent-data-qa-mvp-2026-10`.
 
-## Decision
+## Executive decision
 
-Extend the existing `atlas_ai_data_qa_v1` file-cleaning service with an **optional, deterministic schema/contract check before handoff**. Do not launch a second generic data-quality platform or change the existing active offer.
+Prototype a small, deterministic **JSON contract gate between an agent/tool output and the next agent/tool input**. Do not expand the existing CSV/XLSX product yet and do not launch a generic data-quality or agent-evaluation platform.
 
-The narrow job to test is: *“An agent has a CSV for a downstream tool; verify that the file conforms to the expected columns and basic types, then return a machine-readable PASS/FAIL report so bad data does not silently enter the next step.”*
+This is the better *research hypothesis* of the two candidate workflows—not a proven commercial decision. Public evidence includes repeated framework-level reports about schema mismatch, invalid structured output, unclear validation errors, and handoff behavior. We have not yet validated buyer willingness to pay. Therefore only an isolated utility plus tests is authorized within this proposal; no runtime integration, route, public endpoint, database write, price, customer contact, or production deployment.
 
-This is a product hypothesis, not a proven customer need.
+## Why this direction over a CSV schema add-on?
 
-## Verified baseline
-
-- Live catalogue row: `atlas_ai_data_qa_v1`, status `ACTIVE`, listed price `15 USDC`, unit `dataset`.
-- Current description: CSV/XLSX file cleaning and QA, with a starter scope of one dataset up to 5,000 rows, whitespace/header normalization, empty-row removal, duplicate detection/removal, missing-value statistics, clean CSV output, and a QA report. Advanced schema/type inference and custom pipelines are explicitly outside the current scope.
-- Live database inspection was read-only. Records associated with this product were in `MOCK` settlement mode. The associated quote notes were synthetic/safe-test notes, and `demand_signals` contained no rows at inspection time.
-- Therefore these records prove neither real customers nor revenue. The new schema-check extension has **zero verified paying users** and its price is **not set**.
-
-## Competitive scan and positioning
-
-| Alternative | Established capability | Implication for ATLAS |
+| Candidate | Evidence and fit | Current decision |
 |---|---|---|
-| [Soda Data Contracts](https://soda.io/product/data-contracts) | Data contracts and checks across datasets, collaboration, production enforcement; Soda also presents API/MCP/CLI access for AI/data workflows. | Do not compete as a broad data-quality platform. |
-| [Great Expectations validation](https://docs.greatexpectations.io/docs/core/run_validations/) | Expectation suites/validation definitions and validation results for data workflows. | Generic data validation is already served by mature frameworks. |
-| [Ajv JSON Schema validator](https://ajv.js.org/guide/getting-started) | Open-source, JavaScript JSON Schema/JTD validation. | Simple JSON validation alone is easy to replace with a free library; do not sell a thin wrapper as a moat. |
-| [Empirical study of AI-agent developer challenges](https://arxiv.org/abs/2510.25423) | Research identifies runtime integration, orchestration, and evaluation reliability among recurring agent-development challenges. | This is indirect evidence that interface failures matter; it does **not** prove willingness to pay for this product. |
+| CSV pre-handoff schema checks | Fits the existing `atlas_ai_data_qa_v1` base service and its current cleaning/QA path. The public scan performed here found weaker direct evidence for this exact CSV-to-agent workflow. | Retain as a possible extension; do not build it yet. |
+| JSON contract checks at agent/tool boundaries | Multiple public reports describe JSON/schema validation and handoff problems in agent frameworks; it is a smaller independent unit that can be tested deterministically without an LLM or external dependency. | Chosen for an isolated prototype only. |
 
-### Hypothesized wedge
+The public reports do not prove frequency, market size, commercial intent, or that a service is preferable to an in-process library. In particular, framework-native validation and libraries such as Ajv, Pydantic, Zod, and framework structured-output features are credible substitutes. The only plausible wedge to test is a small, framework-agnostic, no-network validation step with bounded, stable, privacy-conscious issue reports at the exact handoff point.
 
-A small, file-oriented **pre-handoff gate** integrated with ATLAS's existing cleaning workflow—not an observability suite, database monitor, general-purpose agent evaluator, or replacement for Soda/GX/Ajv.
+## Verified production baseline
 
-The useful output must be easy for an agent to consume: a stable JSON report, deterministic issue codes, and explicit PASS/FAIL semantics. Differentiation remains unproven until users confirm the need.
+- Existing catalogue item: `atlas_ai_data_qa_v1` — `ACTIVE`, base listed price 15 USDC per dataset.
+- Existing scope remains CSV/XLSX cleaning and QA up to 5,000 rows. This prototype is **not** included in that price and must not be described as currently available.
+- Read-only live D1 inspection showed product-linked orders in `MOCK` settlement mode and synthetic/safe-test quote notes. `demand_signals` was empty at the time of inspection. Those records are not proof of actual customers or revenue.
+- Production health reports Worker and DB healthy and Telegram live; the running deployment remains unchanged by this branch.
 
-## MVP scope (proposal)
+## Public problem evidence (retrieved 2026-10-13)
 
-### Input
-- UTF-8 CSV, no more than 5,000 data rows for the first iteration.
-- A caller-provided JSON contract listing expected column names and supported primitive types: `string`, `integer`, `number`, `boolean`, `date`.
-- Per-column `required` and `allow_empty` flags; optional declared key columns for duplicate-key checks.
-- No model call required. Use deterministic code to keep behavior repeatable and free-first.
+These are public issue reports. They are examples of failure patterns, not a statistically representative market study and not confirmed buyer leads.
 
-### Output
-- `validation_status`: `PASS` or `FAIL`.
-- `summary`: row count, column count, error count, warning count.
-- `issues[]`: stable `rule_id`, row number when relevant, column name when relevant, and safe human-readable explanation.
-- A cleaned/normalized CSV only through the existing documented cleaning behavior and only when explicitly requested by that workflow; never silently coerce invalid values.
-- Do not include raw cell contents in the default report. Do not log uploaded row data. Preserve existing original-file handling.
+| Report | Relevant failure pattern |
+|---|---|
+| [LangChain #38719](https://github.com/langchain-ai/langchain/issues/38719) | Raw JSON-schema dict structured output reported as never validated, preventing a retry path. |
+| [LangChain #40753](https://github.com/langchain-ai/langchain/issues/40753) | Unbounded retries reported after structured-output validation failures. |
+| [LangChain #40471](https://github.com/langchain-ai/langchain/issues/40471) | Machine-readable details can be lost on an error path. |
+| [LangChain #38223](https://github.com/langchain-ai/langchain/issues/38223) | A nested Pydantic schema can produce an invalid strict JSON Schema for a downstream API. |
+| [LangChain #40423](https://github.com/langchain-ai/langchain/issues/40423) | A reported mixed tool/invalid structured-output path ends without the expected validation feedback loop. |
+| [OpenAI Agents #3723](https://github.com/openai/openai-agents-python/issues/3723) | Handoff behavior reportedly does not enforce the strict schema as expected and can coerce types. |
+| [OpenAI Agents #5169](https://github.com/openai/openai-agents-python/issues/5169) | A reported difference in constraint handling for omitted defaults versus explicit values. |
+| [OpenAI Agents #4207](https://github.com/openai/openai-agents-python/issues/4207) | A report about model output appearing in validation errors despite a data-logging safeguard. |
+| [LangGraph #8648](https://github.com/langchain-ai/langgraph/issues/8648) | Cross-field validation errors reportedly return empty messages. |
+| [LangGraph #7986](https://github.com/langchain-ai/langgraph/issues/7986) | Request validation reportedly disagrees with accepted runtime values. |
+| [LlamaIndex #21094](https://github.com/run-llama/llama_index/issues/21094) | A direct feature request for output-schema validation in FunctionTool. |
+| [CrewAI #3074](https://github.com/crewAIInc/crewAI/issues/3074) | A reported Pydantic parser edge case with optional union types. |
 
-### Initial validation rules
-1. Contract is syntactically valid and uses only supported rule names.
-2. Required headers exist; duplicate/blank headers are reported.
-3. Required values are present.
-4. Declared primitive types are checked strictly; invalid values are reported, not guessed or silently rewritten.
-5. Optional declared key columns are checked for duplicates.
-6. Empty files, malformed rows, and row limits fail closed with stable errors.
+Official framework documentation also describes native structured-output parsing and validation, which is evidence of competition as well as demand for correctness:
+- [LangChain structured output](https://docs.langchain.com/oss/python/langchain/structured-output)
+- [OpenAI Agents handoffs](https://github.com/openai/openai-agents-python/blob/main/docs/handoffs.md)
+- [Ajv getting started](https://ajv.js.org/guide/getting-started)
 
-### Explicitly out of scope
-- Arbitrary SQL, scripts, external enrichment, anomaly detection, inferred business rules, cross-table joins, LLM-based decisions, PII analysis, database connections, scheduled monitoring, general JSON-response validation, and automatic downstream execution.
-- New public unauthenticated endpoint, new dependency, new database table, any payment change, and any deployment.
-- No claim of support for XLSX contracts in v1; reuse the existing XLSX/cleaning path only where its existing behavior is already supported and tested.
+## Prototype implemented on this branch
 
-## Acceptance tests before implementation can be considered ready
+Files:
+- `src/autonomy/contractGate.js`
+- `test/agent-contract-gate.test.mjs`
 
-- Valid CSV + valid contract returns PASS and zero errors.
-- Missing required header returns FAIL with a stable rule code.
-- Missing required cell and invalid integer/number/date each return the expected issue.
-- Duplicate header, duplicate key, malformed row, empty file, invalid contract, unsupported rule, and >5,000-row fixture each fail safely.
-- Unicode and Arabic headers are handled deterministically.
-- Report does not expose raw input cell values.
-- Original input remains preserved; validation does not mutate it.
-- Same input and contract produce the same normalized report.
-- No model/provider call is needed.
-- Existing test suite and current live health remain unaffected; no changes to main/live without separate approval.
+The utility accepts serialized JSON plus a schema and produces a machine-readable `PASS`, `FAIL`, `INVALID_CONTRACT`, `INVALID_JSON`, or `REJECTED_INPUT` result. It does not call a model, network, database, or external service.
 
-## Demand validation gates (before writing runtime code)
+### Supported schema subset only
 
-The public research so far supports only a problem area, not this exact offer. Before implementation:
-1. Review 10 recent, public developer issues/discussions for a concrete CSV/schema handoff failure in agent/tool workflows; record links and avoid counting generic AI complaints.
-2. Ask for founder-approved access to 3–5 agent builders/design partners. No unsolicited outreach is authorized by this document.
-3. Show a synthetic input/contract/report only. No customer data needed.
-4. Continue only if at least 3 of 5 target users independently report this as recurring and at least 2 complete the synthetic task or explicitly agree to a pilot.
-5. Test willingness to pay separately. Do not assume the current $15 base price applies to the new feature.
+Supported keywords: `type`, `properties`, `required`, boolean `additionalProperties`, `items`, `enum`, `const`, `minimum`, `maximum`, `minLength`, `maxLength`, `minItems`, `maxItems`, and `uniqueItems`.
+
+The implementation rejects unknown keywords, `$ref`, combinators, and unsupported schema dialects rather than silently ignoring them. This is **not a full JSON Schema implementation and does not claim conformance**. The caller must not treat its PASS as assurance for features outside the documented subset.
+
+Safety/quality properties in the prototype:
+- Input-size, schema-node, nesting-depth, and issue-count bounds.
+- Stable issue codes and JSON Pointer paths.
+- Raw payload values are not included in validation results.
+- No coercion, auto-repair, retry loop, external dereferencing, or automatic handoff.
+- No HTTP route, production pipeline wiring, dependency, or D1 schema change.
+
+### Test status
+
+A local isolated Node test run completed **12/12 prototype tests passing** on 2026-10-13. This covers valid payloads, missing fields, types, enum and numeric constraints, nested arrays/objects, pointer escaping, duplicate items, malformed JSON, size limits, schema fail-closed behavior, issue caps, and deterministic output. This is **not** the full repository test suite, CI verification, or production evidence. No CI result exists yet for this proposal branch.
+
+## Demand validation gates before production integration
+
+No outbound messages or marketplace actions have been taken or are authorized by this document. Before considering runtime integration:
+
+1. Obtain founder-approved access to 3–5 agent builders/design partners; use synthetic data only.
+2. Ask them to show the real boundary where a JSON contract mismatch causes retries, a failed tool call, rejected handoff, or manual repair.
+3. Compare the prototype against what they already use (Ajv, Pydantic/Zod, or built-in framework validation); if their in-process validator already solves the same task at acceptable cost, stop.
+4. Continue only if at least 3 of 5 independently identify the issue as recurring and at least 2 complete a synthetic prototype task or explicitly agree to a pilot.
+5. Validate willingness to pay separately. Do not invent a price or assume the existing 15-USDC file-cleaning price applies.
+
+## Required next engineering gate
+
+After demand validation only: review the subset-vs-standard gap, add any necessary security/property-based tests, run the entire repository test suite in a safe CI context, and integrate behind an explicit opt-in with a default-off flag. The CI workflow `atlas-tests.yml` contains a registry-submission job as well as tests, so it must not be dispatched casually merely to obtain a test result. Avoid triggering that workflow unless its external side effects are positively disabled/guarded.
 
 ## Guardrails and rollback
 
-- This is documentation only. No production state, product status, price, payment path, key, runtime code, or customer message changes.
-- Do not merge this proposal automatically just because CI passes.
-- Keep the existing product and $15 base offer unchanged. If the new contract gate is not validated, stop and improve the existing product instead of creating another product.
-
-
-## Public issue scan (2026-10-13) — problem evidence, not buyer evidence
-
-A targeted search of public framework issue trackers found reports related to schema/tool contracts and runtime validation. These are illustrative reports; this search does not establish their prevalence, current unresolved status, or willingness to pay.
-
-| Public report | Failure pattern relevant to the hypothesis |
-|---|---|
-| [LangChain #40753 — ToolStrategy retries structured-output validation failures without any cap](https://github.com/langchain-ai/langchain/issues/40753) | Validation failures can drive excessive retries rather than a bounded, explicit failure. |
-| [LangChain #37778 — bounded retry after tool invocation validation errors](https://github.com/langchain-ai/langchain/issues/37778) | Explicitly discusses a need for bounded recovery after tool validation failures. |
-| [LangChain #40471 — structuredContent dropped from error tool results](https://github.com/langchain-ai/langchain/issues/40471) | Machine-readable details may be lost along an error path. |
-| [LangChain #38223 — nested Pydantic schema becomes invalid strict JSON Schema](https://github.com/langchain-ai/langchain/issues/38223) | A schema that looks valid at the application level can fail at a downstream contract boundary. |
-| [LangChain #41169 — input schema types nested variables incorrectly](https://github.com/langchain-ai/langchain/issues/41169) | Generated tool input schema can reject data that is valid for the intended workflow. |
-| [OpenAI Agents #3723 — handoff validation ignores strict schema and coerces types](https://github.com/openai/openai-agents-python/issues/3723) | The declared contract may not match runtime behavior during handoff. |
-| [OpenAI Agents #5169 — constrained defaults behave inconsistently](https://github.com/openai/openai-agents-python/issues/5169) | Type/constraint behavior can differ between omitted and explicit values. |
-| [OpenAI Agents #4207 — model output in validation errors despite data-logging protection](https://github.com/openai/openai-agents-python/issues/4207) | Validation reporting must avoid leaking raw model/user data. |
-| [LangGraph #8648 — empty error message for cross-field validation errors](https://github.com/langchain-ai/langgraph/issues/8648) | An error without actionable field/rule detail is difficult to repair automatically. |
-| [LangGraph #7986 — request validator rejects values accepted by runtime types](https://github.com/langchain-ai/langgraph/issues/7986) | API validation and runtime contracts can drift. |
-| [LangGraph #6491 — invalid state saved without validation](https://github.com/langchain-ai/langgraph/issues/6491) | Invalid data can persist when a state boundary does not validate it. |
-| [LlamaIndex #21094 — request for output-schema validation in FunctionTool](https://github.com/run-llama/llama_index/issues/21094) | A direct public feature request for tool-output schema validation. |
-| [LlamaIndex #19841 — validation exception when combining memory and tools](https://github.com/run-llama/llama_index/issues/19841) | Schema/validation behavior can fail at integration boundaries. |
-| [CrewAI #3074 — Pydantic parser mishandles optional union types](https://github.com/crewAIInc/crewAI/issues/3074) | Type/schema edge cases can break an agent integration. |
-
-### What this supports—and what it does not
-
-- **Supported:** there are publicly reported examples of schema mismatch, validation handling, handoff, and actionable-error problems in agent frameworks.
-- **Not supported:** that these issues are frequent across the market, that the reporters are prospective ATLAS buyers, that a hosted product is better than an in-process library, or that the current CSV/XLSX service needs this feature.
-- **Product implication:** keep the contract gate as a proposal. Before coding, ask a small number of approved design partners which boundary actually hurts them: file-to-tool CSV ingestion, or model/tool JSON handoff. Select only one based on a concrete workflow and willingness to test; do not expand into both.
+- Do not merge this branch or deploy it automatically when tests pass.
+- Do not change the active catalogue product, its price, checkout/payment path, wallets, or external communications.
+- If design partners do not confirm this narrow problem, archive the prototype and retain the existing product unchanged.
