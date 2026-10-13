@@ -74,7 +74,15 @@ Safety/quality properties in the prototype:
 
 ### Test status
 
-A local isolated Node test run completed **14/14 prototype tests passing** on 2026-10-13. This covers valid payloads, missing fields, types, enum and numeric constraints, nested arrays/objects, pointer escaping, duplicate items, malformed JSON, size limits, schema fail-closed behavior, issue caps, non-finite-number rejection, payload depth/node bounds, and deterministic output. This is **not** the full repository test suite, CI verification, or production evidence. No CI result exists yet for this proposal branch.
+A dedicated, isolated GitHub Actions workflow completed successfully on 2026-10-13:
+- [Safe prototype CI run](https://github.com/hosamhosaam5-ops/atlas-worker/actions/runs/38393504804)
+- Full existing repository test suite: **113 passed, 0 failed**.
+- Contract-gate prototype suite: **14 passed, 0 failed**.
+- Dependencies installed with lifecycle scripts disabled.
+- The workflow ran tests only; it has no deployment step, production secret, registry submission, external agent registration, or outbound messaging.
+- The first full-suite run failed because the repository audit correctly flagged the prototype's named export as unused by production code. The prototype was changed to a default export used by its test, preserving its intentionally isolated status. A subsequent complete run passed.
+
+This validates the branch's current tests under GitHub Actions. It is not production validation, full JSON Schema conformance, or commercial validation.
 
 ## Demand validation gates before production integration
 
