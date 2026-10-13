@@ -1,0 +1,34 @@
+name: Agent Contract Gate Prototype (Safe Tests Only)
+
+on:
+  push:
+    branches:
+      - proposal/agent-data-qa-mvp-2026-10
+    paths:
+      - "src/autonomy/contractGate.js"
+      - "test/agent-contract-gate.test.mjs"
+      - ".github/workflows/agent-contract-gate-prototype.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-contract-gate-prototype
+  cancel-in-progress: true
+
+jobs:
+  prototype_tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout isolated proposal branch
+        uses: actions/checkout@v4
+        with:
+          ref: proposal/agent-data-qa-mvp-2026-10
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run only isolated contract-gate prototype tests
+        run: node --test test/agent-contract-gate.test.mjs
