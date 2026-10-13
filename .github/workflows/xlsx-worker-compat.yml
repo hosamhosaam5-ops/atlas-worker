@@ -1,0 +1,39 @@
+name: XLSX Worker Compatibility Gate
+on:
+  push:
+    branches:
+      - security/xlsx-hardened-parser-2026-10-14
+    paths:
+      - "package.json"
+      - "src/orders/intake.js"
+      - "test/m4.test.mjs"
+      - ".github/workflows/xlsx-worker-compat.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "src/orders/intake.js"
+      - "test/m4.test.mjs"
+      - ".github/workflows/xlsx-worker-compat.yml"
+permissions:
+  contents: read
+concurrency:
+  group: xlsx-worker-compat-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  worker-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies without lifecycle scripts
+        run: npm install --no-audit --no-fund --ignore-scripts
+      - name: Bundle the Cloudflare Worker without deploying
+        run: npx wrangler deploy --dry-run --outdir /tmp/atlas-worker-dry-run
+      - name: Confirm the expected worker bundle exists
+        run: test -s /tmp/atlas-worker-dry-run/index.js
+      - name: Run full regression suite including adversarial XLSX headers
+        run: npm test
