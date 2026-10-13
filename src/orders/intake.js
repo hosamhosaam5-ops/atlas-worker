@@ -162,9 +162,10 @@ export function extractCSV(bytes) {
   return rows;
 }
 
-// XLSX via the `xlsx` npm package (SheetJS CE — works in Workers, no native deps).
-// NOTE: local proof of logic only; production XLSX performance under Worker limits
-// is NOT claimed by this port (per founder instruction 6).
+// XLSX via the pinned npm alias xlsx -> @stackline/xlsx@1.0.9 (hardened SheetJS-compatible fork).
+// This keeps the existing XLSX API while avoiding the stale vulnerable 0.18.5 package.
+// NOTE: tests cover parser compatibility locally; production XLSX performance under Worker limits
+// still requires separate measurement and is NOT claimed by this port.
 export async function extractXLSX(bytes) {
   const XLSX = await import('xlsx');
   const wb = XLSX.read(bytes, { type: 'array' });
