@@ -74,7 +74,7 @@ Safety/quality properties in the prototype:
 
 ### Test status
 
-A local isolated Node test run completed **12/12 prototype tests passing** on 2026-10-13. This covers valid payloads, missing fields, types, enum and numeric constraints, nested arrays/objects, pointer escaping, duplicate items, malformed JSON, size limits, schema fail-closed behavior, issue caps, and deterministic output. This is **not** the full repository test suite, CI verification, or production evidence. No CI result exists yet for this proposal branch.
+A local isolated Node test run completed **14/14 prototype tests passing** on 2026-10-13. This covers valid payloads, missing fields, types, enum and numeric constraints, nested arrays/objects, pointer escaping, duplicate items, malformed JSON, size limits, schema fail-closed behavior, issue caps, non-finite-number rejection, payload depth/node bounds, and deterministic output. This is **not** the full repository test suite, CI verification, or production evidence. No CI result exists yet for this proposal branch.
 
 ## Demand validation gates before production integration
 
