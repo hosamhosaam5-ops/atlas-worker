@@ -299,7 +299,7 @@ function report(status, issues, extras = {}) {
  * Unknown keywords, $ref, and combinators are rejected as unsupported; this is not
  * a general JSON Schema validator. Raw values are never included in the report.
  */
-export function validateAgentContract(jsonText, schema, options = {}) {
+export default function validateAgentContract(jsonText, schema, options = {}) {
   const limits = {
     maxInputBytes: clampInteger(options.maxInputBytes, 1, 1048576, DEFAULTS.maxInputBytes),
     maxIssues: clampInteger(options.maxIssues, 1, 500, DEFAULTS.maxIssues),
