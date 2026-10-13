@@ -37,6 +37,12 @@ Expected behavior:
 - No coercion from the string `"0.72"` to a number, no repair, no raw value echoed in issue details, no automated retry or downstream handoff.
 - Clearly disclose that only the documented subset of schema keywords is supported; this is not a full JSON Schema implementation.
 
+## Invitation draft (not sent)
+
+> Hi — I'm investigating a narrow engineering issue in agent workflows: JSON/tool output that does not match the next step's expected contract. I saw your public discussion about schema or handoff behavior and am trying to understand how teams handle it today. This is research, not a product launch or sales pitch. Would you be open to a 15-minute conversation using synthetic examples only? No customer data, credentials, or confidential traces are needed, and no reply is necessary if this is not relevant.
+
+Personalize only with a real, directly relevant public issue and do not contact the same person repeatedly. Do not send this invitation until the founder has approved the target audience, channel, and exact copy.
+
 ## Interview script
 
 1. “Walk me through the last real instance where schema mismatch or invalid tool output broke your workflow. What happened?”
