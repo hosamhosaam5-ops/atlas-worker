@@ -15,7 +15,7 @@ test('A2A message/send fails closed and does not create a pending task',async()=
   });
   const response=await handleA2A(request,env);
   assert.equal(response.status,400);
-  assert.match(response.headers.get('content-type')||'',/application\\/json/i);
+  assert.ok((response.headers.get('content-type')||'').includes('application/json'));
   const body=await response.json();
   assert.equal(body.jsonrpc,'2.0');
   assert.equal(body.id,id);
@@ -45,3 +45,4 @@ test('A2A tasks/get returns not-found for an absent task',async()=>{
 });
 
 test('x402 requirements are exact Base USDC payment requirements',()=>{const r=x402Requirements('https://atlas.example',{price_usdc:15,wallet:'0x1111111111111111111111111111111111111111',asset:'0x2222222222222222222222222222222222222222'});assert.equal(r.x402Version,2);assert.equal(r.accepts[0].scheme,'exact');assert.equal(r.accepts[0].network,'eip155:8453');assert.equal(r.accepts[0].amount,'15000000');});
+
