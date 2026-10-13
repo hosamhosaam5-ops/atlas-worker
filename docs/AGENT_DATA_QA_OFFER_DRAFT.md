@@ -1,44 +1,41 @@
-# ATLAS Agent Data QA — Offer Draft (Internal Only)
+# ATLAS Agent Contract Gate — Internal Offer Draft
 
-**Status:** DRAFT — DO NOT SEND, PUBLISH, OR ACCEPT ORDERS FOR THE PROPOSED SCHEMA-CHECK ADD-ON.  
+**STATUS: INTERNAL HYPOTHESIS ONLY — NOT AVAILABLE, DO NOT SEND OR PUBLISH.**  
 **Prepared:** 2026-10-13  
-**Product record currently in production:** `atlas_ai_data_qa_v1` — ACTIVE base service at 15 USDC per dataset. This draft does not change that record.
+**Implementation:** Isolated, unintegrated prototype on `proposal/agent-data-qa-mvp-2026-10`.
 
-## Short English offer (proposed copy)
+## Draft English description
 
-**ATLAS Data QA for Agent Workflows**
+**ATLAS Agent Contract Gate (proposed)**
 
-Before an agent passes a CSV into its next tool or workflow, ATLAS can help verify that the dataset matches an explicit contract.
+A small deterministic check at an agent/tool handoff. Give ATLAS serialized JSON and a declared schema from the supported subset; receive a machine-readable `PASS` or `FAIL` plus stable issue codes and JSON Pointer paths that help the caller locate a missing field or type mismatch.
 
-**Proposed schema-check workflow (not yet available):**
-- Input: one CSV (up to 5,000 rows) plus a JSON contract describing required columns and basic data types.
-- Output: a deterministic PASS/FAIL result and a machine-readable JSON issue report identifying row/column/rule problems.
-- Invalid values are reported rather than silently coerced. The default report does not include raw cell values.
-- Designed as a focused validation step before downstream ingestion—not as a replacement for a full data-quality platform.
+The prototype is designed to fail closed on unsupported schema features, avoid coercing values, bound input and error counts, and avoid including raw payload values in its report. It is not a full JSON Schema validator, does not dereference remote schemas, and does not yet sit on a production request path.
 
-**Availability:** The schema-check add-on is a proposal only and is not currently offered.  
-**Current base service:** ATLAS already lists CSV/XLSX cleaning and QA for one dataset up to 5,000 rows at **15 USDC per dataset**, subject to the existing founder-controlled quote/payment flow. That price does not include the proposed schema-check feature.  
-**Pricing for the proposed add-on:** Not set. A founder-approved quote is required before any commercial commitment.
+**Availability:** Not currently offered. Internal prototype only.  
+**Price:** Not set. No pilot or commercial commitment has been authorized.  
+**Existing product:** ATLAS separately lists CSV/XLSX cleaning and QA up to 5,000 rows for 15 USDC per dataset; that current offer is unchanged and does not include this proposed capability.
 
-## Short Arabic internal version
+## مسودة عربية داخلية
 
-**فحص جودة البيانات قبل تسليمها إلى وكيل آخر — مقترح من أطلس**
+**بوابة أطلس للتحقق من عقد البيانات بين الوكلاء — مقترح فقط**
 
-يرسل الوكيل ملف CSV وعقدًا يحدد الأعمدة المطلوبة وأنواع البيانات. يعيد أطلس نتيجة واضحة `PASS/FAIL` وتقرير JSON قابلًا للقراءة آليًا يوضح رقم الصف والعمود وقاعدة التحقق التي فشلت، من دون تعديل القيم غير الصحيحة بصمت.
+يرسل النظام JSON وعقدًا يحدد نوع البيانات والحقول المطلوبة. تعيد الأداة نتيجة `PASS/FAIL` وتقريرًا آليًا يحدد موضع المشكلة ورمزها، مثل حقل مطلوب مفقود أو نوع غير مطابق. لا تقوم الأداة بتعديل القيم بصمت، وترفض خصائص المخطط غير المدعومة بدلًا من تجاهلها.
 
-هذه الإضافة **غير متاحة حاليًا وليست معروضة للبيع**. الخدمة الأساسية الحالية لتنظيف CSV/XLSX حتى 5,000 صف مسجلة بسعر 15 USDC لكل مجموعة بيانات؛ هذا السعر لا يشمل إضافة التحقق المقترحة، وسعرها لم يُحدد.
+هذه **نسخة أولية داخلية فقط** وليست خدمة جاهزة للبيع. التنفيذ الحالي لا يدعم معيار JSON Schema كاملًا، ولم يُدمج في مسار إنتاج أطلس. لم يُحدد السعر ولم يُعتمد أي اختبار تجاري أو التزام تجاه عميل.
 
-## Discovery questions (ask only after founder approval)
+## Questions for founder-approved design partners only
 
-1. Which downstream step fails when your agent receives a CSV that does not match its expected schema?
-2. How often did this occur in the last 30 days, and what did it cost in retries, tool calls, or manual repair?
-3. What validator or library do you use now (e.g. Ajv, Pydantic, Soda, Great Expectations), and what is missing?
-4. Would a deterministic JSON PASS/FAIL report be enough, or must ATLAS block an actual handoff?
-5. Would you run a pilot with synthetic data first? What measurable result would justify paying?
+1. Describe one recent case where invalid JSON or a schema mismatch broke an agent/tool handoff.
+2. Where should validation happen: immediately before handoff, immediately after tool output, or at both boundaries?
+3. Which schema system and validator are already used (Ajv, Pydantic, Zod, framework-native, or another)?
+4. What happens on failure now: retry, manual repair, task failure, or silent bad data?
+5. What measurable improvement would justify adding another validation step?
+6. Would the team run a synthetic prototype first, and what evidence would be needed before a paid pilot?
 
 ## Rules
 
-- This message has not been sent to any person, agent, marketplace, or mailing list.
-- No claims of customers, revenue, performance, or availability.
-- No free pilot, discount, price, SLA, support commitment, or deployment promise is authorized here.
-- Do not publish or send this draft without founder approval.
+- No message has been sent to any agent, person, marketplace, or mailing list.
+- No external pilot, discount, SLA, support commitment, or price is offered.
+- Do not imply the prototype is compliant with full JSON Schema or that a PASS guarantees downstream business correctness.
+- Do not send this draft or expose the prototype publicly without founder approval.
