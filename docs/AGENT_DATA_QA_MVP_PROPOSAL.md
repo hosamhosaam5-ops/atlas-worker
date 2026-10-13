@@ -33,11 +33,11 @@ These are public issue reports. They are examples of failure patterns, not a sta
 
 | Report | Relevant failure pattern |
 |---|---|
-| [LangChain #38719](https://github.com/langchain-ai/langchain/issues/38719) | Raw JSON-schema dict structured output reported as never validated, preventing a retry path. |
+| [LangChain #40753](https://github.com/langchain-ai/langchain/issues/40753) | Unbounded retries reported after structured-output validation failures. |
 | [LangChain #40753](https://github.com/langchain-ai/langchain/issues/40753) | Unbounded retries reported after structured-output validation failures. |
 | [LangChain #40471](https://github.com/langchain-ai/langchain/issues/40471) | Machine-readable details can be lost on an error path. |
 | [LangChain #38223](https://github.com/langchain-ai/langchain/issues/38223) | A nested Pydantic schema can produce an invalid strict JSON Schema for a downstream API. |
-| [LangChain #40423](https://github.com/langchain-ai/langchain/issues/40423) | A reported mixed tool/invalid structured-output path ends without the expected validation feedback loop. |
+| [LangChain #37778](https://github.com/langchain-ai/langchain/issues/37778) | A request for bounded retry behavior after tool invocation validation errors. |
 | [OpenAI Agents #3723](https://github.com/openai/openai-agents-python/issues/3723) | Handoff behavior reportedly does not enforce the strict schema as expected and can coerce types. |
 | [OpenAI Agents #5169](https://github.com/openai/openai-agents-python/issues/5169) | A reported difference in constraint handling for omitted defaults versus explicit values. |
 | [OpenAI Agents #4207](https://github.com/openai/openai-agents-python/issues/4207) | A report about model output appearing in validation errors despite a data-logging safeguard. |
