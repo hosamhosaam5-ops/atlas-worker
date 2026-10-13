@@ -1,0 +1,86 @@
+name: ATLAS Live Protocol Probe (Read-Only)
+on:
+  push:
+    branches:
+      - ops/live-protocol-probe-2026-10-14
+permissions:
+  contents: read
+concurrency:
+  group: atlas-live-protocol-probe
+  cancel-in-progress: true
+jobs:
+  live_protocol_probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Run read-only live endpoint checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify health, commerce, x402 challenge, A2A POST, and enrichment auth gate
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+
+          const base = 'https://atlas-worker.hosamhosaam5.workers.dev';
+          const enrich = 'https://data-enrich-qa-agent.hosamhosaam5.workers.dev';
+          const read = async (url, options = {}) => {
+            const response = await fetch(url, { signal: AbortSignal.timeout(20000), ...options });
+            const bodyText = await response.text();
+            let body;
+            try { body = JSON.parse(bodyText); } catch { body = bodyText; }
+            return { status: response.status, headers: response.headers, body };
+          };
+          const evidence = {};
+
+          const health = await read(base + '/health');
+          assert.equal(health.status, 200, 'health should return HTTP 200');
+          assert.equal(health.body.ok, true, 'health should report ok=true');
+          assert.equal(health.body.service, 'atlas-worker');
+          evidence.health = { status: health.status, ok: health.body.ok, sha: health.body.git_sha, db: health.body.db, telegram: health.body.telegram };
+
+          const commerce = await read(base + '/commerce.json');
+          assert.equal(commerce.status, 200, 'commerce manifest should return HTTP 200');
+          assert.equal(commerce.body.product_id, 'atlas_ai_data_qa_v1');
+          assert.equal(commerce.body.payment.network, 'eip155:8453');
+          evidence.commerce = { status: commerce.status, product_id: commerce.body.product_id, pricing: commerce.body.pricing, settlement: commerce.body.payment.x402_settlement };
+
+          const card = await read(base + '/.well-known/agent-card.json');
+          assert.equal(card.status, 200, 'agent card should return HTTP 200');
+          assert.equal(card.body.name, 'ATLAS');
+          assert.ok(card.body.supportedInterfaces?.some(x => x.url === base + '/a2a' && x.protocolBinding === 'JSONRPC'), 'agent card should declare the live A2A JSON-RPC endpoint');
+          evidence.agent_card = { status: card.status, name: card.body.name, version: card.body.version, a2a: card.body.supportedInterfaces?.[0]?.url };
+
+          const x402 = await read(base + '/x402/atlas_ai_data_qa_v1');
+          assert.equal(x402.status, 402, 'x402 GET must return a Payment Required challenge');
+          const requiredHeader = x402.headers.get('payment-required');
+          assert.ok(requiredHeader, 'PAYMENT-REQUIRED header must exist');
+          assert.equal(x402.body.x402Version, 2);
+          assert.equal(x402.body.accepts?.[0]?.network, 'eip155:8453');
+          assert.equal(x402.body.accepts?.[0]?.amount, '15000000');
+          assert.ok(x402.body.accepts?.[0]?.payTo, 'x402 challenge must identify the recipient');
+          evidence.x402 = { status: x402.status, header_present: true, version: x402.body.x402Version, network: x402.body.accepts[0].network, amount: x402.body.accepts[0].amount, recipient_present: true };
+
+          const probeId = 'atlas-readonly-probe-missing-task-20261014';
+          const a2a = await read(base + '/a2a', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'accept': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 'atlas-a2a-probe-20261014', method: 'tasks/get', params: { id: probeId } })
+          });
+          assert.equal(a2a.status, 404, 'read-only A2A tasks/get for a nonexistent synthetic ID should return HTTP 404');
+          assert.equal(a2a.body.jsonrpc, '2.0');
+          assert.equal(a2a.body.id, 'atlas-a2a-probe-20261014');
+          assert.equal(a2a.body.error?.code, -32004);
+          assert.equal(a2a.body.error?.message, 'Task not found');
+          evidence.a2a_post = { status: a2a.status, jsonrpc: a2a.body.jsonrpc, error_code: a2a.body.error.code, message: a2a.body.error.message, probe: 'read-only tasks/get; no task was created' };
+
+          const enrichment = await read(enrich, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ company_name: 'Synthetic Verification Co' })
+          });
+          assert.ok([401, 503].includes(enrichment.status), 'unauthenticated enrichment request must fail closed with 401 or 503');
+          evidence.enrichment_auth_gate = { status: enrichment.status, fail_closed: true, error: enrichment.body?.error || 'n/a', note: 'No secret supplied; should not invoke Workers AI.' };
+
+          console.log(JSON.stringify({ result: 'PASS', checks: evidence }, null, 2));
+          NODE
