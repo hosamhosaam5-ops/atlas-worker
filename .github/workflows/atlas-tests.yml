@@ -194,26 +194,32 @@ jobs:
           TYPE="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/,"" ); print}' a2a-evidence/headers.txt | tail -1 | sed 's/^[^:]*:[[:space:]]*//')"
           printf 'endpoint=%s\nhttp_status=%s\ncontent_type=%s\nrequest_id=%s\n' "$ENDPOINT" "$STATUS" "$TYPE" "$ID" | tee a2a-evidence/metadata.txt
           cat a2a-evidence/response.json
-          test "$STATUS" = 200
+          test "$STATUS" = 400
           printf '%s' "$TYPE" | grep -Eiq '^application/json([;[:space:]]|$)'
-          jq -e --arg id "$ID" '.jsonrpc=="2.0" and .id==$id and (.result != null) and (.error == null)' a2a-evidence/response.json
-      - name: Verify persisted task lifecycle
+          jq -e --arg id "$ID" '.jsonrpc=="2.0" and .id==$id and .error.code == -32001 and (.error.message | contains("No task was created")) and (.error.message | contains("/x402/atlas_ai_data_qa_v1"))' a2a-evidence/response.json
+      - name: Verify A2A rejects unprocessed tasks without creating rows
         run: |
           set -euo pipefail
-          ID="atlas-task-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ID="atlas-task-fail-closed-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           cat > task-request.json <<EOF
-          {"jsonrpc":"2.0","id":"$ID","method":"message/send","params":{"message":{"messageId":"$ID-message","role":"user","parts":[{"kind":"text","text":"ATLAS task lifecycle probe; no purchase, payment, order, customer data, or external commitment."}]}}}
+          {"jsonrpc":"2.0","id":"$ID","method":"message/send","params":{"message":{"messageId":"$ID-message","role":"user","parts":[{"kind":"text","text":"Safety regression probe; no purchase, payment, order, customer data, or external commitment."}]}}}
           EOF
-          curl --fail-with-body --silent --show-error -H 'content-type: application/json' --data-binary @task-request.json https://atlas-worker.hosamhosaam5.workers.dev/a2a -o task-send.json
-          cat task-send.json
-          TASK_ID="$(jq -er '.result.id' task-send.json)"
-          test "$(jq -r '.result.status.state' task-send.json)" = submitted
+          status="$(curl --silent --show-error --output task-response.json --write-out "%{http_code}" --max-time 15 -H 'content-type: application/json' --data-binary @task-request.json https://atlas-worker.hosamhosaam5.workers.dev/a2a)"
+          echo "A2A task submission HTTP status=$status"
+          cat task-response.json
+          test "$status" = 400
+          jq -e --arg id "$ID" '.jsonrpc=="2.0" and .id==$id and .error.code == -32001 and (.error.message | contains("No task was created"))' task-response.json
+          # Query a deterministic ID that was never created; this verifies that the
+          # read side does not manufacture a successful task response.
+          GET_ID="atlas-task-get-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           cat > task-get-request.json <<EOF
-          {"jsonrpc":"2.0","id":"$ID-get","method":"tasks/get","params":{"id":"$TASK_ID"}}
+          {"jsonrpc":"2.0","id":"$GET_ID","method":"tasks/get","params":{"id":"task_not_created_$GITHUB_RUN_ID"}}
           EOF
-          curl --fail-with-body --silent --show-error -H 'content-type: application/json' --data-binary @task-get-request.json https://atlas-worker.hosamhosaam5.workers.dev/a2a -o task-get.json
+          get_status="$(curl --silent --show-error --output task-get.json --write-out "%{http_code}" --max-time 15 -H 'content-type: application/json' --data-binary @task-get-request.json https://atlas-worker.hosamhosaam5.workers.dev/a2a)"
+          echo "A2A nonexistent task lookup HTTP status=$get_status"
           cat task-get.json
-          jq -e --arg task "$TASK_ID" '.jsonrpc=="2.0" and .result.id==$task and .result.status.state=="submitted" and .result.metadata.source=="A2A"' task-get.json
+          test "$get_status" = 404
+          jq -e --arg id "$GET_ID" '.jsonrpc=="2.0" and .id==$id and .error.code == -32004 and .error.message == "Task not found"' task-get.json
 
       - name: Verify production catalog and x402 payment challenge
         run: |
