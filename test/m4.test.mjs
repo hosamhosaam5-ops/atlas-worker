@@ -141,6 +141,32 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   }
 })();
 
+// ================= XLSX hardening regression (synthetic workbook) =================
+(async function () {
+  try {
+    const XLSX = await import('xlsx');
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['__proto__', 'constructor', 'prototype', 'name'],
+      ['polluted_proto_value', 'polluted_constructor_value', 'polluted_prototype_value', 'Safe']
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'AdversarialHeaders');
+    const bytes = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const rows = await extractXLSX(new Uint8Array(bytes));
+    const prototypeUntouched =
+      Object.prototype.polluted_proto_value === undefined &&
+      Object.prototype.polluted_constructor_value === undefined &&
+      Object.prototype.polluted_prototype_value === undefined;
+    T(
+      'xlsx.security dangerous headers cannot pollute Object.prototype',
+      prototypeUntouched && Array.isArray(rows) && rows.length === 1 && rows[0].name === 'Safe',
+      JSON.stringify({ prototypeUntouched, rows })
+    );
+  } catch (e) {
+    T('xlsx.security adversarial workbook does not crash', false, String(e?.message || e));
+  }
+})();
+
 // ================= E2E: full lifecycle on real D1 =================
 (async function () {
   const db = await freshDb('/tmp/atlas-m4-a.sqlite');
