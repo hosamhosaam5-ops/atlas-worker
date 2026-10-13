@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateAgentContract } from '../src/autonomy/contractGate.js';
+import validateAgentContract from '../src/autonomy/contractGate.js';
 
 const DRAFT = 'https://json-schema.org/draft/2020-12/schema';
 
