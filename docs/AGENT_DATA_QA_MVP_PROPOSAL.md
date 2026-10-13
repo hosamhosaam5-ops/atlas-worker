@@ -90,3 +90,31 @@ The public research so far supports only a problem area, not this exact offer. B
 - This is documentation only. No production state, product status, price, payment path, key, runtime code, or customer message changes.
 - Do not merge this proposal automatically just because CI passes.
 - Keep the existing product and $15 base offer unchanged. If the new contract gate is not validated, stop and improve the existing product instead of creating another product.
+
+
+## Public issue scan (2026-10-13) — problem evidence, not buyer evidence
+
+A targeted search of public framework issue trackers found reports related to schema/tool contracts and runtime validation. These are illustrative reports; this search does not establish their prevalence, current unresolved status, or willingness to pay.
+
+| Public report | Failure pattern relevant to the hypothesis |
+|---|---|
+| [LangChain #40753 — ToolStrategy retries structured-output validation failures without any cap](https://github.com/langchain-ai/langchain/issues/40753) | Validation failures can drive excessive retries rather than a bounded, explicit failure. |
+| [LangChain #37778 — bounded retry after tool invocation validation errors](https://github.com/langchain-ai/langchain/issues/37778) | Explicitly discusses a need for bounded recovery after tool validation failures. |
+| [LangChain #40471 — structuredContent dropped from error tool results](https://github.com/langchain-ai/langchain/issues/40471) | Machine-readable details may be lost along an error path. |
+| [LangChain #38223 — nested Pydantic schema becomes invalid strict JSON Schema](https://github.com/langchain-ai/langchain/issues/38223) | A schema that looks valid at the application level can fail at a downstream contract boundary. |
+| [LangChain #41169 — input schema types nested variables incorrectly](https://github.com/langchain-ai/langchain/issues/41169) | Generated tool input schema can reject data that is valid for the intended workflow. |
+| [OpenAI Agents #3723 — handoff validation ignores strict schema and coerces types](https://github.com/openai/openai-agents-python/issues/3723) | The declared contract may not match runtime behavior during handoff. |
+| [OpenAI Agents #5169 — constrained defaults behave inconsistently](https://github.com/openai/openai-agents-python/issues/5169) | Type/constraint behavior can differ between omitted and explicit values. |
+| [OpenAI Agents #4207 — model output in validation errors despite data-logging protection](https://github.com/openai/openai-agents-python/issues/4207) | Validation reporting must avoid leaking raw model/user data. |
+| [LangGraph #8648 — empty error message for cross-field validation errors](https://github.com/langchain-ai/langgraph/issues/8648) | An error without actionable field/rule detail is difficult to repair automatically. |
+| [LangGraph #7986 — request validator rejects values accepted by runtime types](https://github.com/langchain-ai/langgraph/issues/7986) | API validation and runtime contracts can drift. |
+| [LangGraph #6491 — invalid state saved without validation](https://github.com/langchain-ai/langgraph/issues/6491) | Invalid data can persist when a state boundary does not validate it. |
+| [LlamaIndex #21094 — request for output-schema validation in FunctionTool](https://github.com/run-llama/llama_index/issues/21094) | A direct public feature request for tool-output schema validation. |
+| [LlamaIndex #19841 — validation exception when combining memory and tools](https://github.com/run-llama/llama_index/issues/19841) | Schema/validation behavior can fail at integration boundaries. |
+| [CrewAI #3074 — Pydantic parser mishandles optional union types](https://github.com/crewAIInc/crewAI/issues/3074) | Type/schema edge cases can break an agent integration. |
+
+### What this supports—and what it does not
+
+- **Supported:** there are publicly reported examples of schema mismatch, validation handling, handoff, and actionable-error problems in agent frameworks.
+- **Not supported:** that these issues are frequent across the market, that the reporters are prospective ATLAS buyers, that a hosted product is better than an in-process library, or that the current CSV/XLSX service needs this feature.
+- **Product implication:** keep the contract gate as a proposal. Before coding, ask a small number of approved design partners which boundary actually hurts them: file-to-tool CSV ingestion, or model/tool JSON handoff. Select only one based on a concrete workflow and willingness to test; do not expand into both.
