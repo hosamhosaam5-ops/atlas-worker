@@ -11,7 +11,7 @@ const ALLOWED_KEYWORDS = new Set([
   'minimum', 'maximum', 'minLength', 'maxLength', 'minItems', 'maxItems', 'uniqueItems',
 ]);
 const META_KEYWORDS = new Set(['$schema', '$id', 'title', 'description']);
-const DEFAULTS = Object.freeze({ maxInputBytes: 262144, maxIssues: 100, maxDepth: 32, maxSchemaNodes: 1000 });
+const DEFAULTS = Object.freeze({ maxInputBytes: 262144, maxIssues: 100, maxDepth: 32, maxSchemaNodes: 1000, maxPayloadNodes: 10000 });
 
 function isRecord(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -33,7 +33,7 @@ function actualType(value) {
   if (Array.isArray(value)) return 'array';
   if (typeof value === 'string') return 'string';
   if (typeof value === 'boolean') return 'boolean';
-  if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'number';
+  if (typeof value === 'number') return Number.isFinite(value) ? (Number.isInteger(value) ? 'integer' : 'number') : 'unsupported';
   if (isRecord(value)) return 'object';
   return 'unsupported';
 }
@@ -46,6 +46,36 @@ function stableJson(value) {
 
 function deepEqual(a, b) {
   return stableJson(a) === stableJson(b);
+}
+
+function inspectPayloadShape(payload, limits) {
+  const stack = [{ value: payload, path: '', depth: 0 }];
+  let visited = 0;
+  while (stack.length) {
+    const current = stack.pop();
+    visited += 1;
+    if (visited > limits.maxPayloadNodes) {
+      return { rule_id: 'PAYLOAD_TOO_COMPLEX', path: current.path, message: 'Input exceeds the configured JSON node limit.' };
+    }
+    if (current.depth > limits.maxDepth) {
+      return { rule_id: 'PAYLOAD_MAX_DEPTH', path: current.path, message: 'Input exceeds the configured nesting depth.' };
+    }
+    if (typeof current.value === 'number' && !Number.isFinite(current.value)) {
+      return { rule_id: 'NON_FINITE_NUMBER', path: current.path, message: 'JSON number is outside the supported finite-number range.' };
+    }
+    if (Array.isArray(current.value)) {
+      for (let i = current.value.length - 1; i >= 0; i--) {
+        stack.push({ value: current.value[i], path: pathChild(current.path, i), depth: current.depth + 1 });
+      }
+    } else if (isRecord(current.value)) {
+      const keys = Object.keys(current.value).sort();
+      for (let i = keys.length - 1; i >= 0; i--) {
+        const key = keys[i];
+        stack.push({ value: current.value[key], path: pathChild(current.path, key), depth: current.depth + 1 });
+      }
+    }
+  }
+  return null;
 }
 
 function addIssue(issues, maxIssues, ruleId, path, message, extras = {}) {
@@ -275,6 +305,7 @@ export function validateAgentContract(jsonText, schema, options = {}) {
     maxIssues: clampInteger(options.maxIssues, 1, 500, DEFAULTS.maxIssues),
     maxDepth: clampInteger(options.maxDepth, 1, 64, DEFAULTS.maxDepth),
     maxSchemaNodes: clampInteger(options.maxSchemaNodes, 1, 5000, DEFAULTS.maxSchemaNodes),
+    maxPayloadNodes: clampInteger(options.maxPayloadNodes, 1, 100000, DEFAULTS.maxPayloadNodes),
   };
   if (typeof jsonText !== 'string') {
     return report('REJECTED_INPUT', [{ rule_id: 'JSON_TEXT_REQUIRED', path: '', message: 'Input must be serialized JSON text.' }]);
@@ -289,6 +320,11 @@ export function validateAgentContract(jsonText, schema, options = {}) {
     payload = JSON.parse(jsonText);
   } catch {
     return report('INVALID_JSON', [{ rule_id: 'JSON_PARSE_ERROR', path: '', message: 'Input is not valid JSON.' }], { input_bytes: byteLength });
+  }
+
+  const payloadIssue = inspectPayloadShape(payload, limits);
+  if (payloadIssue) {
+    return report('REJECTED_INPUT', [payloadIssue], { input_bytes: byteLength });
   }
 
   const schemaIssues = [];
