@@ -11,7 +11,7 @@ import { evaluatePayment, evaluatePaymentSafe, fetchReceipt, WALLET, USDC_CONTRA
 import { getFileStorage } from '../src/orders/storage.js';
 import { getEmailProvider } from '../src/orders/email.js';
 import { ensureOrderSchema } from '../src/orders/schema.js';
-import { ensureCommercialSchema, upsertProduct } from '../src/commercial/control.js';
+
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -171,16 +171,20 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 // ================= REGRESSION: x402 paid order stores real settlement metadata =================
 (async function () {
   const db = await freshDb('/tmp/atlas-m4-x402-binding.sqlite');
-  await ensureCommercialSchema(db);
-  await upsertProduct(db, {
-    product_id: 'atlas_ai_data_qa_v1',
-    name: 'ATLAS AI Agent Data QA',
-    description: 'Synthetic fixture for x402 order regression',
-    unit: 'order',
-    price_usdc: 15,
-    pricing_mode: 'FIXED',
-    status: 'ACTIVE',
-  });
+  await db.execRaw(`CREATE TABLE products (
+    product_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'order',
+    price_usdc REAL,
+    pricing_mode TEXT NOT NULL DEFAULT 'FIXED',
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await db.prepare("INSERT INTO products(product_id,name,description,unit,price_usdc,pricing_mode,status,version) VALUES(?,?,?,?,?,?,?,1)")
+    .bind('atlas_ai_data_qa_v1', 'ATLAS AI Agent Data QA', 'Synthetic fixture for x402 order regression', 'order', 15, 'FIXED', 'ACTIVE').run();
   const env = {
     PAYMENT_PROVIDER: 'MOCK',
     PAYMENT_MOCK_SCENARIO: 'valid',
