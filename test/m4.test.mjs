@@ -11,6 +11,7 @@ import { evaluatePayment, evaluatePaymentSafe, fetchReceipt, WALLET, USDC_CONTRA
 import { getFileStorage } from '../src/orders/storage.js';
 import { getEmailProvider } from '../src/orders/email.js';
 import { ensureOrderSchema } from '../src/orders/schema.js';
+import { ensureCommercialSchema, upsertProduct } from '../src/commercial/control.js';
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -165,6 +166,49 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   } catch (e) {
     T('xlsx.security adversarial workbook does not crash', false, String(e?.message || e));
   }
+})();
+
+// ================= REGRESSION: x402 paid order stores real settlement metadata =================
+(async function () {
+  const db = await freshDb('/tmp/atlas-m4-x402-binding.sqlite');
+  await ensureCommercialSchema(db);
+  await upsertProduct(db, {
+    product_id: 'atlas_ai_data_qa_v1',
+    name: 'ATLAS AI Agent Data QA',
+    description: 'Synthetic fixture for x402 order regression',
+    unit: 'order',
+    price_usdc: 15,
+    pricing_mode: 'FIXED',
+    status: 'ACTIVE',
+  });
+  const env = {
+    PAYMENT_PROVIDER: 'MOCK',
+    PAYMENT_MOCK_SCENARIO: 'valid',
+    PAYMENT_MOCK_AMOUNT_USDC: '15',
+    ATLAS_WALLET_ADDRESS: '0x59Ea688b36464133E71873d8BeE8Fcb3BC369383',
+    EMAIL_PROVIDER: 'MOCK',
+    FILE_STORAGE: 'LOCAL',
+  };
+  const tx = '0x' + '42'.repeat(32);
+  const r = await processOrder(db, env, baseInput({
+    tx_hash: tx,
+    __order_id: 'ORD-X402-BIND-REGRESSION',
+    __x402_expected_amount: 15,
+    __x402_product_id: 'atlas_ai_data_qa_v1',
+    __settlement_mode: 'REAL',
+    __chain_id: 'eip155:8453',
+  }));
+  T('x402.order pipeline reaches DELIVERED after payment-gate fixture', r.order_status === 'DELIVERED', JSON.stringify(r));
+  const row = await db.prepare("SELECT status,payment_status,amount_paid,expected_amount,settlement_mode,chain_id,tx_hash FROM order_ledger WHERE order_id=?")
+    .bind('ORD-X402-BIND-REGRESSION').first();
+  T('x402.order ledger preserves REAL settlement metadata', !!row
+    && row.status === 'DELIVERED'
+    && row.payment_status === 'PAID'
+    && Number(row.amount_paid) === 15
+    && Number(row.expected_amount) === 15
+    && row.settlement_mode === 'REAL'
+    && row.chain_id === 'eip155:8453'
+    && row.tx_hash === tx, JSON.stringify(row));
 })();
 
 // ================= E2E: full lifecycle on real D1 =================
