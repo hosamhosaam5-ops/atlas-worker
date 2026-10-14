@@ -61,7 +61,7 @@ export function applyResolvedPrice(meta, quoteRows) {
   if (meta.test_mode) throw new Error('Apply Resolved Price must only run on the production path');
   const rows = quoteRows.filter(r => r && Object.keys(r).length > 0);
   if (rows.length > 1) {
-    return { ...meta, price_ok: false, invalid_reason: 'MULTIPLE_QUOTES: more than one quote row matches this client_email', price_source: 'AMBIGUOUS', expected_amount: 0, quote_ref: '', product_id: '' };
+    return { ...meta, price_ok: false, invalid_reason: 'MULTIPLE_QUOTES: more than one quote row matches this client_email', price_source: 'AMBIGUOUS', expected_amount: 0, quote_ref: '', product_i: '' };
   }
   const quote = rows.length ? rows[0] : null;
   const amount = quote ? Number(quote.agreed_amount) : 0;
@@ -209,19 +209,38 @@ async function insertLedger(db, row) {
 // The tx_hash stays claimed regardless of outcome: a paid-then-failed order can never be
 // re-submitted with the same tx (no free redelivery).
 async function finalizeLedger(db, orderId, row) {
+  // Fetch existing ledger row so we preserve settlement metadata and avoid downgrading PAID
+  const existing = await db.prepare("SELECT tx_hash, settlement_mode, chain_id, payment_status FROM order_ledger WHERE order_id = ? LIMIT 1").bind(orderId).first();
+  const existingTx = existing?.tx_hash ?? null;
+  const existingSettlement = existing?.settlement_mode ?? null;
+  const existingChain = existing?.chain_id ?? null;
+  const existingPaymentStatus = existing ? String(existing.payment_status) : null;
+
+  // Preserve PAID status: do not allow an update to overwrite a confirmed PAID with a non-PAID state.
+  let finalPaymentStatus = row.payment_status ?? null;
+  let finalStatus = row.status ?? null;
+  if (existingPaymentStatus === 'PAID' && finalPaymentStatus !== 'PAID') {
+    // Keep payment_status PAID and route order to REVIEW_REQUIRED for reconciliation unless it is already DELIVERED.
+    finalPaymentStatus = 'PAID';
+    if (finalStatus !== 'DELIVERED') finalStatus = 'REVIEW_REQUIRED';
+    row.last_error = (row.last_error ? row.last_error + ' | ' : '') + 'PRESERVED_PAID_STATUS_ON_UPDATE';
+  }
+
+  const settlement_mode = existingSettlement ?? (row.settlement_mode ?? ((finalPaymentStatus === 'PAID' && (existingTx || row.tx_hash)) ? 'REAL' : 'MOCK'));
+  const chain_id = existingChain ?? (row.chain_id ?? ((finalPaymentStatus === 'PAID' && (existingTx || row.tx_hash)) ? 'eip155:8453' : null));
+
   await db.prepare(
     `UPDATE order_ledger SET status=?, qa_status=?, qa_report=?, payment_status=?, amount_paid=?,
        price_source=?, expected_amount=?, quote_ref=?, file_name=?, file_ext=?, rows_in=?, rows_out=?,
        product_id=?, delivery_channel=?, delivery_status=?, error=?, settlement_mode=?, chain_id=?, updated_at=datetime('now')
      WHERE order_id=?`
   ).bind(
-    row.status, row.qa_status ?? null, row.qa_report ?? null, row.payment_status ?? null,
+    finalStatus, row.qa_status ?? null, row.qa_report ?? null, finalPaymentStatus ?? null,
     row.amount_paid ?? null, row.price_source ?? null, row.expected_amount ?? null,
     row.quote_ref ?? null, row.file_name ?? null, row.file_ext ?? null, row.rows_in ?? null,
     row.rows_out ?? null, row.product_id ?? null, row.delivery_channel ?? null,
     row.delivery_status ?? null, row.last_error ?? null,
-    row.settlement_mode ?? ((row.payment_status === 'PAID' && row.tx_hash) ? 'REAL' : 'MOCK'),
-    row.chain_id ?? ((row.payment_status === 'PAID' && row.tx_hash) ? 'eip155:8453' : null), orderId
+    settlement_mode, chain_id, orderId
   ).run();
 }
 
@@ -275,7 +294,7 @@ export async function processOrder(db, env, input) {
   }, hasFile, env);
   if (input.__order_id) meta.order_id = String(input.__order_id); // stable id for idempotency tests
   const requestedSettlementMode = String(input.__settlement_mode || '').trim().toUpperCase();
-  const settlementMode = requestedSettlementMode || (meta.test_mode ? 'MOCK' : (String(env.SETTLEMENT_MODE || '').trim().toUpperCase() || (String(env.PAYMENT_PROVIDER || '').toUpperCase() === 'BASE_RPC' ? 'REAL' : 'MOCK')));
+  const settlementMode = requestedSettlementMode || (meta.test_mode ? 'MOCK' : (String(env.SETTLEMENT_MODE || '').trim().toUpperCase() || (String(env.PAYMENT_PROVIDER || '').toUpperCase() === 'BA[...')));
   const chainId = settlementMode === 'REAL' ? String(input.__chain_id || env.CHAIN_ID || 'eip155:8453') : (settlementMode === 'TESTNET' ? String(input.__chain_id || env.CHAIN_ID || 'eip155:84532') : null);
 
   // --- Input Valid gate (ports Reject Invalid Input branch) ---
@@ -346,7 +365,7 @@ export async function processOrder(db, env, input) {
     const receipt = await fetchReceipt(env, meta.tx_hash);
     gate = evaluatePaymentSafe(receipt, priceMeta);
     if (gate.payment_status !== 'PAID') {
-      await finalizeLedger(db, meta.order_id, { status: 'PAYMENT_FAILED', payment_status: gate.payment_status, amount_paid: gate.amount_paid, product_id: x402ProductId, price_source: 'X402', expected_amount: x402Amount, quote_ref: 'x402', last_error: gate.payment_detail });
+      await finalizeLedger(db, meta.order_id, { status: 'PAYMENT_FAILED', payment_status: gate.payment_status, amount_paid: gate.amount_paid, product_id: x402ProductId, price_source: 'X402', expected_amount: x402Amount, quote_ref: priceMeta.quote_ref, file_name: meta.file_name, file_ext: meta.file_ext, last_error: gate.payment_detail });
       const a = await audit(db, 'order', meta.order_id, meta, 'PAYMENT_FAILED', gate.payment_status);
       return { order_id: meta.order_id, order_status: 'PAYMENT_FAILED', message: 'Settled transaction did not independently verify as the required USDC payment.', audit: a, latency_ms: Date.now() - t0 };
     }
@@ -371,7 +390,7 @@ export async function processOrder(db, env, input) {
     // D1 is single-threaded and the UNIQUE(tx_hash) index is the concurrency authority.
     // Use INSERT OR IGNORE so a concurrent duplicate becomes a normal business result
     // rather than an uncaught UNIQUE exception; the follow-up read identifies the winner.
-    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status, settlement_mode, chain_id) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED', ?, ?)")
+    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status, settlement_mode, chain_id) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECK[...]")
       .bind(meta.order_id, meta.client_email, meta.tx_hash, priceMeta.product_id || null, settlementMode, chainId).run();
 
     const claimed = await db.prepare(
@@ -410,7 +429,7 @@ export async function processOrder(db, env, input) {
         last_error: gate.payment_detail,
       });
       const a = await audit(db, 'order', meta.order_id, meta, 'PAYMENT_FAILED', gate.payment_status);
-      return { order_id: meta.order_id, order_status: 'PAYMENT_FAILED', message: 'Payment not confirmed: ' + gate.payment_status + ' (' + gate.payment_detail + '). Order recorded for founder review.', audit: a, latency_ms: Date.now() - t0 };
+      return { order_id: meta.order_id, order_status: 'PAYMENT_FAILED', message: 'Payment not confirmed: ' + gate.payment_status + ' (' + gate.payment_detail + '). Order recorded for founder revi[...]
     }
   }
 
@@ -478,7 +497,7 @@ export async function processOrder(db, env, input) {
     score_delta: finalStatus === 'DELIVERED' ? 1 : -0.25,
     evidence: {status: finalStatus, delivery_status: dlv.delivery_status, qa_status: 'PASS'}
   });
-  if (!meta.test_mode) { try { await emitAgentEvent(db,{type:finalStatus === 'DELIVERED' ? 'order.completed' : 'order.failed',data:{order_id:meta.order_id,client_email:meta.client_email,status:finalStatus,product_id:meta.product_id}}); } catch {} }
+  if (!meta.test_mode) { try { await emitAgentEvent(db,{type:finalStatus === 'DELIVERED' ? 'order.completed' : 'order.failed',data:{order_id:meta.order_id,client_email:meta.client_email,status:fi[...]; } catch(e){} }
   return {
     order_id: meta.order_id,
     order_status: finalStatus, delivery: dlv, qa_report: qa.qa_report, product_id: priceMeta.product_id, quote_ref: qa.quote_ref,
