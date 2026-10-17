@@ -235,7 +235,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
     && failedRow?.payment_status === 'PAID' && failedRow?.settlement_mode === 'REAL'
     && failedRow?.chain_id === 'eip155:8453' && failedRow?.tx_hash === failedTx, JSON.stringify({order:failed.order_status,row:failedRow}));
 
-  await db.prepare("UPDATE products SET status='PAUSED' WHERE product_id='atlas_ai_data_qa_v1'").run();
+  await db.prepare("UPDATE products SET status='PAUSED' WHERE product_id='atlas_ai_data_qa_v1'").bind().run();
   const mismatchTx = '0x' + '44'.repeat(32);
   const mismatch = await processOrder(db, env, baseInput({ tx_hash:mismatchTx, __order_id:'ORD-X402-PRICE-RACE',
     __x402_expected_amount:15, __x402_product_id:'atlas_ai_data_qa_v1', __settlement_mode:'REAL', __chain_id:'eip155:8453' }));
