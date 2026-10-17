@@ -226,27 +226,16 @@ jobs:
           set -euo pipefail
           curl --fail-with-body --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/catalog.json -o catalog.json
           cat catalog.json
-          jq -e '.products[] | select(.id=="atlas_ai_data_qa_v1" and .status=="ACTIVE" and (.price_usdc|tonumber)==15)' catalog.json
+          jq -e '.offer_status=="PAUSED" and (.products|length)==0' catalog.json
           curl -sS -D x402-headers.txt -o x402-body.json -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1 > x402-status.txt
           printf 'x402_status='; cat x402-status.txt; echo
           echo '--- x402 headers ---'; sed -n '1,120p' x402-headers.txt
           echo '--- x402 body bytes ---'; wc -c x402-body.json
           echo '--- x402 body ---'; cat x402-body.json; echo
-          test "$(cat x402-status.txt)" = 402
-          grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
-          PAYMENT_REQUIRED="$(awk 'BEGIN{IGNORECASE=1} /^PAYMENT-REQUIRED:/{sub(/\r$/,""); sub(/^[^:]*:[[:space:]]*/,""); print}' x402-headers.txt | tail -1)"
-          test -n "$PAYMENT_REQUIRED"
-          printf '%s' "$PAYMENT_REQUIRED" | base64 -d > x402-decoded.json
-          jq -e '.x402Version==2 and .error=="PAYMENT-SIGNATURE header is required" and (.accepts|length)>0 and .accepts[0].scheme=="exact" and .accepts[0].network=="eip155:8453" and .accepts[0].amount=="15000000" and .accepts[0].payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .accepts[0].asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"' x402-decoded.json
-          printf 'x402_status='; cat x402-status.txt; echo
-          echo '--- x402 headers ---'; sed -n '1,80p' x402-headers.txt
-          echo '--- x402 body bytes ---'; wc -c x402-body.json
-          echo '--- x402 body ---'; cat x402-body.json; echo
-          test "$(cat x402-status.txt)" = 402
-          grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
-          echo "x402 challenge header present; body is informational because upstream 4xx handling may replace error bodies."
-          test -s x402-headers.txt
-          grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
+          test "$(cat x402-status.txt)" = 503
+          if grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt; then echo 'Unexpected payment challenge for paused offer' >&2; exit 1; fi
+          jq -e '.offer_status=="PAUSED" and (.resources|length)==0' x402-body.json
+          echo 'PASS: paused product returns 503 without a payment challenge.'
 
       - name: Verify public commerce, trust, and discovery consistency
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -283,17 +272,13 @@ jobs:
           echo '--- commerce.json ---'; cat commerce.json
           echo '--- trust.json ---'; cat trust.json
           echo '--- llms.txt (head) ---'; sed -n '1,120p' llms.txt
-          jq -e '.schema_version=="atlas.commerce.v1" and .provider=="ATLAS" and .audience=="AI agents and agent systems" and .product_id=="atlas_ai_data_qa_v1"' commerce.json
-          jq -e '.pricing.mode=="FOUNDER_QUOTE" and (.pricing.indicative_usdc|tonumber)==15' commerce.json
-          jq -e '.protocols.a2a=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocols.x402_requirements=="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1" and .payment.network=="eip155:8453" and .payment.asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .payment.payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .payment.x402_settlement=="IMPLEMENTED_UNVERIFIED"' commerce.json
+          jq -e '.schema_version=="atlas.commerce.v1" and .provider=="ATLAS" and .audience=="AI agents and agent systems" and .offer_status=="PAUSED" and .pricing==null and .payment==null and .safety.outbound_spend_usdc==0 and .safety.automatic_payouts==false' commerce.json
           jq -e '.ok==true and .verified==true and (.metrics.delivered_orders|tonumber)>=0 and (.metrics.paid_orders|tonumber)>=0 and (.metrics.failed_or_review_orders|tonumber)>=0 and .verification_scope=="LIVE_LEDGER_QUERY; REAL_BASE_TX_HASH_REQUIRED; MOCK_TESTNET_SIMULATION_EXCLUDED" and (.metrics.simulated_orders_excluded|tonumber)>=0 and (.metrics.simulated_paid_orders_excluded|tonumber)>=0 and (.metrics.verified_production_orders|tonumber)>=0 and (.recent|length)<=20' trust.json
-          grep -Fq 'atlas_ai_data_qa_v1' llms.txt
-          grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/a2a' llms.txt
-          grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1' llms.txt
+          grep -Fq 'paid offer PAUSED' llms.txt
+          ! grep -Fq '15 USDC' llms.txt
           curl --fail-with-body --silent --show-error "$BASE/.well-known/agent-card.json" -o agent-card-consistency.json
           jq -e '.name=="ATLAS" and any(.supportedInterfaces[]; .url=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding=="JSONRPC" and .protocolVersion=="1.0")' agent-card-consistency.json
-          jq -e 'any(.capabilities.extensions[]; .uri=="https://a2a-registry.org/extensions/registry/v1" and .params.identity.provider=="github" and .params.identity.username=="hosamhosaam5-ops" and .params.identity.packageName=="github.hosamhosaam5-ops.atlas")' agent-card-consistency.json
-          jq -e 'any(.capabilities.extensions[]; .uri=="https://atlas-worker.hosamhosaam5.workers.dev/extensions/commerce/v1" and .params.settlement=="BASE_RPC_INBOUND" and .params.x402Settlement=="IMPLEMENTED_UNVERIFIED")' agent-card-consistency.json
+          jq -e '(.skills|length)==0 and (.description|contains("paid data-QA offer is paused")) and (.securityRequirements|length)==0' agent-card-consistency.json
 
       - name: Upload A2A evidence
         if: always()
