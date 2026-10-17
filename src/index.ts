@@ -17,7 +17,7 @@ import { ensureCommercialSchema, listProducts, upsertProduct, createQuote, reque
 // @ts-ignore
 import { runCommercialIntegration } from './commercial/testHarness.js';
 // @ts-ignore
-import { processOrder } from './orders/intake.js';
+import { processOrder, extractCSV, extractXLSX } from './orders/intake.js';
 // @ts-ignore
 import { ensureOrderSchema } from './orders/schema.js';
 // @ts-ignore
@@ -86,6 +86,22 @@ interface Env {
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+
+// Fail closed for every public discovery surface when the paid offer is paused
+// or its status cannot be read.
+async function atlasOfferIsActive(db: D1Database): Promise<boolean> {
+  try {
+    const p = await db.prepare("SELECT status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first() as any;
+    return !!p && String(p.status) === "ACTIVE" && Number(p.price_usdc) === 15;
+  } catch { return false; }
+}
+function pausedAgentCard(origin: string) {
+  const card: any = agentCard(origin);
+  card.description = "ATLAS is operational, but its paid data-QA offer is paused. No paid order should be submitted.";
+  card.skills = [];
+  card.capabilities = { streaming: false, pushNotifications: false, extensions: [] };
+  return card;
+}
 
 async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext & { readonly auth?: { scope?: string[]; audience?: string }; readonly props?: Record<string, unknown> }) {
   const json=(data:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json",...headers}});
@@ -254,11 +270,19 @@ export default {
     // Initialize additive autonomy tables on first request; migration remains the canonical schema artifact.
     try { await ensureAutonomySchema(env.DB); } catch (e) { console.error('AUTONOMY_SCHEMA_INIT_FAILED', String(e)); }
     const origin = new URL(request.url).origin;
-    if (pathname === "/.well-known/agent-card.json") return new Response(JSON.stringify(agentCard(origin)),{headers:{"content-type":"application/json"}});
-    if (pathname === "/catalog.json" && request.method === "GET") { await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"catalog.json"); return new Response(a?.content||"{}",{headers:{"content-type":"application/json","cache-control":"public, max-age=300"}}); }
+    if (pathname === "/.well-known/agent-card.json") {
+      const active = await atlasOfferIsActive(env.DB);
+      return new Response(JSON.stringify(active ? agentCard(origin) : pausedAgentCard(origin)),{headers:{"content-type":"application/json","cache-control":"no-store"}});
+    }
+    if (pathname === "/catalog.json" && request.method === "GET") {
+      if (!await atlasOfferIsActive(env.DB)) return json({ schema_version:"atlas.catalog.v1", provider:"ATLAS", offer_status:"PAUSED", products:[], message:"No paid offers are currently available." },200);
+      await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"catalog.json");
+      return new Response(a?.content||"{}",{headers:{"content-type":"application/json","cache-control":"no-store"}});
+    }
     // Agent-native x402 discovery: Agent402 crawls the origin-level manifest
     // before probing paid routes. Keep this public and free; it contains no secrets.
     if (pathname === "/.well-known/x402" && request.method === "GET") {
+      if (!await atlasOfferIsActive(env.DB)) return json({ version:1, resources:[], offer_status:"PAUSED", instructions:"No paid ATLAS resource is currently available. Do not submit payment." },200);
       return json({
         version: 1,
         resources: [origin + "/x402/atlas_ai_data_qa_v1"],
@@ -266,6 +290,7 @@ export default {
       });
     }
     if (pathname === "/openapi.json" && request.method === "GET") {
+      if (!await atlasOfferIsActive(env.DB)) return json({ openapi:"3.1.0", info:{title:"ATLAS API",version:"1.0.0",description:"Paid data-QA offer is paused; no paid endpoint is available."}, servers:[{url:origin}], paths:{} },200);
       return json({
         openapi: "3.1.0",
         info: {
@@ -289,11 +314,19 @@ export default {
         }
       });
     }
-    if (pathname === "/llms.txt" && request.method === "GET") { await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"llms.txt"); return new Response(a?.content||"# ATLAS",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"public, max-age=300"}}); }
+    if (pathname === "/llms.txt" && request.method === "GET") {
+      if (!await atlasOfferIsActive(env.DB)) return new Response("# ATLAS\n\nStatus: paid offer PAUSED. No paid data-QA service is currently available. Do not submit payment.\n",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});
+      await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"llms.txt");
+      return new Response(a?.content||"# ATLAS",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});
+    }
     if (pathname === "/robots.txt" && request.method === "GET") return new Response("User-agent: *\nAllow: /\nAllow: /.well-known/\nAllow: /catalog.json\nAllow: /llms.txt\nDisallow: /dev/\nDisallow: /bridge/\nDisallow: /webhook/\n", {headers:{"content-type":"text/plain"}});
     if (pathname.startsWith("/r/") && request.method === "GET") { const code=decodeURIComponent(pathname.slice(3)).slice(0,100); await trackReferral(env.DB,{code,path:pathname,user_agent:request.headers.get("user-agent"),source:request.headers.get("referer")}); return Response.redirect(origin+"/catalog.json?ref="+encodeURIComponent(code),302); }
+    if (pathname === "/a2a" && request.method === "GET" && !await atlasOfferIsActive(env.DB)) return new Response(JSON.stringify(pausedAgentCard(origin)),{headers:{"content-type":"application/json","cache-control":"no-store"}});
     if (pathname === "/a2a") return handleA2A(request,env);
-    if (pathname === "/commerce.json" && request.method === "GET") return json(commerceManifest(origin,{wallet:env.ATLAS_WALLET_ADDRESS}));
+    if (pathname === "/commerce.json" && request.method === "GET") {
+      if (!await atlasOfferIsActive(env.DB)) return json({schema_version:"atlas.commerce.v1",provider:"ATLAS",audience:"AI agents and agent systems",offer_status:"PAUSED",pricing:null,protocols:{mcp:origin+"/mcp",a2a:origin+"/a2a"},payment:null,safety:{outbound_spend_usdc:0,external_outreach:"FOUNDER_CONTROLLED",automatic_payouts:false}});
+      return json(commerceManifest(origin,{wallet:env.ATLAS_WALLET_ADDRESS}));
+    }
     if (pathname === "/trust.json" && request.method === "GET") return json(await trustSnapshot(env.DB));
     if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1") {
       if (String((env as any).X402_TEST_MODE || "") === "1") {
@@ -334,6 +367,16 @@ export default {
       if (!input.client_email || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: "client_email and file_upload/file_base64 are required" }, 400);
       const MAX_ORDER_FILE_BYTES = 1_400_000;
       if (input.__file_bytes.length > MAX_ORDER_FILE_BYTES) return json({ ok: false, error: "FILE_SIZE_LIMIT_EXCEEDED", max_bytes: MAX_ORDER_FILE_BYTES, received_bytes: input.__file_bytes.length }, 413);
+      const ext = String(input.__file_name).toLowerCase().split(".").pop();
+      if (!["csv","xlsx"].includes(ext || "")) return json({ok:false,error:"UNSUPPORTED_FILE_TYPE",supported:["csv","xlsx"]},415);
+      try {
+        const parsed = ext === "xlsx" ? await extractXLSX(input.__file_bytes) : extractCSV(input.__file_bytes);
+        const usable = parsed.filter((r:any) => r && Object.values(r).some((v:any) => v !== null && v !== undefined && String(v).trim() !== ""));
+        if (!usable.length) return json({ok:false,error:"EMPTY_DATASET"},400);
+        if (parsed.length > 5000) return json({ok:false,error:"ROW_LIMIT_EXCEEDED",max_rows:5000,received_rows:parsed.length},413);
+      } catch (e:any) {
+        return json({ok:false,error:"INVALID_DATASET",detail:String(e?.message || e)},400);
+      }
 
       const signatureHeader = request.headers.get("PAYMENT-SIGNATURE");
       if (!signatureHeader) return new Response(JSON.stringify({ ok: false, error: "PAYMENT-SIGNATURE header is required" }), { status: 402, headers: { "content-type": "application/json", "cache-control": "no-store", "PAYMENT-REQUIRED": paymentRequiredHeader } });
@@ -403,8 +446,16 @@ export default {
         // Settlement already succeeded; preserve the paid transaction for reconciliation.
         const error = String(e?.message || e);
         await ensureOrderSchema(env.DB);
-        await env.DB.prepare("INSERT OR IGNORE INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,error,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'))")
-          .bind(input.__order_id, String(input.client_email).trim().toLowerCase(), input.tx_hash, input.__x402_product_id, "REVIEW_REQUIRED", "PAID", "X402_POST_SETTLEMENT_PROCESS_ERROR: " + error).run();
+        // Reconcile an existing PENDING claim instead of relying on INSERT OR IGNORE.
+        // A facilitator-confirmed payment remains PAID/REAL even when downstream code throws.
+        const existing = await env.DB.prepare("SELECT order_id FROM order_ledger WHERE order_id=?").bind(input.__order_id).first();
+        if (existing) {
+          await env.DB.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED',payment_status='PAID',tx_hash=?,product_id=?,settlement_mode='REAL',chain_id='eip155:8453',error=?,updated_at=datetime('now') WHERE order_id=?")
+            .bind(input.tx_hash,input.__x402_product_id,"X402_POST_SETTLEMENT_PROCESS_ERROR: "+error,input.__order_id).run();
+        } else {
+          await env.DB.prepare("INSERT INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,settlement_mode,chain_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))")
+            .bind(input.__order_id,String(input.client_email).trim().toLowerCase(),input.tx_hash,input.__x402_product_id,"REVIEW_REQUIRED","PAID","REAL","eip155:8453","X402_POST_SETTLEMENT_PROCESS_ERROR: "+error).run();
+        }
         order = { order_id: input.__order_id, order_status: "REVIEW_REQUIRED", error };
       }
 
