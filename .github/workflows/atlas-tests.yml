@@ -234,7 +234,7 @@ jobs:
           echo '--- x402 body ---'; cat x402-body.json; echo
           test "$(cat x402-status.txt)" = 503
           if grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt; then echo 'Unexpected payment challenge for paused offer' >&2; exit 1; fi
-          jq -e '.offer_status=="PAUSED" and (.resources|length)==0' x402-body.json
+          jq -e '.ok==false and .error=="X402_PRODUCT_NOT_READY"' x402-body.json
           echo 'PASS: paused product returns 503 without a payment challenge.'
 
       - name: Verify public commerce, trust, and discovery consistency
