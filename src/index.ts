@@ -17,7 +17,7 @@ import { ensureCommercialSchema, listProducts, upsertProduct, createQuote, reque
 // @ts-ignore
 import { runCommercialIntegration } from './commercial/testHarness.js';
 // @ts-ignore
-import { processOrder, extractCSV, extractXLSX } from './orders/intake.js';
+import { processOrder, extractCSV, extractXLSX, markSettlementReview } from './orders/intake.js';
 // @ts-ignore
 import { ensureOrderSchema } from './orders/schema.js';
 // @ts-ignore
@@ -446,16 +446,13 @@ export default {
         // Settlement already succeeded; preserve the paid transaction for reconciliation.
         const error = String(e?.message || e);
         await ensureOrderSchema(env.DB);
-        // Reconcile an existing PENDING claim instead of relying on INSERT OR IGNORE.
-        // A facilitator-confirmed payment remains PAID/REAL even when downstream code throws.
-        const existing = await env.DB.prepare("SELECT order_id FROM order_ledger WHERE order_id=?").bind(input.__order_id).first();
-        if (existing) {
-          await env.DB.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED',payment_status='PAID',tx_hash=?,product_id=?,settlement_mode='REAL',chain_id='eip155:8453',error=?,updated_at=datetime('now') WHERE order_id=?")
-            .bind(input.tx_hash,input.__x402_product_id,"X402_POST_SETTLEMENT_PROCESS_ERROR: "+error,input.__order_id).run();
-        } else {
-          await env.DB.prepare("INSERT INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,settlement_mode,chain_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))")
-            .bind(input.__order_id,String(input.client_email).trim().toLowerCase(),input.tx_hash,input.__x402_product_id,"REVIEW_REQUIRED","PAID","REAL","eip155:8453","X402_POST_SETTLEMENT_PROCESS_ERROR: "+error).run();
-        }
+        await markSettlementReview(env.DB, {
+          order_id: input.__order_id,
+          client_email: input.client_email,
+          tx_hash: input.tx_hash,
+          product_id: input.__x402_product_id,
+          error,
+        });
         order = { order_id: input.__order_id, order_status: "REVIEW_REQUIRED", error };
       }
 
