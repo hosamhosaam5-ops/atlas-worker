@@ -5,12 +5,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, existsSync } from 'node:fs';
 import {
   prepareOrderMeta, applyResolvedPrice, applyTestPrepay, cleanAndQA,
-  extractCSV, extractXLSX, buildCleanCSV, processOrder, deliverOrder,
+  extractCSV, extractXLSX, buildCleanCSV, processOrder, deliverOrder, markSettlementReview,
 } from '../src/orders/intake.js';
 import { evaluatePayment, evaluatePaymentSafe, fetchReceipt, WALLET, USDC_CONTRACT } from '../src/orders/payment.js';
 import { getFileStorage } from '../src/orders/storage.js';
 import { getEmailProvider } from '../src/orders/email.js';
 import { ensureOrderSchema } from '../src/orders/schema.js';
+
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -167,6 +168,84 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   }
 })();
 
+// ================= REGRESSION: x402 paid order stores real settlement metadata =================
+(async function () {
+  const db = await freshDb('/tmp/atlas-m4-x402-binding.sqlite');
+  await db.execRaw(`CREATE TABLE products (
+    product_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'order',
+    price_usdc REAL,
+    pricing_mode TEXT NOT NULL DEFAULT 'FIXED',
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await db.prepare("INSERT INTO products(product_id,name,description,unit,price_usdc,pricing_mode,status,version) VALUES(?,?,?,?,?,?,?,1)")
+    .bind('atlas_ai_data_qa_v1', 'ATLAS AI Agent Data QA', 'Synthetic fixture for x402 order regression', 'order', 15, 'FIXED', 'ACTIVE').run();
+  const env = {
+    PAYMENT_PROVIDER: 'MOCK',
+    PAYMENT_MOCK_SCENARIO: 'valid',
+    PAYMENT_MOCK_AMOUNT_USDC: '15',
+    ATLAS_WALLET_ADDRESS: '0x59Ea688b36464133E71873d8BeE8Fcb3BC369383',
+    EMAIL_PROVIDER: 'MOCK',
+    FILE_STORAGE: 'LOCAL',
+  };
+  const pendingTx = '0x' + '41'.repeat(32);
+  await db.prepare("INSERT INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,settlement_mode,chain_id) VALUES (?,?,?,?,?,?,?,?)")
+    .bind('ORD-X402-RECONCILE', 'agent@example.com', pendingTx, 'atlas_ai_data_qa_v1', 'PENDING', 'NOT_CHECKED', 'REAL', 'eip155:8453').run();
+  await markSettlementReview(db, { order_id:'ORD-X402-RECONCILE', client_email:'agent@example.com', tx_hash:pendingTx, product_id:'atlas_ai_data_qa_v1', error:'synthetic downstream throw' });
+  const reconciled = await db.prepare("SELECT status,payment_status,settlement_mode,chain_id,tx_hash,error FROM order_ledger WHERE order_id=?").bind('ORD-X402-RECONCILE').first();
+  T('x402.catch updates existing PENDING row for reconciliation', reconciled?.status === 'REVIEW_REQUIRED'
+    && reconciled?.payment_status === 'PAID' && reconciled?.settlement_mode === 'REAL'
+    && reconciled?.chain_id === 'eip155:8453' && reconciled?.tx_hash === pendingTx
+    && String(reconciled?.error).includes('synthetic downstream throw'), JSON.stringify(reconciled));
+  const tx = '0x' + '42'.repeat(32);
+  const r = await processOrder(db, env, baseInput({
+    tx_hash: tx,
+    __order_id: 'ORD-X402-BIND-REGRESSION',
+    __x402_expected_amount: 15,
+    __x402_product_id: 'atlas_ai_data_qa_v1',
+    __settlement_mode: 'REAL',
+    __chain_id: 'eip155:8453',
+  }));
+  T('x402.order pipeline reaches DELIVERED after payment-gate fixture', r.order_status === 'DELIVERED', JSON.stringify(r));
+  const row = await db.prepare("SELECT status,payment_status,amount_paid,expected_amount,settlement_mode,chain_id,tx_hash FROM order_ledger WHERE order_id=?")
+    .bind('ORD-X402-BIND-REGRESSION').first();
+  T('x402.order ledger preserves REAL settlement metadata', !!row
+    && row.status === 'DELIVERED'
+    && row.payment_status === 'PAID'
+    && Number(row.amount_paid) === 15
+    && Number(row.expected_amount) === 15
+    && row.settlement_mode === 'REAL'
+    && row.chain_id === 'eip155:8453'
+    && row.tx_hash === tx, JSON.stringify(row));
+
+  const failedTx = '0x' + '43'.repeat(32);
+  const failed = await processOrder(db, { ...env, EMAIL_MOCK_SCENARIO: 'fail' }, baseInput({
+    tx_hash: failedTx, __order_id: 'ORD-X402-DELIVERY-FAIL',
+    __x402_expected_amount: 15, __x402_product_id: 'atlas_ai_data_qa_v1',
+    __settlement_mode: 'REAL', __chain_id: 'eip155:8453',
+  }));
+  const failedRow = await db.prepare("SELECT status,payment_status,settlement_mode,chain_id,tx_hash FROM order_ledger WHERE order_id=?")
+    .bind('ORD-X402-DELIVERY-FAIL').first();
+  T('x402.delivery failure preserves confirmed REAL payment', failed.order_status === 'DELIVERY_FAILED'
+    && failedRow?.payment_status === 'PAID' && failedRow?.settlement_mode === 'REAL'
+    && failedRow?.chain_id === 'eip155:8453' && failedRow?.tx_hash === failedTx, JSON.stringify({order:failed.order_status,row:failedRow}));
+
+  await db.prepare("UPDATE products SET status='PAUSED' WHERE product_id='atlas_ai_data_qa_v1'").bind().run();
+  const mismatchTx = '0x' + '44'.repeat(32);
+  const mismatch = await processOrder(db, env, baseInput({ tx_hash:mismatchTx, __order_id:'ORD-X402-PRICE-RACE',
+    __x402_expected_amount:15, __x402_product_id:'atlas_ai_data_qa_v1', __settlement_mode:'REAL', __chain_id:'eip155:8453' }));
+  const mismatchRow = await db.prepare("SELECT status,payment_status,settlement_mode,chain_id,tx_hash FROM order_ledger WHERE order_id=?").bind('ORD-X402-PRICE-RACE').first();
+  T('x402 product pause after confirmed settlement requires review', mismatch.order_status === 'REVIEW_REQUIRED'
+    && mismatchRow?.status === 'REVIEW_REQUIRED' && mismatchRow?.payment_status === 'PAID'
+    && mismatchRow?.settlement_mode === 'REAL' && mismatchRow?.chain_id === 'eip155:8453'
+    && mismatchRow?.tx_hash === mismatchTx, JSON.stringify({order:mismatch.order_status,row:mismatchRow}));
+})();
+
 // ================= E2E: full lifecycle on real D1 =================
 (async function () {
   const db = await freshDb('/tmp/atlas-m4-a.sqlite');
@@ -216,9 +295,18 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   const { results: pf } = await db.prepare("SELECT DISTINCT payment_status FROM order_ledger WHERE status='PAYMENT_FAILED'").bind().all();
   T('e2e.ledger records each payment failure reason (>=5 distinct)', pf.length >= 5, JSON.stringify(pf));
 
-  // QA fail: file with only empty rows
-  r = await processOrder(db, env('valid'), baseInput({ tx_hash: '0x' + '33'.repeat(32), __file_bytes: csvBytes('a,b\n,\n,\n') }));
-  T('e2e.QA_FAILED all-empty rows', r.order_status === 'QA_FAILED' && r.qa_report.includes('FAIL'));
+  // Empty datasets must be rejected before payment verification, not after a paid gate.
+  const emptyTx = '0x' + '33'.repeat(32);
+  r = await processOrder(db, env('valid'), baseInput({ tx_hash: emptyTx, __file_bytes: csvBytes('a,b\n,\n,\n') }));
+  const emptyLedger = await db.prepare("SELECT status,payment_status FROM order_ledger WHERE tx_hash=?").bind(emptyTx).first();
+  T('e2e.EMPTY_DATASET rejected before payment', r.order_status === 'REJECTED' && String(r.reason).includes('EMPTY_DATASET')
+    && emptyLedger?.payment_status === 'NOT_CHECKED', JSON.stringify({order:r.order_status,ledger:emptyLedger}));
+  const unsupportedTx = '0x' + '35'.repeat(32);
+  r = await processOrder(db, env('valid'), baseInput({ tx_hash: unsupportedTx, __file_name: 'payload.json' }));
+  const unsupportedLedger = await db.prepare("SELECT status,payment_status FROM order_ledger WHERE tx_hash=?").bind(unsupportedTx).first();
+  T('e2e.UNSUPPORTED_FILE rejected before payment', r.order_status === 'REJECTED'
+    && String(r.reason).includes('UNSUPPORTED_FILE_TYPE') && unsupportedLedger?.payment_status === 'NOT_CHECKED',
+    JSON.stringify({order:r.order_status,ledger:unsupportedLedger}));
   // Starter commercial scope is capped at 5,000 parsed data rows and rejects oversized input before payment.
   const oversized = 'a\n' + Array.from({ length: 5001 }, (_, n) => String(n)).join('\n') + '\n';
   r = await processOrder(db, env('valid'), baseInput({ tx_hash: '0x' + '34'.repeat(32), __file_bytes: csvBytes(oversized) }));

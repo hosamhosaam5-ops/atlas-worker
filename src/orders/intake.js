@@ -209,20 +209,42 @@ async function insertLedger(db, row) {
 // The tx_hash stays claimed regardless of outcome: a paid-then-failed order can never be
 // re-submitted with the same tx (no free redelivery).
 async function finalizeLedger(db, orderId, row) {
+  // A confirmed payment is monotonic: later QA/delivery/validation failures may change
+  // the order state, but must never erase payment proof or downgrade PAID.
   await db.prepare(
-    `UPDATE order_ledger SET status=?, qa_status=?, qa_report=?, payment_status=?, amount_paid=?,
-       price_source=?, expected_amount=?, quote_ref=?, file_name=?, file_ext=?, rows_in=?, rows_out=?,
-       product_id=?, delivery_channel=?, delivery_status=?, error=?, settlement_mode=?, chain_id=?, updated_at=datetime('now')
-     WHERE order_id=?`
+    `UPDATE order_ledger SET status=?, qa_status=?, qa_report=?,
+       payment_status=CASE WHEN payment_status='PAID' THEN 'PAID' ELSE COALESCE(?, payment_status, 'NOT_CHECKED') END,
+       amount_paid=CASE WHEN payment_status='PAID' THEN COALESCE(amount_paid, ?) ELSE COALESCE(?, amount_paid) END,
+       price_source=COALESCE(?, price_source), expected_amount=COALESCE(?, expected_amount),
+       quote_ref=COALESCE(?, quote_ref), file_name=COALESCE(?, file_name), file_ext=COALESCE(?, file_ext),
+       rows_in=COALESCE(?, rows_in), rows_out=COALESCE(?, rows_out), product_id=COALESCE(?, product_id),
+       delivery_channel=COALESCE(?, delivery_channel), delivery_status=COALESCE(?, delivery_status),
+       error=COALESCE(?, error), settlement_mode=COALESCE(?, settlement_mode),
+       chain_id=COALESCE(?, chain_id), updated_at=datetime('now') WHERE order_id=?`
   ).bind(
     row.status, row.qa_status ?? null, row.qa_report ?? null, row.payment_status ?? null,
-    row.amount_paid ?? null, row.price_source ?? null, row.expected_amount ?? null,
+    row.amount_paid ?? null, row.amount_paid ?? null, row.price_source ?? null, row.expected_amount ?? null,
     row.quote_ref ?? null, row.file_name ?? null, row.file_ext ?? null, row.rows_in ?? null,
     row.rows_out ?? null, row.product_id ?? null, row.delivery_channel ?? null,
     row.delivery_status ?? null, row.last_error ?? null,
-    row.settlement_mode ?? ((row.payment_status === 'PAID' && row.tx_hash) ? 'REAL' : 'MOCK'),
-    row.chain_id ?? ((row.payment_status === 'PAID' && row.tx_hash) ? 'eip155:8453' : null), orderId
+    row.settlement_mode ?? null, row.chain_id ?? null, orderId
   ).run();
+}
+
+// Reconcile a facilitator-confirmed settlement when downstream processing throws.
+ // Existing claims are updated in place; INSERT OR IGNORE alone is unsafe because it
+ // can silently leave an existing PENDING/NOT_CHECKED row unchanged.
+export async function markSettlementReview(db, { order_id, client_email, tx_hash, product_id, error }) {
+  const existing = await db.prepare("SELECT order_id,tx_hash FROM order_ledger WHERE order_id=?").bind(String(order_id)).first();
+  const message = "X402_POST_SETTLEMENT_PROCESS_ERROR: " + String(error || "unknown downstream error");
+  if (existing) {
+    await db.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED',payment_status='PAID',tx_hash=CASE WHEN tx_hash IS NULL OR tx_hash='' THEN ? ELSE tx_hash END,product_id=COALESCE(product_id,?),settlement_mode='REAL',chain_id='eip155:8453',error=?,updated_at=datetime('now') WHERE order_id=?")
+      .bind(String(tx_hash),String(product_id),message,String(order_id)).run();
+  } else {
+    await db.prepare("INSERT INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,settlement_mode,chain_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))")
+      .bind(String(order_id),String(client_email).trim().toLowerCase(),String(tx_hash),String(product_id),"REVIEW_REQUIRED","PAID","REAL","eip155:8453",message).run();
+  }
+  return { order_id:String(order_id), status:"REVIEW_REQUIRED", payment_status:"PAID", settlement_mode:"REAL", chain_id:"eip155:8453" };
 }
 
 async function audit(db, source, externalId, payload, status, error) {
@@ -288,6 +310,15 @@ export async function processOrder(db, env, input) {
     return { order_id: meta.order_id, order_status: 'REJECTED', reason: 'Invalid or missing fields: ' + meta.invalid_reason, audit: a, latency_ms: Date.now() - t0 };
   }
 
+  // Validate the uploaded dataset before any payment verification/settlement path.
+  // Unsupported extensions and empty/unusable datasets must never consume a payment.
+  if (!['csv', 'xlsx'].includes(meta.file_ext)) {
+    const reason = 'UNSUPPORTED_FILE_TYPE: only .csv and .xlsx are supported';
+    await insertLedger(db, { order_id: meta.order_id, client_email: meta.client_email, tx_hash: meta.tx_hash,
+      status: 'REJECTED', payment_status: 'NOT_CHECKED', file_name: meta.file_name, file_ext: meta.file_ext, last_error: reason });
+    const a = await audit(db, 'order', meta.order_id, meta, 'REJECTED', reason);
+    return { order_id: meta.order_id, order_status: 'REJECTED', reason, audit: a, latency_ms: Date.now() - t0 };
+  }
   // --- Extract rows (ports Extract CSV / Extract XLSX + Repack File Binary) ---
   let rows = [];
   let extractError = null;
@@ -307,6 +338,14 @@ export async function processOrder(db, env, input) {
     return { order_id: meta.order_id, order_status: 'REJECTED', reason: 'Could not parse uploaded file: ' + extractError, audit: a, latency_ms: Date.now() - t0 };
   }
 
+  const usableRows = rows.filter(r => r && Object.values(r).some(v => v !== null && v !== undefined && String(v).trim() !== ''));
+  if (usableRows.length === 0) {
+    const reason = 'EMPTY_DATASET: no usable data rows were parsed';
+    await insertLedger(db, { order_id: meta.order_id, client_email: meta.client_email, tx_hash: meta.tx_hash,
+      status: 'REJECTED', payment_status: 'NOT_CHECKED', file_name: meta.file_name, file_ext: meta.file_ext, rows_in: rows.length, rows_out: 0, last_error: reason });
+    const a = await audit(db, 'order', meta.order_id, meta, 'REJECTED', reason);
+    return { order_id: meta.order_id, order_status: 'REJECTED', reason, audit: a, latency_ms: Date.now() - t0 };
+  }
   // Product contract: starter scope is capped at 5,000 parsed data rows. Reject before
   // quote/payment processing so an oversized upload never consumes a payment transaction.
   if (rows.length > MAX_DATA_ROWS) {
@@ -330,12 +369,19 @@ export async function processOrder(db, env, input) {
     const x402ProductId = String(input.__x402_product_id || '').trim();
     const product = await db.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind(x402ProductId).first();
     if (!product || String(product.status) !== 'ACTIVE' || Number(product.price_usdc) !== x402Amount) {
-      await finalizeLedger(db, meta.order_id, { status: 'PRICE_MISMATCH', payment_status: 'NOT_CHECKED', product_id: x402ProductId, last_error: 'X402_PRODUCT_PRICE_MISMATCH' });
-      const a = await audit(db, 'order', meta.order_id, meta, 'PRICE_MISMATCH', 'X402_PRODUCT_PRICE_MISMATCH');
-      return { order_id: meta.order_id, order_status: 'PRICE_MISMATCH', message: 'x402 payment amount does not match the active ATLAS product.', audit: a, latency_ms: Date.now() - t0 };
+      // The facilitator has already confirmed settlement before this pipeline is entered.
+      // Preserve the payment as PAID/REAL and require reconciliation if product state raced.
+      await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,amount_paid,expected_amount,price_source,settlement_mode,chain_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))")
+        .bind(meta.order_id,meta.client_email,meta.tx_hash,x402ProductId,'REVIEW_REQUIRED','PAID',x402Amount,x402Amount,'X402',settlementMode,chainId,'X402_PRODUCT_PRICE_MISMATCH_AFTER_SETTLEMENT').run();
+      await db.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED',payment_status='PAID',amount_paid=COALESCE(amount_paid,?),expected_amount=COALESCE(expected_amount,?),settlement_mode=?,chain_id=?,error='X402_PRODUCT_PRICE_MISMATCH_AFTER_SETTLEMENT',updated_at=datetime('now') WHERE order_id=?")
+        .bind(x402Amount,x402Amount,settlementMode,chainId,meta.order_id).run();
+      const a = await audit(db, 'order', meta.order_id, meta, 'REVIEW_REQUIRED', 'X402_PRODUCT_PRICE_MISMATCH_AFTER_SETTLEMENT');
+      return { order_id: meta.order_id, order_status: 'REVIEW_REQUIRED', message: 'Settlement was confirmed, but product state/price changed. Payment preserved for founder reconciliation.', audit: a, latency_ms: Date.now() - t0 };
     }
     priceMeta = { ...meta, expected_amount: x402Amount, price_source: 'X402', price_ok: true, quote_ref: 'x402', product_id: x402ProductId };
-    await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status, settlement_mode, chain_id) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED', ?, ?)").bind(meta.order_id, meta.client_email, meta.tx_hash, x402ProductId).run();
+    await db.prepare(
+      "INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status, settlement_mode, chain_id) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED', ?, ?)"
+    ).bind(meta.order_id, meta.client_email, meta.tx_hash, x402ProductId, settlementMode, chainId).run();
     const claimed = await db.prepare("SELECT order_id FROM order_ledger WHERE tx_hash=? LIMIT 1").bind(meta.tx_hash).first();
     if (!claimed || String(claimed.order_id) !== String(meta.order_id)) {
       const a = await audit(db, 'order', meta.order_id, meta, 'DUPLICATE_TX', 'tx_hash already claimed');
@@ -344,9 +390,12 @@ export async function processOrder(db, env, input) {
     const receipt = await fetchReceipt(env, meta.tx_hash);
     gate = evaluatePaymentSafe(receipt, priceMeta);
     if (gate.payment_status !== 'PAID') {
-      await finalizeLedger(db, meta.order_id, { status: 'PAYMENT_FAILED', payment_status: gate.payment_status, amount_paid: gate.amount_paid, product_id: x402ProductId, price_source: 'X402', expected_amount: x402Amount, quote_ref: 'x402', last_error: gate.payment_detail });
-      const a = await audit(db, 'order', meta.order_id, meta, 'PAYMENT_FAILED', gate.payment_status);
-      return { order_id: meta.order_id, order_status: 'PAYMENT_FAILED', message: 'Settled transaction did not independently verify as the required USDC payment.', audit: a, latency_ms: Date.now() - t0 };
+      // Facilitator settlement is already confirmed. A lagging/mismatched independent
+      // receipt check must trigger reconciliation, never erase the confirmed payment.
+      await db.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED',payment_status='PAID',amount_paid=COALESCE(amount_paid,?),expected_amount=?,price_source='X402',product_id=?,settlement_mode=?,chain_id=?,error=?,updated_at=datetime('now') WHERE order_id=?")
+        .bind(x402Amount,x402Amount,x402ProductId,settlementMode,chainId,'X402_RECEIPT_RECONCILIATION_REQUIRED: '+String(gate.payment_detail||gate.payment_status),meta.order_id).run();
+      const a = await audit(db, 'order', meta.order_id, meta, 'REVIEW_REQUIRED', gate.payment_detail || gate.payment_status);
+      return { order_id: meta.order_id, order_status: 'REVIEW_REQUIRED', message: 'Facilitator confirmed settlement but independent receipt verification needs reconciliation. Payment remains recorded as PAID.', audit: a, latency_ms: Date.now() - t0 };
     }
   } else {
     // --- Resolve Agreed Price (production only) ---
@@ -434,6 +483,7 @@ export async function processOrder(db, env, input) {
         status: 'QA_FAILED', qa_status: 'FAIL', qa_report: qa.qa_report,
         payment_status: qa.payment_status, amount_paid: qa.amount_paid,
         price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref,
+        settlement_mode: settlementMode, chain_id: chainId,
         file_name: meta.file_name, file_ext: meta.file_ext, rows_in: qa.rows_in, rows_out: qa.rows_out,
         last_error: qa.qa_report,
       });
@@ -461,6 +511,7 @@ export async function processOrder(db, env, input) {
     price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref, product_id: priceMeta.product_id,
     file_name: meta.file_name, file_ext: meta.file_ext, rows_in: qa.rows_in, rows_out: qa.rows_out,
     delivery_channel: 'email', delivery_status: dlv.delivery_status,
+    settlement_mode: settlementMode, chain_id: chainId,
     last_error: dlv.delivery_error || null,
   };
   if (meta.test_mode) {
