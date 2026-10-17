@@ -213,6 +213,18 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
     && row.settlement_mode === 'REAL'
     && row.chain_id === 'eip155:8453'
     && row.tx_hash === tx, JSON.stringify(row));
+
+  const failedTx = '0x' + '43'.repeat(32);
+  const failed = await processOrder(db, { ...env, EMAIL_MOCK_SCENARIO: 'fail' }, baseInput({
+    tx_hash: failedTx, __order_id: 'ORD-X402-DELIVERY-FAIL',
+    __x402_expected_amount: 15, __x402_product_id: 'atlas_ai_data_qa_v1',
+    __settlement_mode: 'REAL', __chain_id: 'eip155:8453',
+  }));
+  const failedRow = await db.prepare("SELECT status,payment_status,settlement_mode,chain_id,tx_hash FROM order_ledger WHERE order_id=?")
+    .bind('ORD-X402-DELIVERY-FAIL').first();
+  T('x402.delivery failure preserves confirmed REAL payment', failed.order_status === 'DELIVERY_FAILED'
+    && failedRow?.payment_status === 'PAID' && failedRow?.settlement_mode === 'REAL'
+    && failedRow?.chain_id === 'eip155:8453' && failedRow?.tx_hash === failedTx, JSON.stringify({order:failed.order_status,row:failedRow}));
 })();
 
 // ================= E2E: full lifecycle on real D1 =================
@@ -270,6 +282,12 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   const emptyLedger = await db.prepare("SELECT status,payment_status FROM order_ledger WHERE tx_hash=?").bind(emptyTx).first();
   T('e2e.EMPTY_DATASET rejected before payment', r.order_status === 'REJECTED' && String(r.reason).includes('EMPTY_DATASET')
     && emptyLedger?.payment_status === 'NOT_CHECKED', JSON.stringify({order:r.order_status,ledger:emptyLedger}));
+  const unsupportedTx = '0x' + '35'.repeat(32);
+  r = await processOrder(db, env('valid'), baseInput({ tx_hash: unsupportedTx, __file_name: 'payload.json' }));
+  const unsupportedLedger = await db.prepare("SELECT status,payment_status FROM order_ledger WHERE tx_hash=?").bind(unsupportedTx).first();
+  T('e2e.UNSUPPORTED_FILE rejected before payment', r.order_status === 'REJECTED'
+    && String(r.reason).includes('UNSUPPORTED_FILE_TYPE') && unsupportedLedger?.payment_status === 'NOT_CHECKED',
+    JSON.stringify({order:r.order_status,ledger:unsupportedLedger}));
   // Starter commercial scope is capped at 5,000 parsed data rows and rejects oversized input before payment.
   const oversized = 'a\n' + Array.from({ length: 5001 }, (_, n) => String(n)).join('\n') + '\n';
   r = await processOrder(db, env('valid'), baseInput({ tx_hash: '0x' + '34'.repeat(32), __file_bytes: csvBytes(oversized) }));
