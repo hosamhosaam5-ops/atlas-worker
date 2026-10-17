@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, existsSync } from 'node:fs';
 import {
   prepareOrderMeta, applyResolvedPrice, applyTestPrepay, cleanAndQA,
-  extractCSV, extractXLSX, buildCleanCSV, processOrder, deliverOrder,
+  extractCSV, extractXLSX, buildCleanCSV, processOrder, deliverOrder, markSettlementReview,
 } from '../src/orders/intake.js';
 import { evaluatePayment, evaluatePaymentSafe, fetchReceipt, WALLET, USDC_CONTRACT } from '../src/orders/payment.js';
 import { getFileStorage } from '../src/orders/storage.js';
@@ -193,6 +193,15 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
     EMAIL_PROVIDER: 'MOCK',
     FILE_STORAGE: 'LOCAL',
   };
+  const pendingTx = '0x' + '41'.repeat(32);
+  await db.prepare("INSERT INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,settlement_mode,chain_id) VALUES (?,?,?,?,?,?,?,?)")
+    .bind('ORD-X402-RECONCILE', 'agent@example.com', pendingTx, 'atlas_ai_data_qa_v1', 'PENDING', 'NOT_CHECKED', 'REAL', 'eip155:8453').run();
+  await markSettlementReview(db, { order_id:'ORD-X402-RECONCILE', client_email:'agent@example.com', tx_hash:pendingTx, product_id:'atlas_ai_data_qa_v1', error:'synthetic downstream throw' });
+  const reconciled = await db.prepare("SELECT status,payment_status,settlement_mode,chain_id,tx_hash,error FROM order_ledger WHERE order_id=?").bind('ORD-X402-RECONCILE').first();
+  T('x402.catch updates existing PENDING row for reconciliation', reconciled?.status === 'REVIEW_REQUIRED'
+    && reconciled?.payment_status === 'PAID' && reconciled?.settlement_mode === 'REAL'
+    && reconciled?.chain_id === 'eip155:8453' && reconciled?.tx_hash === pendingTx
+    && String(reconciled?.error).includes('synthetic downstream throw'), JSON.stringify(reconciled));
   const tx = '0x' + '42'.repeat(32);
   const r = await processOrder(db, env, baseInput({
     tx_hash: tx,
@@ -225,6 +234,16 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   T('x402.delivery failure preserves confirmed REAL payment', failed.order_status === 'DELIVERY_FAILED'
     && failedRow?.payment_status === 'PAID' && failedRow?.settlement_mode === 'REAL'
     && failedRow?.chain_id === 'eip155:8453' && failedRow?.tx_hash === failedTx, JSON.stringify({order:failed.order_status,row:failedRow}));
+
+  await db.prepare("UPDATE products SET status='PAUSED' WHERE product_id='atlas_ai_data_qa_v1'").run();
+  const mismatchTx = '0x' + '44'.repeat(32);
+  const mismatch = await processOrder(db, env, baseInput({ tx_hash:mismatchTx, __order_id:'ORD-X402-PRICE-RACE',
+    __x402_expected_amount:15, __x402_product_id:'atlas_ai_data_qa_v1', __settlement_mode:'REAL', __chain_id:'eip155:8453' }));
+  const mismatchRow = await db.prepare("SELECT status,payment_status,settlement_mode,chain_id,tx_hash FROM order_ledger WHERE order_id=?").bind('ORD-X402-PRICE-RACE').first();
+  T('x402 product pause after confirmed settlement requires review', mismatch.order_status === 'REVIEW_REQUIRED'
+    && mismatchRow?.status === 'REVIEW_REQUIRED' && mismatchRow?.payment_status === 'PAID'
+    && mismatchRow?.settlement_mode === 'REAL' && mismatchRow?.chain_id === 'eip155:8453'
+    && mismatchRow?.tx_hash === mismatchTx, JSON.stringify({order:mismatch.order_status,row:mismatchRow}));
 })();
 
 // ================= E2E: full lifecycle on real D1 =================
