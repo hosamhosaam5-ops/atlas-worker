@@ -353,9 +353,14 @@ export async function processOrder(db, env, input) {
     const x402ProductId = String(input.__x402_product_id || '').trim();
     const product = await db.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind(x402ProductId).first();
     if (!product || String(product.status) !== 'ACTIVE' || Number(product.price_usdc) !== x402Amount) {
-      await finalizeLedger(db, meta.order_id, { status: 'PRICE_MISMATCH', payment_status: 'NOT_CHECKED', product_id: x402ProductId, last_error: 'X402_PRODUCT_PRICE_MISMATCH' });
-      const a = await audit(db, 'order', meta.order_id, meta, 'PRICE_MISMATCH', 'X402_PRODUCT_PRICE_MISMATCH');
-      return { order_id: meta.order_id, order_status: 'PRICE_MISMATCH', message: 'x402 payment amount does not match the active ATLAS product.', audit: a, latency_ms: Date.now() - t0 };
+      // The facilitator has already confirmed settlement before this pipeline is entered.
+      // Preserve the payment as PAID/REAL and require reconciliation if product state raced.
+      await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,amount_paid,expected_amount,price_source,settlement_mode,chain_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))")
+        .bind(meta.order_id,meta.client_email,meta.tx_hash,x402ProductId,'REVIEW_REQUIRED','PAID',x402Amount,x402Amount,'X402',settlementMode,chainId,'X402_PRODUCT_PRICE_MISMATCH_AFTER_SETTLEMENT').run();
+      await db.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED',payment_status='PAID',amount_paid=COALESCE(amount_paid,?),expected_amount=COALESCE(expected_amount,?),settlement_mode=?,chain_id=?,error='X402_PRODUCT_PRICE_MISMATCH_AFTER_SETTLEMENT',updated_at=datetime('now') WHERE order_id=?")
+        .bind(x402Amount,x402Amount,settlementMode,chainId,meta.order_id).run();
+      const a = await audit(db, 'order', meta.order_id, meta, 'REVIEW_REQUIRED', 'X402_PRODUCT_PRICE_MISMATCH_AFTER_SETTLEMENT');
+      return { order_id: meta.order_id, order_status: 'REVIEW_REQUIRED', message: 'Settlement was confirmed, but product state/price changed. Payment preserved for founder reconciliation.', audit: a, latency_ms: Date.now() - t0 };
     }
     priceMeta = { ...meta, expected_amount: x402Amount, price_source: 'X402', price_ok: true, quote_ref: 'x402', product_id: x402ProductId };
     await db.prepare(
@@ -369,9 +374,12 @@ export async function processOrder(db, env, input) {
     const receipt = await fetchReceipt(env, meta.tx_hash);
     gate = evaluatePaymentSafe(receipt, priceMeta);
     if (gate.payment_status !== 'PAID') {
-      await finalizeLedger(db, meta.order_id, { status: 'PAYMENT_FAILED', payment_status: gate.payment_status, amount_paid: gate.amount_paid, product_id: x402ProductId, price_source: 'X402', expected_amount: x402Amount, quote_ref: 'x402', last_error: gate.payment_detail });
-      const a = await audit(db, 'order', meta.order_id, meta, 'PAYMENT_FAILED', gate.payment_status);
-      return { order_id: meta.order_id, order_status: 'PAYMENT_FAILED', message: 'Settled transaction did not independently verify as the required USDC payment.', audit: a, latency_ms: Date.now() - t0 };
+      // Facilitator settlement is already confirmed. A lagging/mismatched independent
+      // receipt check must trigger reconciliation, never erase the confirmed payment.
+      await db.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED',payment_status='PAID',amount_paid=COALESCE(amount_paid,?),expected_amount=?,price_source='X402',product_id=?,settlement_mode=?,chain_id=?,error=?,updated_at=datetime('now') WHERE order_id=?")
+        .bind(x402Amount,x402Amount,x402ProductId,settlementMode,chainId,'X402_RECEIPT_RECONCILIATION_REQUIRED: '+String(gate.payment_detail||gate.payment_status),meta.order_id).run();
+      const a = await audit(db, 'order', meta.order_id, meta, 'REVIEW_REQUIRED', gate.payment_detail || gate.payment_status);
+      return { order_id: meta.order_id, order_status: 'REVIEW_REQUIRED', message: 'Facilitator confirmed settlement but independent receipt verification needs reconciliation. Payment remains recorded as PAID.', audit: a, latency_ms: Date.now() - t0 };
     }
   } else {
     // --- Resolve Agreed Price (production only) ---
