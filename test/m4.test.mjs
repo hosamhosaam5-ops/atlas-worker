@@ -264,9 +264,12 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   const { results: pf } = await db.prepare("SELECT DISTINCT payment_status FROM order_ledger WHERE status='PAYMENT_FAILED'").bind().all();
   T('e2e.ledger records each payment failure reason (>=5 distinct)', pf.length >= 5, JSON.stringify(pf));
 
-  // QA fail: file with only empty rows
-  r = await processOrder(db, env('valid'), baseInput({ tx_hash: '0x' + '33'.repeat(32), __file_bytes: csvBytes('a,b\n,\n,\n') }));
-  T('e2e.QA_FAILED all-empty rows', r.order_status === 'QA_FAILED' && r.qa_report.includes('FAIL'));
+  // Empty datasets must be rejected before payment verification, not after a paid gate.
+  const emptyTx = '0x' + '33'.repeat(32);
+  r = await processOrder(db, env('valid'), baseInput({ tx_hash: emptyTx, __file_bytes: csvBytes('a,b\n,\n,\n') }));
+  const emptyLedger = await db.prepare("SELECT status,payment_status FROM order_ledger WHERE tx_hash=?").bind(emptyTx).first();
+  T('e2e.EMPTY_DATASET rejected before payment', r.order_status === 'REJECTED' && String(r.reason).includes('EMPTY_DATASET')
+    && emptyLedger?.payment_status === 'NOT_CHECKED', JSON.stringify({order:r.order_status,ledger:emptyLedger}));
   // Starter commercial scope is capped at 5,000 parsed data rows and rejects oversized input before payment.
   const oversized = 'a\n' + Array.from({ length: 5001 }, (_, n) => String(n)).join('\n') + '\n';
   r = await processOrder(db, env('valid'), baseInput({ tx_hash: '0x' + '34'.repeat(32), __file_bytes: csvBytes(oversized) }));
