@@ -231,6 +231,22 @@ async function finalizeLedger(db, orderId, row) {
   ).run();
 }
 
+// Reconcile a facilitator-confirmed settlement when downstream processing throws.
+ // Existing claims are updated in place; INSERT OR IGNORE alone is unsafe because it
+ // can silently leave an existing PENDING/NOT_CHECKED row unchanged.
+export async function markSettlementReview(db, { order_id, client_email, tx_hash, product_id, error }) {
+  const existing = await db.prepare("SELECT order_id,tx_hash FROM order_ledger WHERE order_id=?").bind(String(order_id)).first();
+  const message = "X402_POST_SETTLEMENT_PROCESS_ERROR: " + String(error || "unknown downstream error");
+  if (existing) {
+    await db.prepare("UPDATE order_ledger SET status='REVIEW_REQUIRED',payment_status='PAID',tx_hash=CASE WHEN tx_hash IS NULL OR tx_hash='' THEN ? ELSE tx_hash END,product_id=COALESCE(product_id,?),settlement_mode='REAL',chain_id='eip155:8453',error=?,updated_at=datetime('now') WHERE order_id=?")
+      .bind(String(tx_hash),String(product_id),message,String(order_id)).run();
+  } else {
+    await db.prepare("INSERT INTO order_ledger (order_id,client_email,tx_hash,product_id,status,payment_status,settlement_mode,chain_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))")
+      .bind(String(order_id),String(client_email).trim().toLowerCase(),String(tx_hash),String(product_id),"REVIEW_REQUIRED","PAID","REAL","eip155:8453",message).run();
+  }
+  return { order_id:String(order_id), status:"REVIEW_REQUIRED", payment_status:"PAID", settlement_mode:"REAL", chain_id:"eip155:8453" };
+}
+
 async function audit(db, source, externalId, payload, status, error) {
   try {
     await db.prepare(
