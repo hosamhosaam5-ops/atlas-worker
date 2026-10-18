@@ -343,13 +343,10 @@ export default {
       if (!wallet) return json({ ok: false, error: "X402_WALLET_NOT_CONFIGURED" }, 503);
       const product = await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
       if (!product || String(product.status) !== "ACTIVE" || Number(product.price_usdc) !== 15) return json({ ok: false, error: "X402_PRODUCT_NOT_READY" }, 503);
-      // In local test mode only, synthetic fixtures may exercise the challenge route. A
-      // deployed paid offer must have a real payment verifier and a live delivery adapter
+      // A paid offer must have a real payment verifier and a live delivery adapter
       // configured before advertising a payable challenge or settling customer funds.
-      if (!isLocalX402TestMode(env as any)) {
-        const readinessError = getPaidOfferReadinessError(env as any);
-        if (readinessError) return json({ ok: false, error: "X402_OFFER_NOT_READY", detail: readinessError }, 503);
-      }
+      const readinessError = getPaidOfferReadinessError(env as any);
+      if (readinessError) return json({ ok: false, error: "X402_OFFER_NOT_READY", detail: readinessError }, 503);
       const req = x402Requirements(origin, { wallet, asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" });
       const paymentRequirements = req.accepts[0];
       const paymentRequiredHeader = btoa(JSON.stringify(req));
