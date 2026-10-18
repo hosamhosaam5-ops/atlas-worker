@@ -51,6 +51,8 @@ import { assertFounderIdentity, assertFounderCanActivateProduct } from './mcp/au
 import { isLocalX402TestMode } from './core/runtimeFlags.js';
 // @ts-ignore
 import { getPaidOfferReadinessError } from './core/paidOfferReadiness.js';
+// @ts-ignore
+import { normalizeActiveCommerceManifestRequest } from './core/commerceManifestGuard.js';
 
 interface Env {
   DB: D1Database;
@@ -223,8 +225,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
     if(!await atlasOfferIsActive(env.DB,env)){
      out={schema_version:"atlas.commerce.v1",provider:"ATLAS",audience:"AI agents and agent systems",product_id:"atlas_ai_data_qa_v1",offer_status:"PAUSED",pricing:null,protocols:{mcp:manifestOrigin+"/mcp",a2a:manifestOrigin+"/a2a"},payment:null,safety:{outbound_spend_usdc:0,external_outreach:"FOUNDER_CONTROLLED",automatic_payouts:false}};
     }else out=commerceManifest(manifestOrigin,{
-     product_id: String(args.product_id || "atlas_ai_data_qa_v1"),
-     price_usdc: args.price_usdc === undefined ? 15 : Number(args.price_usdc),
+     ...normalizeActiveCommerceManifestRequest(args),
      wallet:env.ATLAS_WALLET_ADDRESS
     });
    }
