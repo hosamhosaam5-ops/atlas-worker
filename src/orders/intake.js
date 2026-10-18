@@ -17,6 +17,14 @@ import { emitAgentEvent } from '../autonomy/p1.js';
 
 const MAX_DATA_ROWS = 5000;
 
+// Validate payment-provider configuration before inserting a transaction claim. A
+// misconfiguration must not permanently reserve a tx_hash and prevent a later retry.
+function assertKnownPaymentProvider(env) {
+  const provider = String(env?.PAYMENT_PROVIDER || '').trim().toUpperCase();
+  if (!provider) throw new Error('PAYMENT_PROVIDER_REQUIRED');
+  if (!['MOCK', 'BASE_RPC'].includes(provider)) throw new Error('unknown PAYMENT_PROVIDER: ' + provider);
+}
+
 // ---------- Prepare Order Meta (verbatim port) ----------
 export function prepareOrderMeta(first, hasFile, env = {}) {
   const fileKeys = hasFile ? [hasFile] : [];
@@ -379,6 +387,7 @@ export async function processOrder(db, env, input) {
       return { order_id: meta.order_id, order_status: 'REVIEW_REQUIRED', message: 'Settlement was confirmed, but product state/price changed. Payment preserved for founder reconciliation.', audit: a, latency_ms: Date.now() - t0 };
     }
     priceMeta = { ...meta, expected_amount: x402Amount, price_source: 'X402', price_ok: true, quote_ref: 'x402', product_id: x402ProductId };
+    assertKnownPaymentProvider(env);
     await db.prepare(
       "INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status, settlement_mode, chain_id) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED', ?, ?)"
     ).bind(meta.order_id, meta.client_email, meta.tx_hash, x402ProductId, settlementMode, chainId).run();
@@ -418,6 +427,7 @@ export async function processOrder(db, env, input) {
     // D1 is single-threaded and the UNIQUE(tx_hash) index is the concurrency authority.
     // Use INSERT OR IGNORE so a concurrent duplicate becomes a normal business result
     // rather than an uncaught UNIQUE exception; the follow-up read identifies the winner.
+    assertKnownPaymentProvider(env);
     await db.prepare("INSERT OR IGNORE INTO order_ledger (order_id, client_email, tx_hash, product_id, status, payment_status, settlement_mode, chain_id) VALUES (?, ?, ?, ?, 'PENDING', 'NOT_CHECKED', ?, ?)")
       .bind(meta.order_id, meta.client_email, meta.tx_hash, priceMeta.product_id || null, settlementMode, chainId).run();
 
