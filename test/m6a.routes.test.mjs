@@ -176,13 +176,29 @@ test('route.dev-endpoints: DEV_MODE=1 exposes local diagnostics, missing DEV_MOD
   }
 });
 
-test('route.x402: mock email blocks payment challenge even when the local fixture activates a product', async () => {
+test('route.x402: mock email blocks payment and all public manifests stay paused', async () => {
   const r = await fetch(BASE + '/x402/atlas_ai_data_qa_v1');
   assert.equal(r.status, 503);
   const j = await r.json();
   assert.equal(j.error, 'X402_OFFER_NOT_READY');
   assert.equal(j.detail, 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
   assert.equal(r.headers.get('PAYMENT-REQUIRED'), null, 'no payment challenge may be advertised without real delivery');
+
+  const catalog = await (await fetch(BASE + '/catalog.json')).json();
+  assert.equal(catalog.offer_status, 'PAUSED');
+  assert.equal(catalog.products.length, 0);
+  const commerce = await (await fetch(BASE + '/commerce.json')).json();
+  assert.equal(commerce.offer_status, 'PAUSED');
+  assert.equal(commerce.pricing, null);
+  assert.equal(commerce.payment, null);
+  const discovery = await (await fetch(BASE + '/.well-known/x402')).json();
+  assert.equal(discovery.offer_status, 'PAUSED');
+  assert.equal(discovery.resources.length, 0);
+  const card = await (await fetch(BASE + '/.well-known/agent-card.json')).json();
+  assert.equal(card.skills.length, 0);
+  const openapi = await (await fetch(BASE + '/openapi.json')).json();
+  assert.deepEqual(openapi.paths, {});
+  assert.match(await (await fetch(BASE + '/llms.txt')).text(), /PAUSED/);
 });
 
 test('route.404: unknown path -> 404 JSON', async () => {
