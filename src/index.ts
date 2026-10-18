@@ -45,6 +45,10 @@ import { ensureGrowthAssets, getGrowthAsset, runGrowthCycle, growthSnapshot, tra
 import { commerceManifest, trustSnapshot, createCommerceSession, advanceCommerceSession, commerceSnapshot } from './autonomy/p3.js';
 import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { handleAccessRequest } from './mcp/access-handler.ts';
+// @ts-ignore
+import { assertFounderIdentity, assertFounderCanActivateProduct } from './mcp/authorization.js';
+// @ts-ignore
+import { isLocalX402TestMode } from './core/runtimeFlags.js';
 
 interface Env {
   DB: D1Database;
@@ -191,13 +195,12 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="write_state"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_STATE_ROWS");let written=0;for(const row of args.rows){if(!row||!row.idempotency_key)throw new Error("INVALID_STATE_ROW");if(String(row.record_kind||"").toLowerCase()==="approval"||String(row.entity_type||"").toLowerCase()==="approval")throw new Error("APPROVAL_STATE_FORBIDDEN");const payload=row.payload_json!==undefined?String(row.payload_json):JSON.stringify(row.payload??{});await env.DB.prepare("INSERT INTO execution_state (idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,payload_json,error_code,attempt_count,delivery_state,message_key,chunk_index,expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(idempotency_key) DO UPDATE SET status=excluded.status,payload_json=excluded.payload_json,updated_at=datetime('now')").bind(String(row.idempotency_key),row.record_kind??null,row.correlation_id??null,row.request_id??null,row.entity_type??null,row.entity_id??null,row.action_id??null,row.tool??null,row.status??null,row.progress??null,payload,row.error_code??null,row.attempt_count??0,row.delivery_state??null,row.message_key??null,row.chunk_index??null,row.expires_at??null).run();written++;}out={written};}
    else if(name==="write_memory"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_MEMORY_ROWS");for(const row of args.rows){if(!row||!String(row.content||"").trim())throw new Error("INVALID_MEMORY_ROW");await env.DB.prepare("INSERT INTO ceo_memory (category,content) VALUES (?,?)").bind(String(row.category||"fact"),String(row.content)).run();}out={written:args.rows.length};}
    else if(name==="list_products"){out={products:await listProducts(env.DB,args.include_drafts===true)};}
-   else if(name==="upsert_product"){out=await upsertProduct(env.DB,args);}
+   else if(name==="upsert_product"){assertFounderCanActivateProduct(args,ctx,env);out=await upsertProduct(env.DB,args);}
    else if(name==="create_quote"){out=await createQuote(env.DB,args);}
    else if(name==="request_financial_approval"){out=await requestFinancialApproval(env.DB,args);}
    else if(name==="decide_financial_approval"){
+    assertFounderIdentity(ctx,env);
     const oauthSub=String((ctx as any)?.props?.login || (ctx as any)?.props?.sub || (ctx as any)?.props?.userId || "").trim();
-    const founderOauthSub=String(env.FOUNDER_OAUTH_SUB || "").trim();
-    if(!oauthSub || !founderOauthSub || oauthSub!==founderOauthSub) throw new Error("FOUNDER_IDENTITY_REQUIRED");
     out=await decideFinancialApproval(env.DB,{...args,decided_by:oauthSub});
    }
    else if(name==="list_financial_approvals"){out={approvals:await listFinancialApprovals(env.DB,args)};}
@@ -329,7 +332,7 @@ export default {
     }
     if (pathname === "/trust.json" && request.method === "GET") return json(await trustSnapshot(env.DB));
     if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1") {
-      if (String((env as any).X402_TEST_MODE || "") === "1") {
+      if (isLocalX402TestMode(env as any)) {
         await ensureCommercialSchema(env.DB);
         const testProduct = await env.DB.prepare("SELECT product_id FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
         if (!testProduct) await upsertProduct(env.DB,{product_id:"atlas_ai_data_qa_v1",name:"ATLAS AI Agent Data QA",description:"Synthetic route-test product",unit:"order",price_usdc:15,pricing_mode:"FIXED",status:"ACTIVE"});
