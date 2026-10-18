@@ -170,6 +170,45 @@ jobs:
             registry-search.json
             registry-freshness.txt
           if-no-files-found: warn
+  paused_offer_read_only_probe:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify production paused-offer state using GET requests only
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://atlas-worker.hosamhosaam5.workers.dev'
+
+          curl --fail --silent --show-error --max-time 15 "$BASE/health" -o health.json
+          jq -e '.ok == true and .service == "atlas-worker" and .db == "ok"' health.json
+
+          curl --fail --silent --show-error --max-time 15 "$BASE/catalog.json" -o catalog.json
+          jq -e '.offer_status == "PAUSED" and (.products | length) == 0' catalog.json
+
+          curl --fail --silent --show-error --max-time 15 "$BASE/commerce.json" -o commerce.json
+          jq -e '.schema_version == "atlas.commerce.v1" and .provider == "ATLAS" and .audience == "AI agents and agent systems" and .offer_status == "PAUSED" and .pricing == null and .payment == null and .safety.outbound_spend_usdc == 0 and .safety.automatic_payouts == false' commerce.json
+
+          curl --fail --silent --show-error --max-time 15 "$BASE/.well-known/agent-card.json" -o agent-card.json
+          jq -e '.name == "ATLAS" and any(.supportedInterfaces[]; .url == "https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding == "JSONRPC" and .protocolVersion == "1.0") and (.skills | length) == 0 and (.description | contains("paid data-QA offer is paused")) and (.securityRequirements | length) == 0' agent-card.json
+
+          curl --fail --silent --show-error --max-time 15 "$BASE/llms.txt" -o llms.txt
+          grep -Fq 'paid offer PAUSED' llms.txt
+          if grep -Fq '15 USDC' llms.txt; then
+            echo 'Unexpected active-price claim while paid offer is paused.' >&2
+            exit 1
+          fi
+
+          # GET only: paused x402 must fail closed and never advertise a payment challenge.
+          x402_status="$(curl --silent --show-error --max-time 15 -D x402-headers.txt -o x402-body.json -w '%{http_code}' "$BASE/x402/atlas_ai_data_qa_v1")"
+          test "$x402_status" = "503"
+          if grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt; then
+            echo 'Unexpected PAYMENT-REQUIRED header for paused offer.' >&2
+            exit 1
+          fi
+          jq -e '.ok == false and .error == "X402_PRODUCT_NOT_READY"' x402-body.json
+          echo 'PASS: read-only production checks confirm the offer remains paused.'
   production_a2a_probe:
     if: github.event_name != 'pull_request'
     needs: [test, registry_submit]
