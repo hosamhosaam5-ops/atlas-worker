@@ -222,7 +222,11 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
     const manifestOrigin=new URL(request.url).origin;
     if(!await atlasOfferIsActive(env.DB,env)){
      out={schema_version:"atlas.commerce.v1",provider:"ATLAS",audience:"AI agents and agent systems",product_id:"atlas_ai_data_qa_v1",offer_status:"PAUSED",pricing:null,protocols:{mcp:manifestOrigin+"/mcp",a2a:manifestOrigin+"/a2a"},payment:null,safety:{outbound_spend_usdc:0,external_outreach:"FOUNDER_CONTROLLED",automatic_payouts:false}};
-    }else out=commerceManifest(manifestOrigin,{wallet:env.ATLAS_WALLET_ADDRESS});
+    }else out=commerceManifest(manifestOrigin,{
+     product_id: String(args.product_id || "atlas_ai_data_qa_v1"),
+     price_usdc: args.price_usdc === undefined ? 15 : Number(args.price_usdc),
+     wallet:env.ATLAS_WALLET_ADDRESS
+    });
    }
    else if(name==="commerce_snapshot"){out=await commerceSnapshot(env.DB);}
    else if(name==="create_commerce_session"){out=await createCommerceSession(env.DB,args);}
@@ -513,7 +517,7 @@ export default {
       } catch (e) {
         db = 'error';
       }
-      return new Response(JSON.stringify({ ok: true, service: 'atlas-worker', phase: 'M6', git_sha: env.ATLAS_GIT_SHA || 'unknown', db, ai_provider: env.AI_PROVIDER || 'MOCK', brave: env.BRAVE || 'MOCK', telegram: env.TELEGRAM_PROVIDER || 'MOCK', email: env.EMAIL_PROVIDER || 'MOCK', payment: env.PAYMENT_PROVIDER || 'MOCK' }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+      return new Response(JSON.stringify({ ok: true, service: 'atlas-worker', phase: 'M6', git_sha: env.ATLAS_GIT_SHA || 'unknown', db, ai_provider: env.AI_PROVIDER || 'MOCK', brave: env.BRAVE || 'MOCK', telegram: env.TELEGRAM_PROVIDER || 'MOCK', email: env.EMAIL_PROVIDER || 'MOCK', payment: String(env.PAYMENT_PROVIDER || '').trim() || 'UNSET' }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
     }
 
     // ---- M3 bridges (same contracts as backup workflows; MOCK adapters by default) ----
