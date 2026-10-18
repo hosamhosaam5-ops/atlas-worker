@@ -19,7 +19,7 @@ const MAX_DATA_ROWS = 5000;
 
 // Validate payment-provider configuration before inserting a transaction claim. A
 // misconfiguration must not permanently reserve a tx_hash and prevent a later retry.
-function assertKnownPaymentProvider(env) {
+export function assertKnownPaymentProvider(env) {
   const provider = String(env?.PAYMENT_PROVIDER || '').trim().toUpperCase();
   if (!provider) throw new Error('PAYMENT_PROVIDER_REQUIRED');
   if (!['MOCK', 'BASE_RPC'].includes(provider)) throw new Error('unknown PAYMENT_PROVIDER: ' + provider);
