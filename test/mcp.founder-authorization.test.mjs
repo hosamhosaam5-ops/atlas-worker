@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { assertFounderCanActivateProduct, assertFounderIdentity, hasFounderIdentity } from '../src/mcp/authorization.js';
 import { isLocalX402TestMode } from '../src/core/runtimeFlags.js';
 import { fetchReceipt } from '../src/orders/payment.js';
+import { assertKnownPaymentProvider } from '../src/orders/intake.js';
 
 const founderEnv = { FOUNDER_OAUTH_SUB: 'founder-sub-123' };
 const founderCtx = { props: { login: 'founder-sub-123' } };
@@ -45,6 +46,14 @@ test('X402 test mode is disabled unless both explicit local-test flags are set',
 test('payment receipt provider fails closed when PAYMENT_PROVIDER is missing', async () => {
   await assert.rejects(fetchReceipt({}, '0x' + '1'.repeat(64)), /PAYMENT_PROVIDER_REQUIRED/);
   await assert.rejects(fetchReceipt({ PAYMENT_PROVIDER: ' ' }, '0x' + '1'.repeat(64)), /PAYMENT_PROVIDER_REQUIRED/);
+});
+
+test('payment configuration is validated before transaction claims', () => {
+  assert.throws(() => assertKnownPaymentProvider({}), /PAYMENT_PROVIDER_REQUIRED/);
+  assert.throws(() => assertKnownPaymentProvider({ PAYMENT_PROVIDER: ' ' }), /PAYMENT_PROVIDER_REQUIRED/);
+  assert.throws(() => assertKnownPaymentProvider({ PAYMENT_PROVIDER: 'UNKNOWN' }), /unknown PAYMENT_PROVIDER/);
+  assert.doesNotThrow(() => assertKnownPaymentProvider({ PAYMENT_PROVIDER: 'MOCK' }));
+  assert.doesNotThrow(() => assertKnownPaymentProvider({ PAYMENT_PROVIDER: 'BASE_RPC' }));
 });
 
 test('paid offer readiness fails closed when configuration is absent', async () => {
