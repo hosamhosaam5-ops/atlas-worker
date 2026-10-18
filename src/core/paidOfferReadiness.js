@@ -6,7 +6,7 @@ export function getPaidOfferReadinessError(env) {
   const wallet = String(env?.ATLAS_WALLET_ADDRESS || "").trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) return "PAID_WALLET_NOT_CONFIGURED";
 
-  const emailProvider = String(env?.EMAIL_PROVIDER || "MOCK").trim().toUpperCase();
+  const emailProvider = String(env?.EMAIL_PROVIDER || "MOCK");
   if (emailProvider !== "RESEND") return "PAID_DELIVERY_PROVIDER_NOT_LIVE";
 
   if (!String(env?.RESEND_API_KEY || "").trim() || !String(env?.EMAIL_FROM || "").trim()) {
