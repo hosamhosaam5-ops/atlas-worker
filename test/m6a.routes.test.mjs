@@ -141,6 +141,11 @@ test('route.dev-endpoints: DEV_MODE=1 exposes local diagnostics, missing DEV_MOD
       await new Promise(r2 => setTimeout(r2, 500));
     }
     assert.ok(up, 'secondary wrangler dev instance must start without DEV_MODE');
+    const pausedX402 = await fetch('http://127.0.0.1:8798/x402/atlas_ai_data_qa_v1');
+    assert.equal(pausedX402.status, 503, 'X402_TEST_MODE alone must not auto-activate the paid offer');
+    const pausedCatalog = await (await fetch('http://127.0.0.1:8798/catalog.json')).json();
+    assert.equal(pausedCatalog.offer_status, 'PAUSED');
+    assert.equal(pausedCatalog.products.length, 0);
     for (const p of ['/dev/events', '/dev/orders', '/dev/state', '/dev/memory']) {
       const rr = await fetch('http://127.0.0.1:8798' + p);
       assert.equal(rr.status, 404, p + ' must remain hidden when DEV_MODE is unset');
