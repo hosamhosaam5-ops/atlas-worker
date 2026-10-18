@@ -29,6 +29,26 @@ before(async () => {
   for (const f of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql', 'schema-m6.sql']) {
     execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file ./${f}`, { cwd: ROOT, stdio: 'ignore' });
   }
+  // Production commerce schema is established independently from the core M6 SQL files.
+  // Seed the empty product table in local D1 so the no-DEV_MODE x402 probe can verify a clean 503.
+  const productSchemaPath = path.join(ROOT, '.local-commercial-test-schema.sql');
+  fs.writeFileSync(productSchemaPath, `CREATE TABLE IF NOT EXISTS products (
+    product_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'order',
+    price_usdc REAL,
+    pricing_mode TEXT NOT NULL DEFAULT 'FOUNDER_QUOTE',
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );\n`);
+  try {
+    execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file "${productSchemaPath}"`, { cwd: ROOT, stdio: 'ignore' });
+  } finally {
+    fs.rmSync(productSchemaPath, { force: true });
+  }
   proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'AI_PROVIDER:WORKERS_AI', '--var', 'TELEGRAM_PROVIDER:LIVE', '--var', 'DEV_MODE:1', '--var', 'X402_TEST_MODE:1'], { cwd: ROOT, stdio: 'ignore', detached: true });
   proc.unref();
   await waitUp();
