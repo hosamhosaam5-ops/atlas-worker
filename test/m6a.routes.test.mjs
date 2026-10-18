@@ -176,6 +176,15 @@ test('route.dev-endpoints: DEV_MODE=1 exposes local diagnostics, missing DEV_MOD
   }
 });
 
+test('route.x402: mock email blocks payment challenge even when the local fixture activates a product', async () => {
+  const r = await fetch(BASE + '/x402/atlas_ai_data_qa_v1');
+  assert.equal(r.status, 503);
+  const j = await r.json();
+  assert.equal(j.error, 'X402_OFFER_NOT_READY');
+  assert.equal(j.detail, 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
+  assert.equal(r.headers.get('PAYMENT-REQUIRED'), null, 'no payment challenge may be advertised without real delivery');
+});
+
 test('route.404: unknown path -> 404 JSON', async () => {
   const r = await fetch(BASE + '/nope');
   assert.equal(r.status, 404);
