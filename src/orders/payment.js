@@ -55,7 +55,8 @@ const MOCK_SCENARIOS = {
 
 // Fetch the raw JSON-RPC receipt response. MOCK never touches the network.
 export async function fetchReceipt(env, txHash) {
-  const provider = env.PAYMENT_PROVIDER || 'MOCK';
+  const provider = String(env.PAYMENT_PROVIDER || '').trim().toUpperCase();
+  if (!provider) throw new Error('PAYMENT_PROVIDER_REQUIRED');
   if (provider === 'MOCK') {
     const scenario = env.PAYMENT_MOCK_SCENARIO || 'valid';
     const fn = MOCK_SCENARIOS[scenario];

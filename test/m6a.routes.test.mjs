@@ -29,7 +29,27 @@ before(async () => {
   for (const f of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql', 'schema-m4.sql', 'schema-m5.sql', 'schema-m6.sql']) {
     execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file ./${f}`, { cwd: ROOT, stdio: 'ignore' });
   }
-  proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'AI_PROVIDER:WORKERS_AI', '--var', 'TELEGRAM_PROVIDER:LIVE', '--var', 'X402_TEST_MODE:1'], { cwd: ROOT, stdio: 'ignore', detached: true });
+  // Production commerce schema is established independently from the core M6 SQL files.
+  // Seed the empty product table in local D1 so the no-DEV_MODE x402 probe can verify a clean 503.
+  const productSchemaPath = path.join(ROOT, '.local-commercial-test-schema.sql');
+  fs.writeFileSync(productSchemaPath, `CREATE TABLE IF NOT EXISTS products (
+    product_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'order',
+    price_usdc REAL,
+    pricing_mode TEXT NOT NULL DEFAULT 'FOUNDER_QUOTE',
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );\n`);
+  try {
+    execSync(`npx wrangler d1 execute atlas_db --local --persist-to .wrangler-m6a --file "${productSchemaPath}"`, { cwd: ROOT, stdio: 'ignore' });
+  } finally {
+    fs.rmSync(productSchemaPath, { force: true });
+  }
+  proc = spawn('npx', ['wrangler', 'dev', '--local', '--port', String(PORT), '--persist-to', persist, '--var', 'AI_PROVIDER:WORKERS_AI', '--var', 'TELEGRAM_PROVIDER:LIVE', '--var', 'DEV_MODE:1', '--var', 'X402_TEST_MODE:1'], { cwd: ROOT, stdio: 'ignore', detached: true });
   proc.unref();
   await waitUp();
 });
@@ -124,25 +144,61 @@ test('route.bridges: siwe serves signing page (MOCK challenge), bountybook contr
   assert.ok(!('session_token' in j)); // token never returned
 });
 
-test('route.dev-endpoints: every /dev route is 404 without DEV_MODE, 200 with DEV_MODE=1', async () => {
+test('route.dev-endpoints: DEV_MODE=1 exposes local diagnostics, missing DEV_MODE stays hidden', async () => {
+  // The main route instance has both explicit local-test flags; each diagnostic route should respond.
   for (const p of ['/dev/events', '/dev/orders', '/dev/state', '/dev/memory']) {
     const r = await fetch(BASE + p);
-    assert.equal(r.status, 404, p + ' must be hidden without DEV_MODE');
-  } // guard active: DEV_MODE unset in this test env = production posture
-  // With DEV_MODE=1 the same endpoint serves (local-test seam only).
-  const proc2 = spawn('npx', ['wrangler', 'dev', '--local', '--port', '8798', '--persist-to', path.join(ROOT, '.wrangler-m6a'), '--var', 'DEV_MODE:1'], { cwd: ROOT, stdio: 'ignore', detached: true });
+    assert.equal(r.status, 200, p + ' must respond when DEV_MODE=1');
+  }
+
+  // A second isolated Worker uses the same local D1 but deliberately omits DEV_MODE.
+  const proc2 = spawn('npx', ['wrangler', 'dev', '--local', '--port', '8798', '--persist-to', path.join(ROOT, '.wrangler-m6a'), '--var', 'X402_TEST_MODE:1'], { cwd: ROOT, stdio: 'ignore', detached: true });
   proc2.unref();
   try {
-    let ok = false;
+    let up = false;
     for (let i = 0; i < 60; i++) {
-      try { const rr = await fetch('http://127.0.0.1:8798/dev/events'); if (rr.status === 200) { ok = true; break; } } catch {}
+      try { const rr = await fetch('http://127.0.0.1:8798/health'); if (rr.status === 200) { up = true; break; } } catch {}
       await new Promise(r2 => setTimeout(r2, 500));
     }
-    assert.ok(ok, '/dev/events must respond 200 when DEV_MODE=1');
+    assert.ok(up, 'secondary wrangler dev instance must start without DEV_MODE');
+    const pausedX402 = await fetch('http://127.0.0.1:8798/x402/atlas_ai_data_qa_v1');
+    assert.equal(pausedX402.status, 503, 'X402_TEST_MODE alone must not auto-activate the paid offer');
+    const pausedCatalog = await (await fetch('http://127.0.0.1:8798/catalog.json')).json();
+    assert.equal(pausedCatalog.offer_status, 'PAUSED');
+    assert.equal(pausedCatalog.products.length, 0);
+    for (const p of ['/dev/events', '/dev/orders', '/dev/state', '/dev/memory']) {
+      const rr = await fetch('http://127.0.0.1:8798' + p);
+      assert.equal(rr.status, 404, p + ' must remain hidden when DEV_MODE is unset');
+    }
   } finally {
     try { process.kill(-proc2.pid, 'SIGKILL'); } catch { try { proc2.kill('SIGKILL'); } catch {} }
     try { (await import('node:child_process')).execSync('pkill -9 -f "port 8798" || true'); } catch {}
   }
+});
+
+test('route.x402: mock email blocks payment and all public manifests stay paused', async () => {
+  const r = await fetch(BASE + '/x402/atlas_ai_data_qa_v1');
+  assert.equal(r.status, 503);
+  const j = await r.json();
+  assert.equal(j.error, 'X402_OFFER_NOT_READY');
+  assert.equal(j.detail, 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
+  assert.equal(r.headers.get('PAYMENT-REQUIRED'), null, 'no payment challenge may be advertised without real delivery');
+
+  const catalog = await (await fetch(BASE + '/catalog.json')).json();
+  assert.equal(catalog.offer_status, 'PAUSED');
+  assert.equal(catalog.products.length, 0);
+  const commerce = await (await fetch(BASE + '/commerce.json')).json();
+  assert.equal(commerce.offer_status, 'PAUSED');
+  assert.equal(commerce.pricing, null);
+  assert.equal(commerce.payment, null);
+  const discovery = await (await fetch(BASE + '/.well-known/x402')).json();
+  assert.equal(discovery.offer_status, 'PAUSED');
+  assert.equal(discovery.resources.length, 0);
+  const card = await (await fetch(BASE + '/.well-known/agent-card.json')).json();
+  assert.equal(card.skills.length, 0);
+  const openapi = await (await fetch(BASE + '/openapi.json')).json();
+  assert.deepEqual(openapi.paths, {});
+  assert.match(await (await fetch(BASE + '/llms.txt')).text(), /PAUSED/);
 });
 
 test('route.404: unknown path -> 404 JSON', async () => {
