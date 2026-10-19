@@ -30,6 +30,9 @@ jobs:
         run: npm test
 
   registry_submit:
+    # Never submit or mutate the external Registry from pull-request validation.
+    # Keep this integration limited to the canonical main branch.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
