@@ -1,6 +1,6 @@
 // M5 UNIFIED OUTBOX — single delivery engine for ALL channels (telegram + email).
 // One ruleset, one table (delivery_outbox), one taxonomy for every send:
-//   PENDING -> SENDING -> SENT | FAILED
+//   PENDING -> SENDING -> SENT | FAILED | UNCERTAIN (manual reconciliation only)
 //   * Concurrent claim safety: UNIQUE(dedupe_key) at DB level + atomic conditional transition
 //     (UPDATE ... WHERE status IN ('PENDING','FAILED')) — concurrent senders resolve to
 //     exactly ONE provider-attempt winner per dedupe key. This does NOT claim global
@@ -111,11 +111,16 @@ export function createOutbox(db) {
     return { row, shouldSend: changed > 0, alreadySent: false };
   }
 
-  async function settle(id, ok, attempts, error, providerMessageId) {
+  async function settle(id, ok, attempts, error, providerMessageId, uncertain = false) {
     if (ok) {
       await db.prepare(
         "UPDATE delivery_outbox SET status='SENT', attempts=?, last_error=NULL, provider_message_id=?, updated_at=datetime('now') WHERE id=?"
       ).bind(attempts, providerMessageId ?? null, id).run();
+    } else if (uncertain) {
+      // Do not automatically retry a send that may already have been accepted.
+      await db.prepare(
+        "UPDATE delivery_outbox SET status='UNCERTAIN', attempts=?, last_error=?, updated_at=datetime('now') WHERE id=?"
+      ).bind(attempts, String(error || 'delivery status uncertain'), id).run();
     } else {
       await db.prepare(
         "UPDATE delivery_outbox SET status='FAILED', attempts=?, last_error=?, updated_at=datetime('now') WHERE id=?"
