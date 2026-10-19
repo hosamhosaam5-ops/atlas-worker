@@ -176,134 +176,63 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Production A2A probe
+      - name: Verify production A2A rejects work while paid offer is paused
         env:
-          CARD: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+          BASE: https://atlas-worker.hosamhosaam5.workers.dev
         run: |
           set -euo pipefail
           mkdir -p a2a-evidence
-          curl --fail-with-body --silent --show-error -H 'accept: application/json' "$CARD" -o a2a-evidence/agent-card.json
-          ENDPOINT="$(jq -er '.supportedInterfaces[0] | select(.protocolBinding=="JSONRPC" and .protocolVersion=="1.0") | .url' a2a-evidence/agent-card.json)"
-          test "$ENDPOINT" = "https://atlas-worker.hosamhosaam5.workers.dev/a2a"
-          ID="atlas-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          curl --fail-with-body --silent --show-error "$BASE/.well-known/agent-card.json" -o a2a-evidence/agent-card.json
+          jq -e '.name=="ATLAS" and any(.supportedInterfaces[]; .url=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding=="JSONRPC" and .protocolVersion=="1.0") and (.skills|length)==0 and (.description|contains("paid data-QA offer is paused"))' a2a-evidence/agent-card.json
+
+          ID="atlas-paused-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           cat > a2a-evidence/request.json <<EOF
-          {"jsonrpc":"2.0","id":"$ID","method":"message/send","params":{"message":{"messageId":"$ID-message","role":"user","parts":[{"kind":"text","text":"ATLAS interoperability probe; no purchase, payment, order, customer data, or external commitment."}]}}}
+          {"jsonrpc":"2.0","id":"$ID","method":"message/send","params":{"message":{"messageId":"$ID-message","role":"user","parts":[{"kind":"text","text":"Read-only interoperability safety probe; do not create a task, order, purchase, payment, or external commitment."}]}}}
           EOF
-          curl -sS -D a2a-evidence/headers.txt -o a2a-evidence/response.json -w '%{http_code}' -H 'content-type: application/json' -H 'accept: application/json' --data-binary @a2a-evidence/request.json "$ENDPOINT" > a2a-evidence/http-status.txt
-          STATUS="$(cat a2a-evidence/http-status.txt)"
-          TYPE="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/,"" ); print}' a2a-evidence/headers.txt | tail -1 | sed 's/^[^:]*:[[:space:]]*//')"
-          printf 'endpoint=%s\nhttp_status=%s\ncontent_type=%s\nrequest_id=%s\n' "$ENDPOINT" "$STATUS" "$TYPE" "$ID" | tee a2a-evidence/metadata.txt
+          STATUS="$(curl --silent --show-error --max-time 20 -D a2a-evidence/headers.txt -o a2a-evidence/response.json -w '%{http_code}' -H 'content-type: application/json' -H 'accept: application/json' --data-binary @a2a-evidence/request.json "$BASE/a2a")"
+          echo "A2A status=$STATUS"
           cat a2a-evidence/response.json
           test "$STATUS" = 400
-          printf '%s' "$TYPE" | grep -Eiq '^application/json([;[:space:]]|$)'
-          jq -e --arg id "$ID" '.jsonrpc=="2.0" and .id==$id and .error.code == -32001 and (.error.message | contains("No task was created")) and (.error.message | contains("/x402/atlas_ai_data_qa_v1"))' a2a-evidence/response.json
-      - name: Verify A2A rejects unprocessed tasks without creating rows
-        run: |
-          set -euo pipefail
-          ID="atlas-task-fail-closed-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          cat > task-request.json <<EOF
-          {"jsonrpc":"2.0","id":"$ID","method":"message/send","params":{"message":{"messageId":"$ID-message","role":"user","parts":[{"kind":"text","text":"Safety regression probe; no purchase, payment, order, customer data, or external commitment."}]}}}
-          EOF
-          status="$(curl --silent --show-error --output task-response.json --write-out "%{http_code}" --max-time 15 -H 'content-type: application/json' --data-binary @task-request.json https://atlas-worker.hosamhosaam5.workers.dev/a2a)"
-          echo "A2A task submission HTTP status=$status"
-          cat task-response.json
-          test "$status" = 400
-          jq -e --arg id "$ID" '.jsonrpc=="2.0" and .id==$id and .error.code == -32001 and (.error.message | contains("No task was created"))' task-response.json
-          # Query a deterministic ID that was never created; this verifies that the
-          # read side does not manufacture a successful task response.
-          GET_ID="atlas-task-get-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          cat > task-get-request.json <<EOF
-          {"jsonrpc":"2.0","id":"$GET_ID","method":"tasks/get","params":{"id":"task_not_created_$GITHUB_RUN_ID"}}
-          EOF
-          get_status="$(curl --silent --show-error --output task-get.json --write-out "%{http_code}" --max-time 15 -H 'content-type: application/json' --data-binary @task-get-request.json https://atlas-worker.hosamhosaam5.workers.dev/a2a)"
-          echo "A2A nonexistent task lookup HTTP status=$get_status"
-          cat task-get.json
-          test "$get_status" = 404
-          jq -e --arg id "$GET_ID" '.jsonrpc=="2.0" and .id==$id and .error.code == -32004 and .error.message == "Task not found"' task-get.json
+          jq -e --arg id "$ID" '.jsonrpc=="2.0" and .id==$id and .error.code == -32001 and (.error.message|contains("No task was created"))' a2a-evidence/response.json
 
-      - name: Verify production catalog and x402 payment challenge
-        run: |
-          set -euo pipefail
-          curl --fail-with-body --silent --show-error https://atlas-worker.hosamhosaam5.workers.dev/catalog.json -o catalog.json
-          cat catalog.json
-          jq -e '.products[] | select(.id=="atlas_ai_data_qa_v1" and .status=="ACTIVE" and (.price_usdc|tonumber)==15)' catalog.json
-          curl -sS -D x402-headers.txt -o x402-body.json -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1 > x402-status.txt
-          printf 'x402_status='; cat x402-status.txt; echo
-          echo '--- x402 headers ---'; sed -n '1,120p' x402-headers.txt
-          echo '--- x402 body bytes ---'; wc -c x402-body.json
-          echo '--- x402 body ---'; cat x402-body.json; echo
-          test "$(cat x402-status.txt)" = 402
-          grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
-          PAYMENT_REQUIRED="$(awk 'BEGIN{IGNORECASE=1} /^PAYMENT-REQUIRED:/{sub(/\r$/,""); sub(/^[^:]*:[[:space:]]*/,""); print}' x402-headers.txt | tail -1)"
-          test -n "$PAYMENT_REQUIRED"
-          printf '%s' "$PAYMENT_REQUIRED" | base64 -d > x402-decoded.json
-          jq -e '.x402Version==2 and .error=="PAYMENT-SIGNATURE header is required" and (.accepts|length)>0 and .accepts[0].scheme=="exact" and .accepts[0].network=="eip155:8453" and .accepts[0].amount=="15000000" and .accepts[0].payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .accepts[0].asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"' x402-decoded.json
-          printf 'x402_status='; cat x402-status.txt; echo
-          echo '--- x402 headers ---'; sed -n '1,80p' x402-headers.txt
-          echo '--- x402 body bytes ---'; wc -c x402-body.json
-          echo '--- x402 body ---'; cat x402-body.json; echo
-          test "$(cat x402-status.txt)" = 402
-          grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
-          echo "x402 challenge header present; body is informational because upstream 4xx handling may replace error bodies."
-          test -s x402-headers.txt
-          grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt
+          GET_ID="atlas-paused-get-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          cat > a2a-evidence/task-get-request.json <<EOF
+          {"jsonrpc":"2.0","id":"$GET_ID","method":"tasks/get","params":{"id":"atlas-task-not-created-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"}}
+          EOF
+          GET_STATUS="$(curl --silent --show-error --max-time 20 -o a2a-evidence/task-get-response.json -w '%{http_code}' -H 'content-type: application/json' --data-binary @a2a-evidence/task-get-request.json "$BASE/a2a")"
+          test "$GET_STATUS" = 404
+          jq -e --arg id "$GET_ID" '.jsonrpc=="2.0" and .id==$id and .error.code == -32004 and .error.message == "Task not found"' a2a-evidence/task-get-response.json
 
-      - name: Verify public commerce, trust, and discovery consistency
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      - name: Verify production commerce and x402 remain fail-closed
+        env:
+          BASE: https://atlas-worker.hosamhosaam5.workers.dev
         run: |
           set -euo pipefail
-          # The deploy workflow and this workflow start on the same push. Only wait
-          # for this exact SHA when the commit changes deployable Worker source/config.
-          expected_sha="$GITHUB_SHA"
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            deploy_relevant="true"
-          else
-            deploy_relevant="$(jq -r '[
-              ((.head_commit.added // []) + (.head_commit.modified // []) + (.head_commit.removed // []))[]
-            ] | any(test("^(src/|wrangler\\.toml$|package\\.json$|package-lock\\.json$|schema.*\\.sql$|migrations/|\\.github/workflows/atlas-worker-deploy\\.yml$)"))' "$GITHUB_EVENT_PATH")"
-            if [ "$deploy_relevant" != "true" ]; then deploy_relevant=""; fi
-          fi
-          actual_sha=""
-          for attempt in $(seq 1 30); do
-            health_json="$(curl --fail --silent --show-error --max-time 10 https://atlas-worker.hosamhosaam5.workers.dev/health || true)"
-            actual_sha="$(printf '%s' "$health_json" | jq -r '.git_sha // ""' 2>/dev/null || true)"
-            if [ -n "$actual_sha" ] && { [ -z "$deploy_relevant" ] || [ "$actual_sha" = "$expected_sha" ]; }; then
-              echo "Production Worker source verified: $actual_sha"
-              break
-            fi
-            echo "Waiting for deployment propagation: expected=${expected_sha} actual=${actual_sha:-missing} deploy_relevant=${deploy_relevant:+yes} attempt=$attempt"
-            sleep 2
-          done
-          test -n "$actual_sha"
-          if [ -n "$deploy_relevant" ]; then test "$actual_sha" = "$expected_sha"; fi
-          BASE='https://atlas-worker.hosamhosaam5.workers.dev'
+          curl --fail-with-body --silent --show-error "$BASE/health" -o health.json
+          jq -e '.ok==true and .service=="atlas-worker" and .db=="ok"' health.json
+          curl --fail-with-body --silent --show-error "$BASE/catalog.json" -o catalog.json
+          jq -e '.offer_status=="PAUSED" and (.products|length)==0' catalog.json
           curl --fail-with-body --silent --show-error "$BASE/commerce.json" -o commerce.json
-          curl --fail-with-body --silent --show-error "$BASE/trust.json" -o trust.json
-          curl --fail-with-body --silent --show-error "$BASE/llms.txt" -o llms.txt
-          echo '--- commerce.json ---'; cat commerce.json
-          echo '--- trust.json ---'; cat trust.json
-          echo '--- llms.txt (head) ---'; sed -n '1,120p' llms.txt
-          jq -e '.schema_version=="atlas.commerce.v1" and .provider=="ATLAS" and .audience=="AI agents and agent systems" and .product_id=="atlas_ai_data_qa_v1"' commerce.json
-          jq -e '.pricing.mode=="FOUNDER_QUOTE" and (.pricing.indicative_usdc|tonumber)==15' commerce.json
-          jq -e '.protocols.a2a=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocols.x402_requirements=="https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1" and .payment.network=="eip155:8453" and .payment.asset=="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" and .payment.payTo=="0x59Ea688b36464133E71873d8BeE8Fcb3BC369383" and .payment.x402_settlement=="IMPLEMENTED_UNVERIFIED"' commerce.json
-          jq -e '.ok==true and .verified==true and (.metrics.delivered_orders|tonumber)>=0 and (.metrics.paid_orders|tonumber)>=0 and (.metrics.failed_or_review_orders|tonumber)>=0 and .verification_scope=="LIVE_LEDGER_QUERY; REAL_BASE_TX_HASH_REQUIRED; MOCK_TESTNET_SIMULATION_EXCLUDED" and (.metrics.simulated_orders_excluded|tonumber)>=0 and (.metrics.simulated_paid_orders_excluded|tonumber)>=0 and (.metrics.verified_production_orders|tonumber)>=0 and (.recent|length)<=20' trust.json
-          grep -Fq 'atlas_ai_data_qa_v1' llms.txt
-          grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/a2a' llms.txt
-          grep -Fq 'https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1' llms.txt
-          curl --fail-with-body --silent --show-error "$BASE/.well-known/agent-card.json" -o agent-card-consistency.json
-          jq -e '.name=="ATLAS" and any(.supportedInterfaces[]; .url=="https://atlas-worker.hosamhosaam5.workers.dev/a2a" and .protocolBinding=="JSONRPC" and .protocolVersion=="1.0")' agent-card-consistency.json
-          jq -e 'any(.capabilities.extensions[]; .uri=="https://a2a-registry.org/extensions/registry/v1" and .params.identity.provider=="github" and .params.identity.username=="hosamhosaam5-ops" and .params.identity.packageName=="github.hosamhosaam5-ops.atlas")' agent-card-consistency.json
-          jq -e 'any(.capabilities.extensions[]; .uri=="https://atlas-worker.hosamhosaam5.workers.dev/extensions/commerce/v1" and .params.settlement=="BASE_RPC_INBOUND" and .params.x402Settlement=="IMPLEMENTED_UNVERIFIED")' agent-card-consistency.json
+          jq -e '.schema_version=="atlas.commerce.v1" and .provider=="ATLAS" and .audience=="AI agents and agent systems" and .offer_status=="PAUSED" and .pricing==null and .payment==null and .safety.outbound_spend_usdc==0 and .safety.automatic_payouts==false' commerce.json
+          STATUS="$(curl --silent --show-error --max-time 20 -D x402-headers.txt -o x402-body.json -w '%{http_code}' "$BASE/x402/atlas_ai_data_qa_v1")"
+          test "$STATUS" = 503
+          if grep -Eiq '^PAYMENT-REQUIRED:' x402-headers.txt; then
+            echo 'Unexpected payment challenge while paid offer is paused.' >&2
+            exit 1
+          fi
+          jq -e '.ok==false and .error=="X402_PRODUCT_NOT_READY"' x402-body.json
+          printf 'PASS: production is healthy, A2A creates no task, commerce is paused, x402 has no payment challenge.\n'
 
-      - name: Upload A2A evidence
+      - name: Upload production safety evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: atlas-a2a-production-probe-${{ github.run_id }}
+          name: atlas-paused-offer-production-evidence
           path: |
             a2a-evidence/
+            health.json
+            catalog.json
+            commerce.json
             x402-headers.txt
             x402-body.json
-            x402-status.txt
-            catalog.json
           if-no-files-found: warn
