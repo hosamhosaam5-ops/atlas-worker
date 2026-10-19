@@ -50,7 +50,28 @@ jobs:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-precheck.json
+          set +e
+          status="$(curl --silent --show-error --max-time 20 -o registry-precheck.json -w '%{http_code}' 'https://api.a2a-registry.org/public/agents?q=ATLAS')"
+          curl_rc=$?
+          set -e
+          if [ "$curl_rc" -ne 0 ]; then
+            echo "::warning::A2A Registry precheck transport failed; no registry mutation will be attempted."
+            echo "authenticated=false" >> "$GITHUB_OUTPUT"
+            echo "exists=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$status" = "401" ] || [ "$status" = "403" ]; then
+            echo "::warning::A2A Registry API requires authorization ($status); safely skipping all registry writes and verification."
+            echo "authenticated=false" >> "$GITHUB_OUTPUT"
+            echo "exists=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$status" != "200" ]; then
+            echo "A2A Registry precheck returned unexpected HTTP $status." >&2
+            cat registry-precheck.json >&2 || true
+            exit 1
+          fi
+          echo "authenticated=true" >> "$GITHUB_OUTPUT"
           cat registry-precheck.json
           if grep -Fq "$AGENT_URL" registry-precheck.json; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -60,7 +81,7 @@ jobs:
           fi
 
       - name: Register ATLAS through Submit Agent
-        if: steps.precheck.outputs.exists != 'true'
+        if: steps.precheck.outputs.authenticated == 'true' && steps.precheck.outputs.exists == 'false'
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
@@ -109,7 +130,7 @@ jobs:
           NODE
 
       - name: Verify public registry independently
-        if: success()
+        if: success() && steps.precheck.outputs.authenticated == 'true'
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
@@ -118,7 +139,7 @@ jobs:
           cat registry-search.json
           grep -Fq "$AGENT_URL" registry-search.json
       - name: Monitor existing Registry metadata after deployment
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.precheck.outputs.authenticated == 'true'
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
         run: |
