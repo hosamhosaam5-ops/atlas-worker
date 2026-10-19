@@ -153,9 +153,10 @@ export function createOutbox(db) {
       attachments: resolved, parse_mode: opts.parse_mode,
     }, timeoutMs);
     const attempts = (row.attempts || 0) + 1;
-    await settle(row.id, res.ok, attempts, res.error, res.provider_message_id);
+    const uncertain = !res.ok && res.code === 'DELIVERY_UNCERTAIN';
+    await settle(row.id, res.ok, attempts, res.error, res.provider_message_id, uncertain);
     if (res.ok) return { delivery_status: 'SENT', duplicate: false, attempts, provider_message_id: res.provider_message_id };
-    return { delivery_status: 'FAILED', duplicate: false, attempts, error: res.error, error_code: res.code || 'PROVIDER_ERROR' };
+    return { delivery_status: uncertain ? 'UNCERTAIN' : 'FAILED', duplicate: false, attempts, error: res.error, error_code: res.code || 'PROVIDER_ERROR' };
   }
 
   return { deliver };
