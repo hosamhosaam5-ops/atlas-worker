@@ -69,19 +69,22 @@ export function getEmailProvider(env = {}) {
           });
         } catch {
           // Do not automatically retry an uncertain POST: it could already have been accepted.
-          return { ok: false, error: 'resend network error or timeout; delivery status uncertain; manual reconciliation required' };
+          return { ok: false, code: 'DELIVERY_UNCERTAIN', error: 'resend network error or timeout; delivery status uncertain; manual reconciliation required' };
         }
 
-        if (!res.ok) return { ok: false, error: 'resend http ' + res.status };
+        if (!res.ok) {
+          const uncertain = res.status === 408 || res.status >= 500;
+          return { ok: false, ...(uncertain ? { code: 'DELIVERY_UNCERTAIN' } : {}), error: 'resend http ' + res.status + (uncertain ? '; delivery status uncertain; manual reconciliation required' : '') };
+        }
 
         let body;
         try {
           body = await res.json();
         } catch {
-          return { ok: false, error: 'resend returned invalid JSON; delivery status uncertain; manual reconciliation required' };
+          return { ok: false, code: 'DELIVERY_UNCERTAIN', error: 'resend returned invalid JSON; delivery status uncertain; manual reconciliation required' };
         }
         if (!body || typeof body.id !== 'string' || !body.id.trim()) {
-          return { ok: false, error: 'resend response missing message ID; delivery status uncertain; manual reconciliation required' };
+          return { ok: false, code: 'DELIVERY_UNCERTAIN', error: 'resend response missing message ID; delivery status uncertain; manual reconciliation required' };
         }
         return { ok: true, provider_message_id: body.id };
       },
