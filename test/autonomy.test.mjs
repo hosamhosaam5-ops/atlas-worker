@@ -52,10 +52,12 @@ test('discovery registers every public capability with the registry key field', 
     const result = await discoverCapabilities(db);
     assert.equal(result.ok, true);
     assert.equal(result.results.length, 5);
+    assert.ok(result.results.every(x => x.status === 'DISCOVERY'));
     assert.deepEqual(registered.map(x => x.bindings[0]), [
       'agent_souk', 'agentgigs', 'ecc', 'okara_ai_cmo', 'free_llm_apis'
     ]);
     assert.ok(registered.every(x => typeof x.bindings[0] === 'string' && x.bindings[0].length > 0));
+    assert.ok(registered.every(x => typeof x.bindings[10] === 'string' && !Number.isNaN(Date.parse(x.bindings[10]))));
   } finally {
     globalThis.fetch = originalFetch;
   }
