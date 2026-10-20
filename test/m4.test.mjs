@@ -317,7 +317,7 @@ await (async function () {
   T('e2e.REJECTED invalid input', r.order_status === 'REJECTED' && r.reason.includes('tx_hash'));
 
   // delivery failure -> DELIVERY_FAILED, outbox FAILED, ledger DELIVERY_FAILED
-  r = await processOrder(db, env('valid', 'fail'), baseInput({ tx_hash: '0x' + 'cd'.repeat(32) }));
+  r = await processOrder(db, env('valid', 'fail'), baseInput({ tx_hash: '0x' + 'cd'.repeat(32), __order_id: 'ORD-DELIVERY-FAIL' }));
   T('e2e.DELIVERY_FAILED on adapter failure', r.order_status === 'DELIVERY_FAILED' && r.delivery.delivery_status === 'FAILED');
   const ob = await db.prepare("SELECT * FROM delivery_outbox WHERE order_id = ?").bind(r.order_id || '').all();
   const obRow = (await db.prepare('SELECT * FROM delivery_outbox').bind().all()).results[0];
