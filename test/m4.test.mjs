@@ -89,7 +89,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= UNIT: Payment gate — all 8 fixture cases (SYNTHETIC) =================
-(async function () {
+await (async function () {
   const meta = { wallet: WALLET, usdc_contract: USDC_CONTRACT, expected_amount: 1 };
   const env = (s) => ({ PAYMENT_PROVIDER: 'MOCK', PAYMENT_MOCK_SCENARIO: s });
   const cases = [
@@ -127,7 +127,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= UNIT: XLSX extraction (local logic only) =================
-(async function () {
+await (async function () {
   try {
     const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet([{ name: 'Ali', age: 30 }, { name: 'Sara', age: 25 }]);
@@ -143,7 +143,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= XLSX hardening regression (synthetic workbook) =================
-(async function () {
+await (async function () {
   try {
     const XLSX = await import('xlsx');
     const ws = XLSX.utils.aoa_to_sheet([
@@ -169,7 +169,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= REGRESSION: x402 paid order stores real settlement metadata =================
-(async function () {
+await (async function () {
   const db = await freshDb('/tmp/atlas-m4-x402-binding.sqlite');
   await db.execRaw(`CREATE TABLE products (
     product_id TEXT PRIMARY KEY,
@@ -247,7 +247,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= E2E: full lifecycle on real D1 =================
-(async function () {
+await (async function () {
   const db = await freshDb('/tmp/atlas-m4-a.sqlite');
   await addQuote(db, 'client@example.com', 1);
   const env = { PAYMENT_PROVIDER: 'MOCK', PAYMENT_MOCK_SCENARIO: 'valid', EMAIL_PROVIDER: 'MOCK', FILE_STORAGE: 'LOCAL' };
@@ -268,7 +268,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= E2E: failure paths =================
-(async function () {
+await (async function () {
   const db = await freshDb('/tmp/atlas-m4-b.sqlite');
   const env = (s, es = 'success') => ({ PAYMENT_PROVIDER: 'MOCK', PAYMENT_MOCK_SCENARIO: s, EMAIL_PROVIDER: 'MOCK', EMAIL_MOCK_SCENARIO: es, FILE_STORAGE: 'LOCAL' });
 
@@ -327,7 +327,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= Delivery retry + duplicate-retry =================
-(async function () {
+await (async function () {
   const db = await freshDb('/tmp/atlas-m4-c.sqlite');
   const env = { EMAIL_PROVIDER: 'MOCK', EMAIL_MOCK_SCENARIO: 'fail', FILE_STORAGE: 'LOCAL' };
   const storage = getFileStorage(env);
@@ -347,7 +347,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= Idempotency / concurrency =================
-(async function () {
+await (async function () {
   const db = await freshDb('/tmp/atlas-m4-d.sqlite');
   await addQuote(db, 'client@example.com', 1);
   const env = { PAYMENT_PROVIDER: 'MOCK', PAYMENT_MOCK_SCENARIO: 'valid', EMAIL_PROVIDER: 'MOCK', FILE_STORAGE: 'LOCAL' };
@@ -401,7 +401,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= Email adapter honesty =================
-(async function () {
+await (async function () {
   const ok = getEmailProvider({ EMAIL_PROVIDER: 'MOCK' });
   const res = await ok.send({ to: 'a@b.c', subject: 's', text: 't', attachments: [] });
   T('email.MOCK success returns ok:true (no real send)', res.ok === true);
@@ -413,7 +413,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
 })();
 
 // ================= Storage adapter =================
-(async function () {
+await (async function () {
   const db = await freshDb('/tmp/atlas-m4-e.sqlite');
   const st = getFileStorage({ FILE_STORAGE: 'LOCAL' });
   await st.put(db, 'ORD-9', 'clean_csv', 'clean_ORD-9.csv', csvBytes('x\n1'));
