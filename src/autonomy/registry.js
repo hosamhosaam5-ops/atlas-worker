@@ -92,12 +92,13 @@ export async function registerCapability(db,args){
   if(!args?.capability_id||!args?.provider||!args?.kind) throw new Error('INVALID_CAPABILITY');
   if(!CAPABILITY_KINDS.includes(String(args.kind))) throw new Error('INVALID_CAPABILITY_KIND');
   const c={...args,kind:String(args.kind),cost_class:String(args.cost_class||'unknown'),risk:String(args.risk||'high'),status:String(args.status||'DISCOVERY')};
-  await db.prepare(`INSERT INTO capabilities(capability_id,kind,provider,protocol,endpoint,cost_class,risk,status,score,metadata_json,updated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,datetime('now'))
+  await db.prepare(`INSERT INTO capabilities(capability_id,kind,provider,protocol,endpoint,cost_class,risk,status,score,metadata_json,last_tested_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
     ON CONFLICT(capability_id) DO UPDATE SET kind=excluded.kind,provider=excluded.provider,protocol=excluded.protocol,
     endpoint=excluded.endpoint,cost_class=excluded.cost_class,risk=excluded.risk,status=excluded.status,
-    score=excluded.score,metadata_json=excluded.metadata_json,updated_at=datetime('now')`)
-    .bind(String(c.capability_id),c.kind,String(c.provider),c.protocol||null,c.endpoint||null,c.cost_class,c.risk,c.status,capabilityScore(c),JSON.stringify(c.metadata||{})).run();
+    score=excluded.score,metadata_json=excluded.metadata_json,
+    last_tested_at=COALESCE(excluded.last_tested_at,capabilities.last_tested_at),updated_at=datetime('now')`)
+    .bind(String(c.capability_id),c.kind,String(c.provider),c.protocol||null,c.endpoint||null,c.cost_class,c.risk,c.status,capabilityScore(c),JSON.stringify(c.metadata||{}),c.last_tested_at||null).run();
   return {ok:true,capability_id:String(c.capability_id),score:capabilityScore(c),status:c.status};
 }
 

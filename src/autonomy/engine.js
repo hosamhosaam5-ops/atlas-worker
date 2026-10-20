@@ -30,11 +30,11 @@ export async function discoverCapabilities(db) {
   for(const s of PUBLIC_SOURCES){
     try {
       const r=await fetchJson(s.endpoint,{method:'GET'});
-      const status=r.ok ? 'ACTIVE' : (r.status===401||r.status===403 ? 'AVAILABLE_AUTH_REQUIRED' : 'DEGRADED');
-      const out=await registerCapability(db,{...s,capability_id:s.id,status,metadata:{http_status:r.status,discovered:'public_probe'}});
+      const status=r.ok ? 'DISCOVERY' : (r.status===401||r.status===403 ? 'AVAILABLE_AUTH_REQUIRED' : 'DEGRADED');
+      const out=await registerCapability(db,{...s,capability_id:s.id,status,last_tested_at:new Date().toISOString(),metadata:{http_status:r.status,discovered:'public_probe'}});
       results.push({id:s.id,status,score:out.score,http_status:r.status});
     } catch(e) {
-      const out=await registerCapability(db,{...s,capability_id:s.id,status:'UNREACHABLE',metadata:{error:String(e?.message||e),discovered:'public_probe'}});
+      const out=await registerCapability(db,{...s,capability_id:s.id,status:'UNREACHABLE',last_tested_at:new Date().toISOString(),metadata:{error:String(e?.message||e),discovered:'public_probe'}});
       results.push({id:s.id,status:'UNREACHABLE',score:out.score});
     }
   }
