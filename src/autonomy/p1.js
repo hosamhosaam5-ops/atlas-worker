@@ -12,27 +12,88 @@ export async function productIntelligence(db){await ensureP1Schema(db);const dem
 export function x402Requirements(origin,{product_id='atlas_ai_data_qa_v1',price_usdc=15,wallet,asset,network='eip155:8453'}={}){return {x402Version:2,error:'PAYMENT-SIGNATURE header is required',resource:{url:origin+'/x402/'+encodeURIComponent(product_id),description:'ATLAS agent-native product access',mimeType:'application/json',serviceName:'ATLAS',tags:['data','qa','ai-agent']},accepts:[{scheme:'exact',network,amount:String(Math.round(Number(price_usdc)*1e6)),asset,payTo:wallet,maxTimeoutSeconds:300,extra:{name:'USDC',version:'2'}}],extensions:{}};}
 export async function handleA2A(request,env){
   const origin=new URL(request.url).origin;
-  if(request.method==='GET')return new Response(JSON.stringify(agentCard(origin)),{headers:{'content-type':'application/json'}});
+  const headers={'content-type':'application/json','cache-control':'no-store'};
+  if(request.method==='GET')return new Response(JSON.stringify(agentCard(origin)),{headers});
   let msg;
-  try{msg=await request.json();}catch{return new Response(JSON.stringify({jsonrpc:'2.0',error:{code:-32700,message:'Parse error'}}),{status:400,headers:{'content-type':'application/json'}});}
+  try{msg=await request.json();}catch{return new Response(JSON.stringify({jsonrpc:'2.0',error:{code:-32700,message:'Parse error'}}),{status:400,headers});}
   const id=msg?.id??null;
-  if(msg?.method==='message/send'){
-    return new Response(JSON.stringify({
-      jsonrpc:'2.0',
-      id,
-      error:{
-        code:-32001,
-        message:'A2A task execution is not enabled. No task was created. Use the published paid x402 resource: '+origin+'/x402/atlas_ai_data_qa_v1'
-      }
-    }),{status:400,headers:{'content-type':'application/json','cache-control':'no-store'}});
-  }
-  if(msg?.method==='tasks/get'){
+  if(msg?.jsonrpc!=='2.0'||!msg?.method)return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32600,message:'Invalid Request'}}),{status:400,headers});
+  if(msg.method==='message/send'){
+    const message=msg?.params?.message;
+    const taskId=String(message?.messageId||'').trim();
+    if(!taskId||taskId.length>200||message?.role!=='user'||!Array.isArray(message?.parts)){
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Invalid A2A message. Provide message.messageId, role=user, and parts.'}}),{status:400,headers});
+    }
+    // A2A is a paid transport adapter, not a bypass around the canonical x402 gate.
+    // No task is persisted until the offer is active and the request is structurally valid.
     await ensureP1Schema(env.DB);
-    const t=await env.DB.prepare('SELECT task_id,status,source FROM agent_tasks WHERE task_id=?').bind(String(msg?.params?.id||'')).first();
-    if(!t)return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32004,message:'Task not found'}}),{status:404,headers:{'content-type':'application/json'}});
-    return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:t.task_id,status:{state:String(t.status).toLowerCase()},metadata:{source:t.source}}}),{headers:{'content-type':'application/json'}});
+    const product=await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
+    if(!product||String(product.status)!=='ACTIVE'||Number(product.price_usdc)!==15){
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32001,message:'A2A paid task execution is unavailable while the offer is paused. No task was created. Discover the canonical x402 resource at '+origin+'/x402/atlas_ai_data_qa_v1; do not submit payment while it is paused.'}}),{status:400,headers});
+    }
+    const atlas=message?.metadata?.atlas_x402;
+    const clientEmail=String(atlas?.client_email||'').trim();
+    const fileName=String(atlas?.file_name||'').trim();
+    const fileBase64=String(atlas?.file_base64||'').trim();
+    const paymentSignature=String(atlas?.payment_signature||'').trim();
+    if(!/^\S+@\S+\.\S+$/.test(clientEmail)||!fileName||!/^.+\.(csv|xlsx)$/i.test(fileName)||!fileBase64||fileBase64.length>1900000||!paymentSignature){
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Paid data-QA tasks require metadata.atlas_x402 with client_email, file_name (.csv/.xlsx), file_base64, and payment_signature. Payment is validated only by the canonical x402 resource.'}}),{status:400,headers});
+    }
+    const prior=await env.DB.prepare('SELECT task_id,status,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
+    if(prior){
+      let saved={};try{saved=JSON.parse(prior.output_json||'{}')}catch{}
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:prior.task_id,status:{state:String(prior.status).toLowerCase()},...(Object.keys(saved).length?{artifacts:[{parts:[{kind:'data',data:saved}]}]}:{})}}),{headers});
+    }
+    const claimed=await env.DB.prepare("INSERT INTO agent_tasks(task_id,source,status,input_json,output_json) VALUES(?,?,'PROCESSING',?,'{}') ON CONFLICT(task_id) DO NOTHING")
+      .bind(taskId,'a2a',JSON.stringify({product_id:'atlas_ai_data_qa_v1',file_name:fileName})).run();
+    if(Number(claimed.meta?.changes||0)!==1){
+      const current=await env.DB.prepare('SELECT task_id,status,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:String(current?.status||'processing').toLowerCase()}}}),{headers});
+    }
+    let responseBody={};
+    let status='FAILED';
+    try{
+      // Delegate settlement, nonce protection, order ledger, QA, and delivery to the
+      // exact production x402 handler. A2A never verifies or settles payment itself.
+      const delegated=await fetch(origin+'/x402/atlas_ai_data_qa_v1',{
+        method:'POST',
+        headers:{'content-type':'application/json','PAYMENT-SIGNATURE':paymentSignature},
+        body:JSON.stringify({client_email:clientEmail,file_name:fileName,file_base64:fileBase64}),
+        signal:AbortSignal.timeout(65000)
+      });
+      try{responseBody=await delegated.json()}catch{responseBody={error:'INVALID_X402_RESPONSE'}}
+      const order=responseBody?.order||{};
+      if(delegated.ok&&responseBody?.ok===true&&order.order_status==='DELIVERED')status='COMPLETED';
+      else if(responseBody?.payment||responseBody?.order?.order_status==='REVIEW_REQUIRED'||String(responseBody?.error||'').includes('SETTLEMENT_REVIEW'))status='REVIEW_REQUIRED';
+      const resultData={
+        order_id:order.order_id||null,
+        order_status:order.order_status||responseBody?.error||'PROCESSING_FAILED',
+        payment_status:order.payment_status||null,
+        rows_in:order.rows_in??null,
+        rows_out:order.rows_out??null,
+        qa_report:order.qa_report||null,
+        message:status==='COMPLETED'?'Paid data-QA processing and delivery completed.':status==='REVIEW_REQUIRED'?'Payment or order outcome requires reconciliation; do not retry payment.':'The canonical x402 handler did not confirm successful completion.'
+      };
+      await env.DB.prepare("UPDATE agent_tasks SET status=?,output_json=?,updated_at=datetime('now') WHERE task_id=? AND status='PROCESSING'")
+        .bind(status,JSON.stringify(resultData),taskId).run();
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:status.toLowerCase()},artifacts:[{parts:[{kind:'data',data:resultData}]}]}}),{status:200,headers});
+    }catch(e){
+      // A transport timeout can happen after the facilitator settled. Keep the task
+      // non-retryable and explicitly require reconciliation; never call x402 again.
+      const resultData={order_status:'REVIEW_REQUIRED',message:'x402 outcome is unknown. Task is locked for reconciliation; do not resubmit payment.',error:'X402_OUTCOME_UNKNOWN'};
+      await env.DB.prepare("UPDATE agent_tasks SET status='REVIEW_REQUIRED',output_json=?,updated_at=datetime('now') WHERE task_id=? AND status='PROCESSING'")
+        .bind(JSON.stringify(resultData),taskId).run();
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:'review_required'},artifacts:[{parts:[{kind:'data',data:resultData}]}]}}),{status:200,headers});
+    }
   }
-  return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}}),{status:400,headers:{'content-type':'application/json'}});
+  if(msg.method==='tasks/get'){
+    await ensureP1Schema(env.DB);
+    const t=await env.DB.prepare('SELECT task_id,status,output_json FROM agent_tasks WHERE task_id=?').bind(String(msg?.params?.id||'')).first();
+    if(!t)return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32004,message:'Task not found'}}),{status:404,headers});
+    let output={};try{output=JSON.parse(t.output_json||'{}')}catch{}
+    return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:t.task_id,status:{state:String(t.status).toLowerCase()},...(Object.keys(output).length?{artifacts:[{parts:[{kind:'data',data:output}]}]}:{})}}),{headers});
+  }
+  return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}}),{status:400,headers});
 }
 
 export async function emitAgentEvent(db,event){await ensureP1Schema(db);const rows=await db.prepare("SELECT webhook_id,url,events_json FROM agent_webhooks WHERE status='ACTIVE'").all();let sent=0;for(const w of (rows.results||[])){let events=[];try{events=JSON.parse(w.events_json||'[]')}catch{}if(events.length&&!events.includes(event.type))continue;try{const r=await fetch(w.url,{method:'POST',headers:{'content-type':'application/json','x-atlas-event':event.type},body:JSON.stringify({id:'evt_'+crypto.randomUUID().replaceAll('-','').slice(0,20),type:event.type,created_at:new Date().toISOString(),data:sanitizeExternalInput(event.data||{}).data}),signal:AbortSignal.timeout(5000)});if(r.ok)sent++;}catch{}}await db.prepare("INSERT INTO customer_events(event_type,entity_id,payload_json,status) VALUES(?,?,?,?)").bind(String(event.type),String(event.data?.order_id||event.data?.client_email||'unknown'),JSON.stringify(event.data||{}).slice(0,10000),String(sent?'DELIVERED':'RECORDED')).run();return {sent,recorded:true};}
