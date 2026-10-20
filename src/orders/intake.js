@@ -36,7 +36,7 @@ export function prepareOrderMeta(first, hasFile, env = {}) {
   const ext = fname.toLowerCase().endsWith('.xlsx') ? 'xlsx' : (fname.toLowerCase().endsWith('.csv') ? 'csv' : 'unknown');
   return {
     test_mode: testMode,
-    order_id: 'ORD-' + Date.now(),
+    order_id: 'ORD-' + Date.now() + '-' + crypto.randomUUID().slice(0, 8),
     client_email: email,
     tx_hash: txHash,
     expected_amount: 0,
