@@ -69,6 +69,7 @@ async function addQuote(db, email, amount, productId = 'atlas_ai_data_qa_v1') {
   T('meta.test_mode false on form path', m.test_mode === false);
   const t = prepareOrderMeta({ __file_name: 'a.csv', __test_mode: true }, 'data');
   T('meta.test_mode true on founder path + override 75', t.test_mode === true && t.test_price_override === 75);
+  T('meta.order_id unique for rapid calls', prepareOrderMeta({ client_email: 'a@b.com', tx_hash: VALID_TX, __file_name: 'a.csv' }, 'data').order_id !== prepareOrderMeta({ client_email: 'a@b.com', tx_hash: VALID_TX, __file_name: 'a.csv' }, 'data').order_id);
   const bad = prepareOrderMeta({ client_email: '', tx_hash: 'nope' }, '');
   T('meta.invalid_input flags all missing', bad.invalid_input && bad.invalid_reason.includes('client_email') && bad.invalid_reason.includes('tx_hash') && bad.invalid_reason.includes('file_upload'));
   const inj = prepareOrderMeta({ client_email: 'a@b.c', tx_hash: VALID_TX, expected_amount: 0.01, __file_name: 'a.csv' }, 'data');
@@ -317,7 +318,7 @@ await (async function () {
   T('e2e.REJECTED invalid input', r.order_status === 'REJECTED' && r.reason.includes('tx_hash'));
 
   // delivery failure -> DELIVERY_FAILED, outbox FAILED, ledger DELIVERY_FAILED
-  r = await processOrder(db, env('valid', 'fail'), baseInput({ tx_hash: '0x' + 'cd'.repeat(32), __order_id: 'ORD-DELIVERY-FAIL' }));
+  r = await processOrder(db, env('valid', 'fail'), baseInput({ tx_hash: '0x' + 'cd'.repeat(32) }));
   T('e2e.DELIVERY_FAILED on adapter failure', r.order_status === 'DELIVERY_FAILED' && r.delivery.delivery_status === 'FAILED');
   const ob = await db.prepare("SELECT * FROM delivery_outbox WHERE order_id = ?").bind(r.order_id || '').all();
   const obRow = (await db.prepare('SELECT * FROM delivery_outbox').bind().all()).results[0];
