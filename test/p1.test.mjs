@@ -90,7 +90,7 @@ test('A2A tasks/get returns not-found for an absent task',async()=>{
   assert.equal(body.id,'task-get-missing');
   assert.equal(body.error.code,-32004);
   assert.match(body.error.message,/Task not found/i);
-  assert.ok(statements.some(sql=>sql.includes('SELECT task_id,status,source FROM agent_tasks')));
+  assert.ok(statements.some(sql=>sql.includes('SELECT task_id,status,output_json FROM agent_tasks')));
 });
 
 test('x402 requirements are exact Base USDC payment requirements',()=>{const r=x402Requirements('https://atlas.example',{price_usdc:15,wallet:'0x1111111111111111111111111111111111111111',asset:'0x2222222222222222222222222222222222222222'});assert.equal(r.x402Version,2);assert.equal(r.accepts[0].scheme,'exact');assert.equal(r.accepts[0].network,'eip155:8453');assert.equal(r.accepts[0].amount,'15000000');});
