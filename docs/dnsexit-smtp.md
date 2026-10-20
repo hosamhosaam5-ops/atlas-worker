@@ -20,7 +20,7 @@ Port 587 uses STARTTLS. The transport fails closed if STARTTLS is not advertised
 1. Run `npm test` and review the DNSExit SMTP tests. They use a fake socket; they do not contact DNSExit or send email.
 2. Keep production on `MOCK` while adding the two SMTP credentials as Cloudflare Secrets. Never store credentials in Git, ordinary variables, chat, or logs.
 3. Confirm the intended sender address in DNSExit and configure `EMAIL_FROM` as a non-secret variable.
-4. Only after code review and a passing CI run, perform one controlled live test to an inbox you control. Then inspect DNSExit sending activity and verify the received message.
+4. Only after code review and all required CI checks pass, perform one controlled live test to an inbox you control. Then inspect DNSExit sending activity and verify the received message.
 5. Only after that evidence is reviewed should the production provider be changed from `MOCK` to `DNSEXIT_SMTP`.
 
 DNSExit relay limits/pricing are account-dependent; do not upgrade or enable pay-as-you-go.
