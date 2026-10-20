@@ -27,7 +27,7 @@ export async function sendDnsExitSmtp(env, msg, connectOverride) {
     await session.command('EHLO atlas-worker.local', 250, 'smtp ehlo');
     if (!/\bSTARTTLS\b/i.test(session.lastResponse)) throw new SmtpFailure('smtp server does not offer STARTTLS');
     await session.command('STARTTLS', 220, 'smtp starttls');
-    session.upgradeTls();
+    await session.upgradeTls();
     socket = session.socket;
     await session.command('EHLO atlas-worker.local', 250, 'smtp ehlo after tls');
     await session.command('AUTH LOGIN', 334, 'smtp auth');
@@ -105,9 +105,10 @@ class SmtpSession {
     await this.write(command + '\r\n');
     return this.expect(codes, label);
   }
-  upgradeTls() {
+  async upgradeTls() {
     this.reader.releaseLock();
     this.socket = this.socket.startTls();
+    await this.socket.opened;
     this.reader = this.socket.readable.getReader();
     this.buffer = '';
     this.decoder = new TextDecoder();
