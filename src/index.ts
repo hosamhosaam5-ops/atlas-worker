@@ -28,6 +28,8 @@ import { runRevenueWatch } from './crons/revenueWatch.js';
 import { runTelegraphMonitor } from './crons/telegraphMonitor.js';
 // @ts-ignore
 import { getTelegramProvider } from './core/outbox.js';
+// @ts-ignore
+import { sendDnsExitSmtp } from './orders/dnsexit-smtp.js';
 // Autonomy foundation: capability registry, bounded execution, trust boundary, reputation.
 // @ts-ignore
 import { ensureAutonomySchema, listCapabilities, registerCapability, getPolicy, checkBudget, autonomySnapshot } from './autonomy/registry.js';
@@ -64,6 +66,7 @@ interface Env {
   DNS_EXIT_SMTP_PORT?: string;
   DNS_EXIT_SMTP_USERNAME?: string;
   DNS_EXIT_SMTP_PASSWORD?: string;
+  SMTP_TEST_TOKEN?: string;
   PAYMENT_MOCK_SCENARIO?: string;
   PAYMENT_PROVIDER?: string;
   OPENROUTER_API_KEY?: string;
@@ -492,6 +495,39 @@ export default {
     }
     if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token") return mcpOAuth.fetch(request, env, ctx);
     const url = new URL(request.url);
+
+    // One-shot founder-authorized SMTP smoke test. Fixed recipient, no customer-order path.
+    // D1 uniqueness claim is inserted before sending, so retries cannot send a second test email.
+    if (url.pathname === '/internal/smtp-test' && request.method === 'POST') {
+      const expected = env.SMTP_TEST_TOKEN;
+      const supplied = request.headers.get('authorization') || '';
+      if (!expected || supplied !== 'Bearer ' + expected) return json({ ok: false, error: 'forbidden' }, 403);
+      if (!env.DB || !env.DNS_EXIT_SMTP_USERNAME || !env.DNS_EXIT_SMTP_PASSWORD || !env.EMAIL_FROM) {
+        return json({ ok: false, error: 'smtp_test_not_configured' }, 503);
+      }
+      await env.DB.prepare("CREATE TABLE IF NOT EXISTS smtp_test_runs (test_key TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), finished_at TEXT, error_code TEXT)").run();
+      let claim;
+      try {
+        claim = await env.DB.prepare("INSERT INTO smtp_test_runs (test_key, status) VALUES ('founder-one-shot-20261020', 'SENDING')").run();
+      } catch {
+        return json({ ok: false, error: 'smtp_test_already_claimed' }, 409);
+      }
+      if (Number(claim.meta?.changes || 0) !== 1) return json({ ok: false, error: 'smtp_test_already_claimed' }, 409);
+      try {
+        const providerMessageId = await sendDnsExitSmtp(env, {
+          to: 'hosamhosaam5@gmail.com',
+          subject: 'ATLAS SMTP connectivity test',
+          text: 'This is the single founder-authorized ATLAS SMTP connectivity test via DNSExit. No action is required. Delivery to the inbox is not guaranteed by SMTP acceptance alone.'
+        });
+        await env.DB.prepare("UPDATE smtp_test_runs SET status='SMTP_ACCEPTED', finished_at=datetime('now') WHERE test_key='founder-one-shot-20261020'").run();
+        return json({ ok: true, status: 'SMTP_ACCEPTED', provider_message_id: providerMessageId, recipient: 'hosamhosaam5@gmail.com', note: 'SMTP accepted the message; inbox delivery must be confirmed by the recipient.' });
+      } catch (e: any) {
+        const message = String(e?.message || 'smtp test failed');
+        const safeCode = message.match(/SMTP \\d{3}/)?.[0] || (message.includes('not configured') ? 'NOT_CONFIGURED' : 'SMTP_TRANSPORT_FAILED');
+        await env.DB.prepare("UPDATE smtp_test_runs SET status='FAILED', error_code=?, finished_at=datetime('now') WHERE test_key='founder-one-shot-20261020'").bind(safeCode).run();
+        return json({ ok: false, status: 'FAILED', error: safeCode }, 502);
+      }
+    }
 
     if (url.pathname === '/health' && request.method === 'GET') {
       let db = 'unknown';
