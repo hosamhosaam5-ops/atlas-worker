@@ -59,6 +59,11 @@ interface Env {
   TELEGRAM_PROVIDER?: string;
   EMAIL_PROVIDER?: string;
   EMAIL_MOCK_SCENARIO?: string;
+  EMAIL_FROM?: string;
+  DNS_EXIT_SMTP_HOST?: string;
+  DNS_EXIT_SMTP_PORT?: string;
+  DNS_EXIT_SMTP_USERNAME?: string;
+  DNS_EXIT_SMTP_PASSWORD?: string;
   PAYMENT_MOCK_SCENARIO?: string;
   PAYMENT_PROVIDER?: string;
   OPENROUTER_API_KEY?: string;
