@@ -31,10 +31,10 @@ export async function discoverCapabilities(db) {
     try {
       const r=await fetchJson(s.endpoint,{method:'GET'});
       const status=r.ok ? 'ACTIVE' : (r.status===401||r.status===403 ? 'AVAILABLE_AUTH_REQUIRED' : 'DEGRADED');
-      const out=await registerCapability(db,{...s,status,metadata:{http_status:r.status,discovered:'public_probe'}});
+      const out=await registerCapability(db,{...s,capability_id:s.id,status,metadata:{http_status:r.status,discovered:'public_probe'}});
       results.push({id:s.id,status,score:out.score,http_status:r.status});
     } catch(e) {
-      const out=await registerCapability(db,{...s,status:'UNREACHABLE',metadata:{error:String(e?.message||e),discovered:'public_probe'}});
+      const out=await registerCapability(db,{...s,capability_id:s.id,status:'UNREACHABLE',metadata:{error:String(e?.message||e),discovered:'public_probe'}});
       results.push({id:s.id,status:'UNREACHABLE',score:out.score});
     }
   }

@@ -22,3 +22,41 @@ test('outbound spend remains founder-gated',()=>{
 test('lead validator accepts ordinary data work',()=>{
   assert.equal(validateMarketplaceLead({description:'need CSV cleanup'}).ok,true);
 });
+
+
+test('discovery registers every public capability with the registry key field', async () => {
+  const { discoverCapabilities } = await import('../src/autonomy/engine.js');
+  const originalFetch = globalThis.fetch;
+  const registered = [];
+  const db = {
+    prepare(sql) {
+      let bindings = [];
+      return {
+        bind(...args) { bindings = args; return this; },
+        async run() {
+          if (sql.startsWith('INSERT INTO capabilities')) registered.push({ sql, bindings });
+          return { success: true };
+        },
+        async all() { return { results: [] }; },
+        async first() { return null; }
+      };
+    }
+  };
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'application/json' },
+    text: async () => '{"ok":true}'
+  });
+  try {
+    const result = await discoverCapabilities(db);
+    assert.equal(result.ok, true);
+    assert.equal(result.results.length, 5);
+    assert.deepEqual(registered.map(x => x.bindings[0]), [
+      'agent_souk', 'agentgigs', 'ecc', 'okara_ai_cmo', 'free_llm_apis'
+    ]);
+    assert.ok(registered.every(x => typeof x.bindings[0] === 'string' && x.bindings[0].length > 0));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
