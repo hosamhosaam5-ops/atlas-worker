@@ -124,7 +124,9 @@ before(async () => {
     '--var', `ATLAS_WALLET_ADDRESS:${WALLET}`,
     '--var', 'EMAIL_PROVIDER:MOCK',
     '--var', 'FILE_STORAGE:LOCAL',
-    '--var', 'PAYMENT_PROVIDER:BASE_RPC',
+    '--var', 'PAYMENT_PROVIDER:MOCK',
+    '--var', 'PAYMENT_MOCK_SCENARIO:valid',
+    '--var', 'PAYMENT_MOCK_AMOUNT_USDC:15',
   ], { cwd: ROOT, stdio: 'ignore', detached: true });
   worker.unref();
   await waitUp(BASE + '/health');
