@@ -230,3 +230,58 @@ test('a burst of concurrent requests with one payment nonce reserves and settles
   assert.equal(calls.verify.filter(x => x.nonce === nonce).length, 1, 'verify must run only once');
   assert.equal(calls.settle.filter(x => x.nonce === nonce).length, 1, 'settlement must run only once');
 });
+
+
+function runLocalD1(sql) {
+  const quoted = "'" + sql.replace(/'/g, "'\\''") + "'";
+  const output = execSync(
+    'npx wrangler d1 execute atlas_db --local --persist-to .wrangler-x402-e2e --command ' + quoted + ' --json',
+    { cwd: ROOT, encoding: 'utf8', timeout: 30000 },
+  );
+  return JSON.parse(output);
+}
+
+test('scheduled recovery updates real local D1 rows and preserves a settled order with a matching ledger row', async () => {
+  const reservedKey = 'x402_nonce|recovery-fixture-reserved-001';
+  const missingOrderKey = 'x402_nonce|recovery-fixture-settled-missing-002';
+  const matchedOrderKey = 'x402_nonce|recovery-fixture-settled-matched-003';
+  const missingTx = '0x' + 'b'.repeat(64);
+  const matchedTx = '0x' + 'c'.repeat(64);
+  const matchedOrderId = 'X402-' + matchedTx.slice(2, 18);
+
+  // Seed only synthetic rows into the same isolated D1 used by local Wrangler.
+  runLocalD1(`
+    DELETE FROM execution_state WHERE idempotency_key IN ('${reservedKey}', '${missingOrderKey}', '${matchedOrderKey}');
+    DELETE FROM order_ledger WHERE order_id = '${matchedOrderId}';
+    INSERT INTO execution_state (idempotency_key, record_kind, status, payload_json, error_code, created_at, updated_at)
+      VALUES ('${reservedKey}', 'x402_nonce', 'SETTLEMENT_RESERVED', '{"nonce":"recovery-fixture-reserved-001"}', NULL, datetime('now','-90 minutes'), datetime('now','-90 minutes'));
+    INSERT INTO execution_state (idempotency_key, record_kind, status, payload_json, error_code, created_at, updated_at)
+      VALUES ('${missingOrderKey}', 'x402_nonce', 'SETTLED', '{"nonce":"recovery-fixture-settled-missing-002","tx_hash":"${missingTx}","product_id":"atlas_ai_data_qa_v1"}', NULL, datetime('now','-90 minutes'), datetime('now','-90 minutes'));
+    INSERT INTO execution_state (idempotency_key, record_kind, status, payload_json, error_code, created_at, updated_at)
+      VALUES ('${matchedOrderKey}', 'x402_nonce', 'SETTLED', '{"nonce":"recovery-fixture-settled-matched-003","tx_hash":"${matchedTx}","product_id":"atlas_ai_data_qa_v1"}', NULL, datetime('now','-90 minutes'), datetime('now','-90 minutes'));
+    INSERT INTO order_ledger (order_id, client_email, tx_hash, product_id, status, settlement_mode, chain_id)
+      VALUES ('${matchedOrderId}', 'synthetic-agent@example.test', '${matchedTx}', 'atlas_ai_data_qa_v1', 'DELIVERED', 'REAL', 'eip155:8453');
+  `);
+
+  // Wrangler's local scheduled-event hook invokes the actual Worker scheduled handler.
+  const recoveryResponse = await fetch(BASE + '/__scheduled?cron=*/5+*+*+*+*');
+  assert.ok(recoveryResponse.status >= 200 && recoveryResponse.status < 500, 'scheduled event hook should be reachable');
+
+  const query = runLocalD1(`
+    SELECT idempotency_key, status, error_code FROM execution_state
+    WHERE idempotency_key IN ('${reservedKey}', '${missingOrderKey}', '${matchedOrderKey}')
+    ORDER BY idempotency_key;
+  `);
+  const rows = (Array.isArray(query) ? query : query.results || query[0]?.results || [])
+    .flatMap(item => item?.results || item?.result || [item])
+    .filter(row => row && row.idempotency_key);
+  assert.equal(rows.length, 3, 'all three synthetic D1 fixtures must be readable');
+
+  const byKey = Object.fromEntries(rows.map(row => [row.idempotency_key, row]));
+  assert.equal(byKey[reservedKey].status, 'SETTLEMENT_REVIEW');
+  assert.equal(byKey[reservedKey].error_code, 'STALE_X402_RESERVATION_REQUIRES_RECONCILIATION');
+  assert.equal(byKey[missingOrderKey].status, 'SETTLEMENT_REVIEW');
+  assert.equal(byKey[missingOrderKey].error_code, 'X402_SETTLED_ORDER_MISSING_REQUIRES_RECONCILIATION');
+  assert.equal(byKey[matchedOrderKey].status, 'SETTLED', 'a settled nonce with a matching order must remain unchanged');
+  assert.equal(byKey[matchedOrderKey].error_code, null);
+});
