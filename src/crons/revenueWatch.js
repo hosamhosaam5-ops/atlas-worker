@@ -67,10 +67,13 @@ export async function runRevenueWatch(env, adapters = defaultAdapters, alertAdap
     if (prior) continue;
     const messageText = '🔔 ATLAS REVENUE EVENT\n\n' + e.event_kind + '\n' + e.detail + '\n' + e.detected_at;
     try {
+      if (!String(env?.FOUNDER_CHAT_ID || '').trim()) {
+        throw Object.assign(new Error('FOUNDER_CHAT_ID_NOT_CONFIGURED'), { code: 'FOUNDER_CHAT_ID_NOT_CONFIGURED' });
+      }
       if (!alertAdapter || typeof alertAdapter.send !== 'function') {
         throw Object.assign(new Error('TELEGRAM_ALERT_ADAPTER_NOT_CONFIGURED'), { code: 'ADAPTER_NOT_CONFIGURED' });
       }
-      const res = await alertAdapter.send(env.FOUNDER_CHAT_ID || '5246182877', messageText, {});
+      const res = await alertAdapter.send(String(env.FOUNDER_CHAT_ID).trim(), messageText, {});
       const messageId = res && (res.message_id ?? res.provider_message_id);
       if (messageId === undefined || messageId === null || String(messageId).trim() === '') {
         throw Object.assign(new Error('TELEGRAM_DELIVERY_NOT_CONFIRMED'), { code: 'DELIVERY_NOT_CONFIRMED' });

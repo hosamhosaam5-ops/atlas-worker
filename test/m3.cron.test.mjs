@@ -40,7 +40,7 @@ function makeD1(dbfile) {
   };
 }
 
-const env = { DB: makeD1('/tmp/atlas-m3-cron.sqlite') };
+const env = { DB: makeD1('/tmp/atlas-m3-cron.sqlite'), FOUNDER_CHAT_ID: 'test-founder-chat' };
 for (const f of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql']) {
   // strip -- comments before splitting on ';' (comments may contain semicolons)
   const sql = readFileSync(new URL('../' + f, import.meta.url)).toString()

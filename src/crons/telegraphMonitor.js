@@ -85,10 +85,13 @@ export async function runTelegraphMonitor(env, adapters = defaultAdapters, alert
   for (const r of fresh) {
     const alert = buildAlert(r);
     try {
+      if (!String(env?.FOUNDER_CHAT_ID || '').trim()) {
+        throw Object.assign(new Error('FOUNDER_CHAT_ID_NOT_CONFIGURED'), { code: 'FOUNDER_CHAT_ID_NOT_CONFIGURED' });
+      }
       if (!alertAdapter || typeof alertAdapter.send !== 'function') {
         throw Object.assign(new Error('TELEGRAM_ALERT_ADAPTER_NOT_CONFIGURED'), { code: 'ADAPTER_NOT_CONFIGURED' });
       }
-      const res = await alertAdapter.send(env.FOUNDER_CHAT_ID || '5246182877', alert.text, { parse_mode: 'HTML' });
+      const res = await alertAdapter.send(String(env.FOUNDER_CHAT_ID).trim(), alert.text, { parse_mode: 'HTML' });
       const mid = res && (res.message_id ?? res.provider_message_id);
       const row = recordAlert(r, mid);
       if (!row) throw Object.assign(new Error('TELEGRAM_DELIVERY_NOT_CONFIRMED'), { code: 'DELIVERY_NOT_CONFIRMED' });
