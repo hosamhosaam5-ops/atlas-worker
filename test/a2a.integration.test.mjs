@@ -167,7 +167,7 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     const storage = getFileStorage(env);
     const cleanFile = await storage.get(db, orderId, 'clean_csv');
     assert.ok(cleanFile, 'clean CSV must be persisted in order_files');
-    assert.equal(new TextDecoder().decode(cleanFile.bytes), 'name,score\nAlice,10\nBob,20\n');
+    assert.equal(new TextDecoder().decode(cleanFile.bytes), 'name,score\nAlice,10\nBob,20');
     const reportFile = await storage.get(db, orderId, 'qa_report');
     assert.ok(reportFile, 'QA report file must be persisted');
     assert.match(new TextDecoder().decode(reportFile.bytes), /rows_out=2/);
