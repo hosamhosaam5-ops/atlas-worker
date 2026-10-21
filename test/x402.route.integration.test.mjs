@@ -122,7 +122,7 @@ before(async () => {
     });
   }
   worker = spawn('npx', [
-    'wrangler', 'dev', '--local', '--port', String(WORKER_PORT), '--persist-to', PERSIST,
+    'wrangler', 'dev', '--local', '--test-scheduled', '--port', String(WORKER_PORT), '--persist-to', PERSIST,
     '--var', 'X402_TEST_MODE:1',
     '--var', `X402_FACILITATOR_URL:${FACILITATOR}`,
     '--var', `ATLAS_WALLET_ADDRESS:${WALLET}`,
@@ -265,7 +265,7 @@ test('scheduled recovery updates real local D1 rows and preserves a settled orde
 
   // Wrangler's local scheduled-event hook invokes the actual Worker scheduled handler.
   const recoveryResponse = await fetch(BASE + '/__scheduled?cron=*/5+*+*+*+*');
-  assert.ok(recoveryResponse.status >= 200 && recoveryResponse.status < 500, 'scheduled event hook should be reachable');
+  assert.equal(recoveryResponse.status, 200, 'Wrangler scheduled-event test hook must invoke the Worker scheduled handler');
 
   const query = runLocalD1(`
     SELECT idempotency_key, status, error_code FROM execution_state
