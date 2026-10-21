@@ -22,7 +22,7 @@ test('critical operational alert targets only configured founder and uses durabl
   assert.equal(deliveries.length, 1);
   assert.equal(deliveries[0].recipient, 'founder-chat-only');
   assert.equal(deliveries[0].channel, 'telegram');
-  assert.match(deliveries[0].dedupeKey, /^critical-ops\\|REVENUE-WATCH\\|TELEGRAM_DELIVERY_FAILED\\|/);
+  assert.match(deliveries[0].dedupeKey, /^critical-ops\|REVENUE-WATCH\|TELEGRAM_DELIVERY_FAILED\|/);
   assert.doesNotMatch(deliveries[0].text, /token|secret|password/i);
 });
 
