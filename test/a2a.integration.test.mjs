@@ -8,6 +8,7 @@ import { agentCard, handleA2A } from '../src/autonomy/p1.js';
 import { processOrder } from '../src/orders/intake.js';
 import { getFileStorage } from '../src/orders/storage.js';
 import { ensureOrderSchema } from '../src/orders/schema.js';
+import { ensureCommercialSchema } from '../src/commercial/control.js';
 
 const csv = 'name,score\nAlice,10\nBob,20\nBob,20\n';
 const bytes = new TextEncoder().encode(csv);
@@ -45,6 +46,7 @@ async function initializeTestDb(filename) {
     await db.execRaw(readFileSync(new URL('../' + schema, import.meta.url), 'utf8'));
   }
   await ensureOrderSchema(db);
+  await ensureCommercialSchema(db);
   await db.prepare(
     "INSERT INTO products (product_id,name,description,unit,price_usdc,pricing_mode,status,version) VALUES (?,?,?,?,?,?,?,1)"
   ).bind('atlas_ai_data_qa_v1', 'ATLAS synthetic integration fixture',
