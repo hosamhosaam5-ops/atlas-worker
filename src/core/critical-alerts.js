@@ -36,7 +36,7 @@ export async function sendCriticalOpsAlert(env, category, code, dependencies = {
     'الرمز: ' + safeCode,
     'يرجى مراجعة سجلات Cloudflare وATLAS.',
     'لم تُنفذ أي معاملة مالية بواسطة هذا التنبيه.',
-  ].join('\\n');
+  ].join('\n');
 
   try {
     const provider = (dependencies.providerFactory || getTelegramProvider)(env);
