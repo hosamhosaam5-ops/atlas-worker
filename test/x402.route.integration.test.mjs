@@ -199,3 +199,25 @@ test('uncertain settlement locks the nonce and prevents any second settle attemp
   assert.equal(calls.verify.filter(x => x.nonce === nonce).length, 1);
   assert.equal(calls.settle.filter(x => x.nonce === nonce).length, 1);
 });
+
+
+test('concurrent requests with the same payment nonce permit only one processing and settlement', async () => {
+  const discovery = await fetch(BASE + '/x402/atlas_ai_data_qa_v1');
+  assert.equal(discovery.status, 402);
+  const requirements = await discovery.json();
+  const nonce = 'concurrent-same-nonce-x402-e2e-003';
+
+  // Launch both requests before awaiting either response to exercise the nonce guard under contention.
+  const responses = await Promise.all([
+    postPaid(nonce, requirements),
+    postPaid(nonce, requirements),
+  ]);
+  const bodies = await Promise.all(responses.map(r => r.json()));
+  const statuses = responses.map(r => r.status).sort((a, b) => a - b);
+
+  assert.deepEqual(statuses, [200, 409], 'exactly one concurrent request may process the payment');
+  assert.equal(bodies.filter(body => body?.ok === true).length, 1);
+  assert.equal(bodies.filter(body => body?.error === 'PAYMENT_NONCE_ALREADY_USED').length, 1);
+  assert.equal(calls.verify.filter(x => x.nonce === nonce).length, 1, 'verify must run only once');
+  assert.equal(calls.settle.filter(x => x.nonce === nonce).length, 1, 'settlement must run only once');
+});
