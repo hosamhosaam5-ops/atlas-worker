@@ -58,11 +58,11 @@ jobs:
             cat cron-schedules.json
             exit 1
           fi
-          jq -e '.success == true and (.result | type == "array")' cron-schedules.json >/dev/null
+          jq -e '.success == true and (.result.schedules | type == "array")' cron-schedules.json >/dev/null
           echo "ACTIVE_WORKER_CRONS:"
-          jq -r '.result[]?.cron' cron-schedules.json | sort
+          jq -r '.result.schedules[]?.cron' cron-schedules.json | sort
           for expected in '0 21 * * *' '*/30 * * * *' '*/15 * * * *' '*/5 * * * *'; do
-            if ! jq -e --arg cron "$expected" 'any(.result[]?; .cron == $cron)' cron-schedules.json >/dev/null; then
+            if ! jq -e --arg cron "$expected" 'any(.result.schedules[]?; .cron == $cron)' cron-schedules.json >/dev/null; then
               echo "MISSING_ACTIVE_CRON=$expected"
               exit 1
             fi
