@@ -318,6 +318,8 @@ test('scheduled recovery updates real local D1 rows and preserves a settled orde
 // configuration 503; enabling it in LOCAL D1 only must expose x402 requirements
 // (402), without invoking the facilitator or settling a payment.
 test('paused product 503 is classified as expected; active local fixture returns x402 requirements', async () => {
+  const verifyCountBefore = calls.verify.length;
+  const settleCountBefore = calls.settle.length;
   const pause = runLocalD1("UPDATE products SET status='PAUSED' WHERE product_id='atlas_ai_data_qa_v1';");
   assert.ok(pause, 'local D1 pause fixture command must complete');
 
@@ -335,8 +337,8 @@ test('paused product 503 is classified as expected; active local fixture returns
     const requirements = await active.json();
     assert.equal(requirements.x402Version, 2);
     assert.equal(requirements.accepts[0].network, 'eip155:8453');
-    assert.equal(calls.verify.length, 0, 'GET discovery must not call payment verification');
-    assert.equal(calls.settle.length, 0, 'GET discovery must never settle payment');
+    assert.equal(calls.verify.length, verifyCountBefore, 'GET discovery must not call payment verification');
+    assert.equal(calls.settle.length, settleCountBefore, 'GET discovery must never settle payment');
   } finally {
     runLocalD1("UPDATE products SET status='PAUSED' WHERE product_id='atlas_ai_data_qa_v1';");
   }
