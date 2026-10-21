@@ -14,15 +14,21 @@
 | Route returns 503 and `X402_SETTLEMENT_REVIEW_REQUIRED` | Settlement outcome ambiguous | High-priority manual reconciliation; keep nonce locked; do not retry or automatically settle |
 | HTTP 503 with no correlated structured error or unknown error code | Unclassified server error | Preserve as an incident until trace/log evidence explains it |
 
+## Read-only monitoring audit (2026-10-21)
+
+Cloudflare Observability returned one active issue group titled `HttpServerError · HTTP 503` with 224 occurrences. The latest inspected occurrences targeted `/x402/atlas_ai_data_qa_v1` (GET and POST) on Worker version `e3dbcfd7-24b6-4f8b-8452-20f93df01576`. The group records HTTP status, method/path, trace and Ray IDs, but not the route's JSON `error` code. Therefore the existing 224 occurrences cannot all be retrospectively labelled expected solely from this grouping.
+
+The production D1 read returned `status=PAUSED`, `price_usdc=15` for `atlas_ai_data_qa_v1`. This supports classifying matching requests as expected only when the contemporaneous product state and the structured event agree. Cloudflare Observability returned no configured issue automations; do not globally silence the generic 503 group or claim automatic notifications are configured.
+
+The Worker now emits a redacted structured `console.warn` event named `atlas_x402_route_503` for route-level 503s. It includes `error_code`, method, path, Ray ID, and only safe classification fields. It never logs wallet values, payment signatures, authorization payloads, file contents, or request bodies.
+
 ## Required telemetry
 
-For each matching occurrence, capture timestamp, HTTP status, request method/path, structured error code (when available), Worker version ID, invocation ID, Cloudflare Ray ID, and the D1 product status observed at the same time. Do not record payment signatures, authorization payloads, email addresses, wallet values, uploaded files, or request bodies.
-
-Correlate repeated occurrences by error code, Worker version, and Ray/trace ID. Do not infer the internal error code from the HTTP status alone. Cloudflare's issue grouping title `HttpServerError · HTTP 503` is too broad to distinguish the cases above.
+Correlate `atlas_x402_route_503` records by `error_code`, Worker version, and Ray/trace ID. Keep unknown 503s as incidents. Do not infer an internal error code from HTTP status alone; retain an occurrence as unclassified unless its structured event and contemporaneous D1 state support a known classification.
 
 ## Safe validation
 
-The local integration test changes only the isolated Wrangler/D1 fixture: it asserts that PAUSED returns `503/X402_PRODUCT_NOT_READY`, then changes the local fixture to ACTIVE and asserts that GET returns `402` with x402 v2 requirements. The test must not call the production Worker, real facilitator, chain RPC, or settle payment. It restores the local fixture to PAUSED.
+The local integration test changes only the isolated Wrangler/D1 fixture: it asserts that PAUSED GET and POST both return `503/X402_PRODUCT_NOT_READY` without invoking facilitator verification or settlement, then changes the local fixture to ACTIVE and asserts that GET returns `402` with x402 v2 requirements. The test must not call the production Worker, real facilitator, chain RPC, or settle payment. It restores the local fixture to PAUSED.
 
 ## Operational guardrail
 
