@@ -30,6 +30,7 @@ import { runRevenueWatch } from './crons/revenueWatch.js';
 import { runTelegraphMonitor } from './crons/telegraphMonitor.js';
 // @ts-ignore
 import { getTelegramProvider } from './core/outbox.js';
+import { sendCriticalOpsAlert } from './core/critical-alerts.js';
 // @ts-ignore
 import { sendDnsExitSmtp } from './orders/dnsexit-smtp.js';
 // Autonomy foundation: capability registry, bounded execution, trust boundary, reputation.
@@ -787,7 +788,10 @@ export default {
         const configuredStaleMinutes = Number(env.RECOVERY_STALE_MINUTES ?? 30);
         const staleMinutes = Number.isFinite(configuredStaleMinutes) ? Math.max(5, configuredStaleMinutes) : 30;
         const paymentRecovery = await recoverStaleX402Payments(env.DB, staleMinutes);
-        await sendX402SettlementReviewAlert(paymentRecovery, env as any);
+        const settlementAlert = await sendX402SettlementReviewAlert(paymentRecovery, env as any);
+        if (settlementAlert?.sent === false && settlementAlert.reason !== 'NO_NEW_REVIEW_ROWS') {
+          await sendCriticalOpsAlert(env as any, 'x402_settlement_alert', String(settlementAlert.reason || 'DELIVERY_NOT_CONFIRMED'));
+        }
         const rows: any = await env.DB.prepare(
           "SELECT id FROM event_log WHERE source='telegram' AND status='PENDING' AND created_at < datetime('now','-1 minute') ORDER BY id ASC LIMIT 3"
         ).all();
@@ -795,8 +799,9 @@ export default {
           try { await replayPendingTelegramEvent(env, Number(row.id)); }
           catch (e) { console.error('PENDING_EVENT_REPLAY_FAILED', Number(row.id), String(e?.message || e)); }
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error('PENDING_EVENT_RECOVERY_SCAN_FAILED', String(e?.message || e));
+        await sendCriticalOpsAlert(env as any, 'pending_event_recovery', String(e?.code || e?.name || 'RECOVERY_SCAN_FAILED'));
       }
       return;
     }
@@ -820,7 +825,10 @@ export default {
         // because the provider may already have accepted the message before the Worker crashed.
         const deliveries = await env.DB.prepare("UPDATE delivery_outbox SET status='REVIEW_REQUIRED', last_error=COALESCE(last_error, 'Stale SENDING delivery requires provider reconciliation; automatic retry suppressed'), updated_at=datetime('now') WHERE status='SENDING' AND COALESCE(updated_at, created_at) < datetime('now', '-' || ? || ' minutes')").bind(staleMinutes).run();
         results.recovery_sweep = { stale_minutes: staleMinutes, events_flagged: events.meta?.changes || 0, orders_flagged: orders.meta?.changes || 0, deliveries_flagged: deliveries.meta?.changes || 0 };
-      } catch (e: any) { results.recovery_sweep = { error: String(e?.message || e) }; }
+      } catch (e: any) {
+        results.recovery_sweep = { error: String(e?.message || e) };
+        await sendCriticalOpsAlert(env as any, 'recovery_sweep', String(e?.code || e?.name || 'RECOVERY_SWEEP_FAILED'));
+      }
       // Route each engine only from its declared schedule. Previously every non-recovery
       // cron invoked the daily report, revenue watch, and telegraph monitor together.
       // That wasted reads and made overlapping report sends possible at schedule boundaries.
@@ -832,8 +840,16 @@ export default {
       ] as const;
       for (const [name, expectedCron, fn] of scheduledJobs) {
         if (event.cron !== expectedCron) continue;
-        try { results[name] = await fn(); }
-        catch (e: any) { results[name] = { error: String(e?.message || e) }; }
+        try {
+          const jobResult: any = await fn();
+          results[name] = jobResult;
+          if (Number(jobResult?.failed || 0) > 0) {
+            await sendCriticalOpsAlert(env as any, name, 'ALERT_DELIVERY_FAILED');
+          }
+        } catch (e: any) {
+          results[name] = { error: String(e?.message || e) };
+          await sendCriticalOpsAlert(env as any, name, String(e?.code || e?.name || 'SCHEDULED_JOB_FAILED'));
+        }
       }
       return results;
     };
