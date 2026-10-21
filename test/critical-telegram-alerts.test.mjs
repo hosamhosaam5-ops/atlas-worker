@@ -80,3 +80,34 @@ test('Revenue watch treats malformed success as failure and retries until a prov
   assert.equal(third.alerted, 0);
   assert.equal(third.failed, 0);
 });
+
+
+test('Telegraph monitor fails closed without founder recipient and never uses a fallback chat', async () => {
+  const DB = fakeDb();
+  const env = { DB };
+  const adapters = {
+    async loadTelegraphRequests() { return [{ id: 8, request_key: 'request-no-recipient' }]; },
+    async loadAlertState() { return []; },
+  };
+  let sends = 0;
+  const result = await runTelegraphMonitor(env, adapters, { async send() { sends++; return { message_id: 1 }; } }, quietLogger);
+  assert.equal(result.failed, 1);
+  assert.equal(result.alerted, 0);
+  assert.equal(sends, 0);
+});
+
+test('Revenue watch fails closed without founder recipient and never uses a fallback chat', async () => {
+  const DB = fakeDb();
+  const env = { DB };
+  const adapters = {
+    async checkAgentSouk() { return [{ id: 'synthetic-bounty' }]; },
+    async checkDatapoint() { return {}; },
+    async checkBountyBook() { return {}; },
+    async loadWatchState() { return []; },
+  };
+  let sends = 0;
+  const result = await runRevenueWatch(env, adapters, { async send() { sends++; return { message_id: 1 }; } }, quietLogger);
+  assert.equal(result.failed, 1);
+  assert.equal(result.alerted, 0);
+  assert.equal(sends, 0);
+});
