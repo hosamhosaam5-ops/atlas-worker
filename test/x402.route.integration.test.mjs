@@ -284,4 +284,31 @@ test('scheduled recovery updates real local D1 rows and preserves a settled orde
   assert.equal(byKey[missingOrderKey].error_code, 'X402_SETTLED_ORDER_MISSING_REQUIRES_RECONCILIATION');
   assert.equal(byKey[matchedOrderKey].status, 'SETTLED', 'a settled nonce with a matching order must remain unchanged');
   assert.equal(byKey[matchedOrderKey].error_code, null);
+
+  // A second scheduled pass must be idempotent: reviewed rows stay reviewed,
+  // and the settled row with a ledger entry remains untouched.
+  const secondRecovery = await fetch(BASE + '/__scheduled?cron=*/5+*+*+*+*');
+  assert.equal(secondRecovery.status, 200);
+  const secondQuery = runLocalD1(`
+    SELECT idempotency_key, status, error_code FROM execution_state
+    WHERE idempotency_key IN ('${reservedKey}', '${missingOrderKey}', '${matchedOrderKey}')
+    ORDER BY idempotency_key;
+  `);
+  const secondRows = (Array.isArray(secondQuery) ? secondQuery : secondQuery.results || secondQuery[0]?.results || [])
+    .flatMap(item => item?.results || item?.result || [item])
+    .filter(row => row && row.idempotency_key);
+  assert.equal(secondRows.length, 3);
+  const secondByKey = Object.fromEntries(secondRows.map(row => [row.idempotency_key, row]));
+  assert.deepEqual(
+    [secondByKey[reservedKey].status, secondByKey[reservedKey].error_code],
+    ['SETTLEMENT_REVIEW', 'STALE_X402_RESERVATION_REQUIRES_RECONCILIATION'],
+  );
+  assert.deepEqual(
+    [secondByKey[missingOrderKey].status, secondByKey[missingOrderKey].error_code],
+    ['SETTLEMENT_REVIEW', 'X402_SETTLED_ORDER_MISSING_REQUIRES_RECONCILIATION'],
+  );
+  assert.deepEqual(
+    [secondByKey[matchedOrderKey].status, secondByKey[matchedOrderKey].error_code],
+    ['SETTLED', null],
+  );
 });
