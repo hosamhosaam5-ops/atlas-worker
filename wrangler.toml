@@ -56,6 +56,14 @@ ATLAS_GIT_SHA = "980308335801445fa791378f5bdb4e967a8bbb1d"
 binding = "OAUTH_KV"
 id = "096e1625b3114787aa89cb8a45b65a8a"
 
-# Production error monitoring; enabled for new traffic after deploy.
+# Production Worker logs and issue monitoring; required for structured x402 route diagnostics.
+[observability]
+enabled = true
+head_sampling_rate = 1.0
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
 [observability.issues]
 enabled = true
