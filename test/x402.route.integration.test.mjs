@@ -159,8 +159,8 @@ test('real local x402 route verifies, settles through mock facilitator, processe
 
   const nonce = 'success-nonce-x402-e2e-001';
   const first = await postPaid(nonce, requirements);
-  assert.equal(first.status, 200);
   const firstBody = await first.json();
+  assert.equal(first.status, 200, 'x402 route response: ' + JSON.stringify(firstBody));
   assert.equal(firstBody.ok, true);
   assert.equal(firstBody.order.order_status, 'DELIVERED');
   assert.equal(firstBody.order.payment_status, 'PAID');
