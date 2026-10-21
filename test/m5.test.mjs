@@ -247,7 +247,7 @@ async function addQuote(db, email, amount) {
 // ================= 8. Cron engines: first/replay/duplicate/partial/retry =================
 (async function () {
   const db = await freshDb('/tmp/atlas-m5-cron.sqlite');
-  const env = { DB: db, TELEGRAM_PROVIDER: 'MOCK' };
+  const env = { DB: db, TELEGRAM_PROVIDER: 'MOCK', FOUNDER_CHAT_ID: 'test-founder-chat' };
   // ---- Daily Report with outbox-backed delivery adapter (mock telegram via adapter contract)
   const mkAdapter = (behavior) => {
     let n = 0; const calls = [];
@@ -305,7 +305,7 @@ async function addQuote(db, email, amount) {
 
   // ---- Telegraph Monitor: duplicate + retry
   const db3 = await freshDb('/tmp/atlas-m5-cron3.sqlite');
-  const env3 = { DB: db3, TELEGRAM_PROVIDER: 'MOCK' };
+  const env3 = { DB: db3, TELEGRAM_PROVIDER: 'MOCK', FOUNDER_CHAT_ID: 'test-founder-chat' };
   await db3.prepare("INSERT INTO zatca_experiment_requests (request_key, qualified, submitted_at, attr_source, attr_campaign) VALUES ('rk-a','yes',?, 'telegraph','EXP-ZATCA-W25-2026-09')").bind(today + 'T09:00:00').run();
   const tgAd = {
     async loadTelegraphRequests() { const { results } = await db3.prepare("SELECT * FROM zatca_experiment_requests WHERE attr_source='telegraph'").bind().all(); return results; },
@@ -316,7 +316,7 @@ async function addQuote(db, email, amount) {
   T('cron.telegraph first alerts 1, replay zero (idempotent)', t1.alerted === 1 && t2.alerted === 0);
   // failed delivery is NOT recorded -> retried next run
   const db4 = await freshDb('/tmp/atlas-m5-cron4.sqlite');
-  const env4 = { DB: db4, TELEGRAM_PROVIDER: 'MOCK' };
+  const env4 = { DB: db4, TELEGRAM_PROVIDER: 'MOCK', FOUNDER_CHAT_ID: 'test-founder-chat' };
   await db4.prepare("INSERT INTO zatca_experiment_requests (request_key, qualified, submitted_at, attr_source, attr_campaign) VALUES ('rk-b','yes',?, 'telegraph','EXP-ZATCA-W25-2026-09')").bind(today + 'T09:00:00').run();
   const tgAd4 = {
     async loadTelegraphRequests() { const { results } = await db4.prepare("SELECT * FROM zatca_experiment_requests WHERE attr_source='telegraph'").bind().all(); return results; },
