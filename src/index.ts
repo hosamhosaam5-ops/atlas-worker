@@ -338,6 +338,8 @@ export default {
     if (pathname === "/trust.json" && request.method === "GET") return json(await trustSnapshot(env.DB));
     if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1") {
       if (String((env as any).X402_TEST_MODE || "") === "1") {
+        // Test-only local route bootstrapping: production D1 schema remains managed by deployment migrations.
+        await ensureOrderSchema(env.DB);
         await ensureCommercialSchema(env.DB);
         const testProduct = await env.DB.prepare("SELECT product_id FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
         if (!testProduct) await upsertProduct(env.DB,{product_id:"atlas_ai_data_qa_v1",name:"ATLAS AI Agent Data QA",description:"Synthetic route-test product",unit:"order",price_usdc:15,pricing_mode:"FIXED",status:"ACTIVE"});
