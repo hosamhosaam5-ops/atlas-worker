@@ -28,6 +28,11 @@ export async function handleA2A(request,env){
     // A saved result remains retrievable after the offer is paused; replay never re-enters x402.
     await ensureP1Schema(env.DB);
     // New work is accepted only while the paid offer is explicitly active.
+    const prior=await env.DB.prepare('SELECT task_id,status,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
+    if(prior){
+      let saved={};try{saved=JSON.parse(prior.output_json||'{}')}catch{}
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:prior.task_id,status:{state:String(prior.status).toLowerCase()},...(Object.keys(saved).length?{artifacts:[{parts:[{kind:'data',data:saved}]}]}:{})}}),{headers});
+    }
     const product=await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
     if(!product||String(product.status)!=='ACTIVE'||Number(product.price_usdc)!==15){
       return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32001,message:'A2A paid task execution is unavailable while the offer is paused. No task was created. Discover the canonical x402 resource at '+origin+'/x402/atlas_ai_data_qa_v1; do not submit payment while it is paused.'}}),{status:400,headers});
@@ -39,11 +44,6 @@ export async function handleA2A(request,env){
     const paymentSignature=String(atlas?.payment_signature||'').trim();
     if(!/^\S+@\S+\.\S+$/.test(clientEmail)||!fileName||!/^.+\.(csv|xlsx)$/i.test(fileName)||!fileBase64||fileBase64.length>1900000||!paymentSignature){
       return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Paid data-QA tasks require metadata.atlas_x402 with client_email, file_name (.csv/.xlsx), file_base64, and payment_signature. Payment is validated only by the canonical x402 resource.'}}),{status:400,headers});
-    }
-    const prior=await env.DB.prepare('SELECT task_id,status,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
-    if(prior){
-      let saved={};try{saved=JSON.parse(prior.output_json||'{}')}catch{}
-      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:prior.task_id,status:{state:String(prior.status).toLowerCase()},...(Object.keys(saved).length?{artifacts:[{parts:[{kind:'data',data:saved}]}]}:{})}}),{headers});
     }
     const claimed=await env.DB.prepare("INSERT INTO agent_tasks(task_id,source,status,input_json,output_json) VALUES(?,?,'PROCESSING',?,'{}') ON CONFLICT(task_id) DO NOTHING")
       .bind(taskId,'a2a',JSON.stringify({product_id:'atlas_ai_data_qa_v1',file_name:fileName})).run();
