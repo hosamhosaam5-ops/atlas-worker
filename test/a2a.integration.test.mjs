@@ -42,7 +42,7 @@ function makeD1(filename) {
 async function initializeTestDb(filename) {
   const db = makeD1(filename);
   for (const schema of ['schema.sql', 'schema-m2.sql', 'schema-m3.sql']) {
-    db.prepare(readFileSync(new URL('../' + schema, import.meta.url), 'utf8')).run();
+    await db.execRaw(readFileSync(new URL('../' + schema, import.meta.url), 'utf8'));
   }
   await ensureOrderSchema(db);
   await db.prepare(
