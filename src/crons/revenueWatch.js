@@ -41,7 +41,7 @@ export const defaultAdapters = {
   },
 };
 
-export async function runRevenueWatch(env, adapters = defaultAdapters, alertAdapter) {
+export async function runRevenueWatch(env, adapters = defaultAdapters, alertAdapter, logger = console) {
   const [souk, dp, bb, state] = await Promise.all([
     adapters.checkAgentSouk(), adapters.checkDatapoint(), adapters.checkBountyBook(), adapters.loadWatchState(env),
   ]);
@@ -58,23 +58,37 @@ export async function runRevenueWatch(env, adapters = defaultAdapters, alertAdap
     ).bind(m.idempotency_key, 'revenue_watch_state', 'revenue_watch', 'WATCHING', m.progress, m.payload_json, m.updated_at, m.created_at).run();
   }
 
-  // Alert founder on real events only (backup: Is Real Event → Alert Founder).
-  // Sent alert keys are persisted so a rerun never re-alerts the same event.
+  // Persist only confirmed provider acknowledgements. Failures remain eligible for a later pass.
   let alerted = 0;
+  let failed = 0;
   for (const e of events) {
     const key = 'watch|alerted|' + e.alert_key;
     const prior = await env.DB.prepare('SELECT idempotency_key FROM execution_state WHERE idempotency_key = ?').bind(key).first();
     if (prior) continue;
-    const text = '🔔 ATLAS REVENUE EVENT\n\n' + e.event_kind + '\n' + e.detail + '\n' + e.detected_at;
-    const res = alertAdapter ? await alertAdapter.send(env.FOUNDER_CHAT_ID || '5246182877', text, {}) : null;
-    if (res && res.message_id) {
-      alerted++;
+    const messageText = '🔔 ATLAS REVENUE EVENT\n\n' + e.event_kind + '\n' + e.detail + '\n' + e.detected_at;
+    try {
+      if (!alertAdapter || typeof alertAdapter.send !== 'function') {
+        throw Object.assign(new Error('TELEGRAM_ALERT_ADAPTER_NOT_CONFIGURED'), { code: 'ADAPTER_NOT_CONFIGURED' });
+      }
+      const res = await alertAdapter.send(env.FOUNDER_CHAT_ID || '5246182877', messageText, {});
+      const messageId = res && (res.message_id ?? res.provider_message_id);
+      if (messageId === undefined || messageId === null || String(messageId).trim() === '') {
+        throw Object.assign(new Error('TELEGRAM_DELIVERY_NOT_CONFIRMED'), { code: 'DELIVERY_NOT_CONFIRMED' });
+      }
       await env.DB.prepare(
         `INSERT INTO execution_state (idempotency_key, record_kind, tool, status, payload_json, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?)
          ON CONFLICT(idempotency_key) DO NOTHING`
-      ).bind(key, 'revenue_watch_state', 'revenue_watch', 'SENT', JSON.stringify({ alert_key: e.alert_key, message_id: res.message_id }), new Date().toISOString(), new Date().toISOString()).run();
+      ).bind(key, 'revenue_watch_state', 'revenue_watch', 'SENT', JSON.stringify({ alert_key: e.alert_key, message_id: String(messageId) }), new Date().toISOString(), new Date().toISOString()).run();
+      alerted++;
+    } catch (error) {
+      failed++;
+      logger.error('REVENUE_WATCH_ALERT_DELIVERY_FAILED', {
+        alert_key: e.alert_key,
+        code: String(error?.code || 'DELIVERY_FAILED'),
+        error: String(error?.message || error).slice(0, 240),
+      });
     }
   }
-  return { events_detected: events.length, alerted, markers_saved: markers.length };
+  return { events_detected: events.length, alerted, failed, markers_saved: markers.length };
 }
