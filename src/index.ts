@@ -18,6 +18,7 @@ import { ensureCommercialSchema, listProducts, upsertProduct, createQuote, reque
 import { runCommercialIntegration } from './commercial/testHarness.js';
 // @ts-ignore
 import { processOrder, extractCSV, extractXLSX, markSettlementReview } from './orders/intake.js';
+import { recoverStaleX402Payments } from './orders/x402-recovery.js';
 // @ts-ignore
 import { ensureOrderSchema } from './orders/schema.js';
 // @ts-ignore
@@ -731,6 +732,14 @@ export default {
     // is safe after a waitUntil cancellation and does not blindly duplicate completed work.
     if (event.cron === "*/5 * * * *") {
       try {
+        // Surface interrupted x402 payment flows for explicit reconciliation.
+        // This is intentionally status-only: never release a nonce or retry settlement here.
+        const configuredStaleMinutes = Number(env.RECOVERY_STALE_MINUTES ?? 30);
+        const staleMinutes = Number.isFinite(configuredStaleMinutes) ? Math.max(5, configuredStaleMinutes) : 30;
+        const paymentRecovery = await recoverStaleX402Payments(env.DB, staleMinutes);
+        if (paymentRecovery.reservations_flagged || paymentRecovery.settled_without_order_flagged) {
+          console.warn('X402_PAYMENT_RECOVERY_REVIEW_REQUIRED', paymentRecovery);
+        }
         const rows: any = await env.DB.prepare(
           "SELECT id FROM event_log WHERE source='telegram' AND status='PENDING' AND created_at < datetime('now','-1 minute') ORDER BY id ASC LIMIT 3"
         ).all();
