@@ -24,9 +24,10 @@ export async function handleA2A(request,env){
     if(!taskId||taskId.length>200||message?.role!=='user'||!Array.isArray(message?.parts)){
       return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Invalid A2A message. Provide message.messageId, role=user, and parts.'}}),{status:400,headers});
     }
-    // A2A is a paid transport adapter, not a bypass around the canonical x402 gate.
-    // No task is persisted until the offer is active and the request is structurally valid.
+    // Initialize storage, then replay an existing task before checking current offer state.
+    // A saved result remains retrievable after the offer is paused; replay never re-enters x402.
     await ensureP1Schema(env.DB);
+    // New work is accepted only while the paid offer is explicitly active.
     const product=await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
     if(!product||String(product.status)!=='ACTIVE'||Number(product.price_usdc)!==15){
       return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32001,message:'A2A paid task execution is unavailable while the offer is paused. No task was created. Discover the canonical x402 resource at '+origin+'/x402/atlas_ai_data_qa_v1; do not submit payment while it is paused.'}}),{status:400,headers});
