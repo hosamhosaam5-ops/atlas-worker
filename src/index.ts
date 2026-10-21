@@ -97,6 +97,23 @@ interface Env {
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 
+// Emit safe, structured diagnostics for x402 route responses with HTTP 503.
+// Never include request bodies, payment signatures, wallet values, or facilitator payloads.
+function logX402Route503(
+  request: Request,
+  errorCode: string,
+  fields: Record<string, string | number | boolean | null> = {},
+) {
+  console.warn(JSON.stringify({
+    event: "atlas_x402_route_503",
+    error_code: errorCode,
+    method: request.method,
+    path: new URL(request.url).pathname,
+    ray_id: request.headers.get("cf-ray"),
+    ...fields,
+  }));
+}
+
 // Fail closed for every public discovery surface when the paid offer is paused
 // or its status cannot be read.
 async function atlasOfferIsActive(db: D1Database): Promise<boolean> {
@@ -347,9 +364,22 @@ export default {
         if (!testProduct) await upsertProduct(env.DB,{product_id:"atlas_ai_data_qa_v1",name:"ATLAS AI Agent Data QA",description:"Synthetic route-test product",unit:"order",price_usdc:15,pricing_mode:"FIXED",status:"ACTIVE"});
       }
       const wallet = String(env.ATLAS_WALLET_ADDRESS || "").trim();
-      if (!wallet) return json({ ok: false, error: "X402_WALLET_NOT_CONFIGURED" }, 503);
-      const product = await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
-      if (!product || String(product.status) !== "ACTIVE" || Number(product.price_usdc) !== 15) return json({ ok: false, error: "X402_PRODUCT_NOT_READY" }, 503);
+      if (!wallet) {
+        logX402Route503(request, "X402_WALLET_NOT_CONFIGURED", {
+          product_id: "atlas_ai_data_qa_v1",
+          wallet_configured: false,
+        });
+        return json({ ok: false, error: "X402_WALLET_NOT_CONFIGURED" }, 503);
+      }
+      const product = await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first() as any;
+      if (!product || String(product.status) !== "ACTIVE" || Number(product.price_usdc) !== 15) {
+        logX402Route503(request, "X402_PRODUCT_NOT_READY", {
+          product_id: "atlas_ai_data_qa_v1",
+          product_status: product ? String(product.status) : "MISSING",
+          price_matches: !!product && Number(product.price_usdc) === 15,
+        });
+        return json({ ok: false, error: "X402_PRODUCT_NOT_READY" }, 503);
+      }
       const req = x402Requirements(origin, { wallet, asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" });
       const paymentRequirements = req.accepts[0];
       const paymentRequiredHeader = btoa(JSON.stringify(req));
@@ -418,6 +448,12 @@ export default {
       let verifyResponse;
       try { verifyResponse = await fetch(facilitator + "/verify", { method: "POST", headers: { "content-type": "application/json" }, body: facilitatorBody, signal: AbortSignal.timeout(15000) }); } catch (e) {
         await env.DB.prepare("DELETE FROM execution_state WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'").bind(nonceKey).run();
+        logX402Route503(request, "X402_VERIFY_UNAVAILABLE", {
+          product_id: "atlas_ai_data_qa_v1",
+          dependency: "x402_facilitator",
+          phase: "verify",
+          failure_kind: "fetch_exception",
+        });
         return json({ ok: false, error: "X402_VERIFY_UNAVAILABLE", detail: String(e?.message || e) }, 503);
       }
       let verifyData; try { verifyData = await verifyResponse.json(); } catch { verifyData = { isValid: false, invalidReason: "invalid_facilitator_response" }; }
@@ -432,6 +468,12 @@ export default {
         // this nonce on an ambiguous outcome: doing so could allow a duplicate settle.
         await env.DB.prepare("UPDATE execution_state SET status='SETTLEMENT_REVIEW', payload_json=?, updated_at=datetime('now') WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'")
           .bind(JSON.stringify({ nonce, product_id: "atlas_ai_data_qa_v1", settlement_state: "UNKNOWN", reason: "settle_request_outcome_unknown" }), nonceKey).run();
+        logX402Route503(request, "X402_SETTLEMENT_REVIEW_REQUIRED", {
+          product_id: "atlas_ai_data_qa_v1",
+          phase: "settle",
+          settlement_state: "UNKNOWN",
+          manual_reconciliation_required: true,
+        });
         return json({ ok: false, error: "X402_SETTLEMENT_REVIEW_REQUIRED", detail: "Settlement outcome is unknown; nonce locked to prevent duplicate settlement." }, 503);
       }
       let settleData; try { settleData = await settleResponse.json(); } catch { settleData = { success: false, errorReason: "invalid_facilitator_response" }; }
@@ -440,6 +482,13 @@ export default {
         // moved. Keep the nonce locked and require reconciliation before any retry.
         await env.DB.prepare("UPDATE execution_state SET status='SETTLEMENT_REVIEW', payload_json=?, updated_at=datetime('now') WHERE idempotency_key=? AND status='SETTLEMENT_RESERVED'")
           .bind(JSON.stringify({ nonce, product_id: "atlas_ai_data_qa_v1", settlement_state: "UNKNOWN_OR_UNCONFIRMED", http_status: settleResponse.status, reason: String(settleData?.errorReason || "invalid_facilitator_settlement_response") }), nonceKey).run();
+        logX402Route503(request, "X402_SETTLEMENT_REVIEW_REQUIRED", {
+          product_id: "atlas_ai_data_qa_v1",
+          phase: "settle",
+          settlement_state: "UNKNOWN_OR_UNCONFIRMED",
+          facilitator_http_status: settleResponse.status,
+          manual_reconciliation_required: true,
+        });
         return json({ ok: false, error: "X402_SETTLEMENT_REVIEW_REQUIRED", reason: "Facilitator did not provide a confirmed settlement transaction; nonce locked to prevent duplicate settlement." }, 503);
       }
       await env.DB.prepare("UPDATE execution_state SET status='SETTLED', payload_json=?, updated_at=datetime('now') WHERE idempotency_key=?").bind(JSON.stringify({ nonce, tx_hash: String(settleData.transaction), product_id: "atlas_ai_data_qa_v1" }), nonceKey).run();
