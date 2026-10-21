@@ -76,24 +76,37 @@ export const defaultAdapters = {
   },
 };
 
-export async function runTelegraphMonitor(env, adapters = defaultAdapters, alertAdapter) {
+export async function runTelegraphMonitor(env, adapters = defaultAdapters, alertAdapter, logger = console) {
   const reqs = await adapters.loadTelegraphRequests(env);
   const state = await adapters.loadAlertState(env);
   const fresh = detectNewRequests(reqs, state);
   let alerted = 0;
+  let failed = 0;
   for (const r of fresh) {
     const alert = buildAlert(r);
-    const res = alertAdapter ? await alertAdapter.send(env.FOUNDER_CHAT_ID || '5246182877', alert.text, { parse_mode: 'HTML' }) : null;
-    const mid = res && res.message_id;
-    const row = recordAlert(r, mid);
-    if (row) {
-      alerted++;
+    try {
+      if (!alertAdapter || typeof alertAdapter.send !== 'function') {
+        throw Object.assign(new Error('TELEGRAM_ALERT_ADAPTER_NOT_CONFIGURED'), { code: 'ADAPTER_NOT_CONFIGURED' });
+      }
+      const res = await alertAdapter.send(env.FOUNDER_CHAT_ID || '5246182877', alert.text, { parse_mode: 'HTML' });
+      const mid = res && (res.message_id ?? res.provider_message_id);
+      const row = recordAlert(r, mid);
+      if (!row) throw Object.assign(new Error('TELEGRAM_DELIVERY_NOT_CONFIRMED'), { code: 'DELIVERY_NOT_CONFIRMED' });
       await env.DB.prepare(
         `INSERT INTO execution_state (idempotency_key, record_kind, correlation_id, action_id, tool, status, payload_json, error_code, attempt_count, created_at, expires_at, delivery_state, message_key, chunk_index, request_id, entity_type, entity_id, progress, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(idempotency_key) DO NOTHING`
       ).bind(row.idempotency_key, row.record_kind, row.correlation_id, row.action_id, row.tool, row.status, row.payload_json, row.error_code, row.attempt_count, row.created_at, row.expires_at, row.delivery_state, row.message_key, row.chunk_index, row.request_id, row.entity_type, row.entity_id, row.progress, row.updated_at).run();
+      alerted++;
+    } catch (error) {
+      failed++;
+      // Do not persist a SENT marker on provider failure. A later scheduled pass may retry.
+      logger.error('TELEGRAPH_ALERT_DELIVERY_FAILED', {
+        alert_key: r.alert_key,
+        code: String(error?.code || 'DELIVERY_FAILED'),
+        error: String(error?.message || error).slice(0, 240),
+      });
     }
   }
-  return { new_requests: fresh.length, alerted };
+  return { new_requests: fresh.length, alerted, failed };
 }
