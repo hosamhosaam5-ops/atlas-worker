@@ -84,7 +84,15 @@ export async function callProvider(provider, msg, timeoutMs) {
     if (!res || res.ok !== true) {
       return { ok: false, error: String((res && res.error) || 'provider returned malformed/falsey result'), code: (res && res.code) || 'PROVIDER_ERROR' };
     }
-    return { ok: true, provider_message_id: res.provider_message_id || null };
+    const providerMessageId = String(res.provider_message_id ?? '').trim();
+    if (!providerMessageId) {
+      return {
+        ok: false,
+        error: 'provider acknowledged success without a message ID',
+        code: 'DELIVERY_NOT_CONFIRMED',
+      };
+    }
+    return { ok: true, provider_message_id: providerMessageId };
   } catch (e) {
     return { ok: false, error: String(e && e.message || e), code: e && e.code === 'TIMEOUT' ? 'TIMEOUT' : 'PROVIDER_ERROR' };
   } finally { clearTimeout(timer); }
