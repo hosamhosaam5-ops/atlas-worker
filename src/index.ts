@@ -737,8 +737,41 @@ export default {
         const configuredStaleMinutes = Number(env.RECOVERY_STALE_MINUTES ?? 30);
         const staleMinutes = Number.isFinite(configuredStaleMinutes) ? Math.max(5, configuredStaleMinutes) : 30;
         const paymentRecovery = await recoverStaleX402Payments(env.DB, staleMinutes);
-        if (paymentRecovery.reservations_flagged || paymentRecovery.settled_without_order_flagged) {
+        const newlyFlagged = Number(paymentRecovery.reservations_flagged || 0) + Number(paymentRecovery.settled_without_order_flagged || 0);
+        if (newlyFlagged > 0) {
           console.warn('X402_PAYMENT_RECOVERY_REVIEW_REQUIRED', paymentRecovery);
+          // Notify the founder only when this run transitions new rows into review.
+          // Repeated 5-minute sweeps do not resend alerts for rows already under review.
+          const founderChatId = String(env.FOUNDER_CHAT_ID || '').trim();
+          if (!founderChatId) {
+            console.error('X402_PAYMENT_RECOVERY_ALERT_FAILED', 'FOUNDER_CHAT_ID_NOT_CONFIGURED', paymentRecovery);
+          } else {
+            try {
+              const telegram = getTelegramProvider(env as any);
+              const alertText = [
+                '⚠️ ATLAS: مراجعة تسوية دفع مطلوبة',
+                'تم وضع حالات دفع جديدة في SETTLEMENT_REVIEW.',
+                'حجوزات قديمة: ' + Number(paymentRecovery.reservations_flagged || 0),
+                'تسويات مؤكدة بلا سجل طلب: ' + Number(paymentRecovery.settled_without_order_flagged || 0),
+                'لم تُفك حجوزات nonce ولم تُعَد أي تسوية تلقائيًا.',
+                'يرجى إجراء المطابقة يدويًا قبل أي إجراء مالي.',
+              ].join('\\n');
+              const delivery = await telegram.send({ to: founderChatId, text: alertText });
+              if (delivery && delivery.ok === true) {
+                console.log('X402_PAYMENT_RECOVERY_ALERT_SENT', {
+                  reservations_flagged: Number(paymentRecovery.reservations_flagged || 0),
+                  settled_without_order_flagged: Number(paymentRecovery.settled_without_order_flagged || 0),
+                });
+              } else {
+                console.error('X402_PAYMENT_RECOVERY_ALERT_FAILED', {
+                  error: String(delivery?.error || 'TELEGRAM_DELIVERY_NOT_CONFIRMED'),
+                  code: String(delivery?.code || 'PROVIDER_ERROR'),
+                });
+              }
+            } catch (alertError: any) {
+              console.error('X402_PAYMENT_RECOVERY_ALERT_FAILED', String(alertError?.message || alertError));
+            }
+          }
         }
         const rows: any = await env.DB.prepare(
           "SELECT id FROM event_log WHERE source='telegram' AND status='PENDING' AND created_at < datetime('now','-1 minute') ORDER BY id ASC LIMIT 3"
