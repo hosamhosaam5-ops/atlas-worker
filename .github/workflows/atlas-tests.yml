@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Run complete test suite
-        run: npm test
+        run: node --test --test-concurrency=1 test/*.test.mjs
 
   registry_submit:
     # Never submit or mutate the external Registry from pull-request validation.
