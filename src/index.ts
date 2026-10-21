@@ -294,6 +294,7 @@ const mcpOAuth = new OAuthProvider({
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    try {
     const pathname = new URL(request.url).pathname;
     // Initialize additive autonomy tables on first request; migration remains the canonical schema artifact.
     try { await ensureAutonomySchema(env.DB); } catch (e) { console.error('AUTONOMY_SCHEMA_INIT_FAILED', String(e)); }
@@ -771,6 +772,12 @@ export default {
     }
 
     return json({ ok: false, error: 'not found' }, 404);
+    } catch (error: any) {
+      const code = String(error?.code || error?.name || 'UNHANDLED_FETCH_EXCEPTION');
+      console.error('UNHANDLED_FETCH_EXCEPTION', code);
+      await sendCriticalOpsAlert(env as any, 'fetch_handler', code);
+      return json({ ok: false, error: 'INTERNAL_ERROR' }, 500);
+    }
   },
 
   // M6A item 7/8: Cron entry point. Schedules are declared in wrangler.toml but stay
