@@ -35,7 +35,6 @@ before(async () => {
 });
 after(async () => {
   if (proc) { try { process.kill(-proc.pid, 'SIGKILL'); } catch { try { proc.kill('SIGKILL'); } catch {} } }
-  try { const cp = await import('node:child_process'); cp.execSync('pkill -9 -f workerd || true'); } catch {}
 });
 
 const post = (p, body, headers = {}) => fetch(BASE + p, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
