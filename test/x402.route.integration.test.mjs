@@ -330,6 +330,18 @@ test('paused product 503 is classified as expected; active local fixture returns
     assert.equal(pausedBody.ok, false);
     assert.equal(pausedBody.error, 'X402_PRODUCT_NOT_READY');
 
+    // A paused POST must be rejected before parsing payment data or touching the facilitator.
+    const pausedPost = await fetch(BASE + '/x402/atlas_ai_data_qa_v1', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(pausedPost.status, 503);
+    const pausedPostBody = await pausedPost.json();
+    assert.equal(pausedPostBody.error, 'X402_PRODUCT_NOT_READY');
+    assert.equal(calls.verify.length, verifyCountBefore, 'paused requests must not invoke payment verification');
+    assert.equal(calls.settle.length, settleCountBefore, 'paused requests must never settle payment');
+
     const activateLocalFixture = runLocalD1("UPDATE products SET status='ACTIVE', price_usdc=15 WHERE product_id='atlas_ai_data_qa_v1';");
     assert.ok(activateLocalFixture, 'local D1 active fixture command must complete');
     const active = await fetch(BASE + '/x402/atlas_ai_data_qa_v1');
