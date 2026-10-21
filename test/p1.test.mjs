@@ -45,6 +45,24 @@ test('A2A message/send fails closed while offer is paused and creates no task',a
   assert.equal(db.tasks.size,0); assert.equal(db.inserts,0);
 });
 
+test('A2A replays a saved task result while offer is paused without payment delegation',async()=>{
+  const db=new FakeA2ADB(false);
+  const id='a2a-saved-result-paused';
+  db.tasks.set(id,{task_id:id,source:'a2a',status:'COMPLETED',input_json:'{}',output_json:JSON.stringify({order_id:'saved-order-1',order_status:'DELIVERED',payment_status:'PAID',rows_in:2,rows_out:2,qa_report:'PASS'})});
+  const originalFetch=globalThis.fetch; let delegated=0;
+  globalThis.fetch=async()=>{delegated++;throw new Error('must not call x402 for a replay');};
+  try {
+    const response=await handleA2A(new Request('https://atlas.example/a2a',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'rpc-replay-paused',method:'message/send',params:{message:{messageId:id,role:'user',parts:[{kind:'text',text:'Replay existing result'}]}}})}),{DB:db});
+    assert.equal(response.status,200);
+    const body=await response.json();
+    assert.equal(body.result.id,id);
+    assert.equal(body.result.status.state,'completed');
+    assert.equal(body.result.artifacts[0].parts[0].data.order_id,'saved-order-1');
+    assert.equal(delegated,0);
+    assert.equal(db.inserts,0);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
 test('A2A paid task delegates once to canonical x402 and persists result for retries',async()=>{
   const db=new FakeA2ADB(true); const id='a2a-paid-idempotency-1'; let delegated=0;
   const originalFetch=globalThis.fetch;
@@ -95,3 +113,41 @@ test('A2A tasks/get returns not-found for an absent task',async()=>{
 
 test('x402 requirements are exact Base USDC payment requirements',()=>{const r=x402Requirements('https://atlas.example',{price_usdc:15,wallet:'0x1111111111111111111111111111111111111111',asset:'0x2222222222222222222222222222222222222222'});assert.equal(r.x402Version,2);assert.equal(r.accepts[0].scheme,'exact');assert.equal(r.accepts[0].network,'eip155:8453');assert.equal(r.accepts[0].amount,'15000000');});
 
+
+test('A2A locks uncertain x402 outcomes for review and never retries payment',async()=>{
+  const db=new FakeA2ADB(true); const id='a2a-uncertain-outcome'; let delegated=0;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{delegated++;throw new Error('simulated transport timeout after submission');};
+  try {
+    const request=()=>new Request('https://atlas.example/a2a',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'rpc-uncertain',method:'message/send',params:{message:{messageId:id,role:'user',parts:[{kind:'text',text:'Run data QA'}],metadata:{atlas_x402:{client_email:'agent@example.com',file_name:'sample.csv',file_base64:'bmFtZSx2YWx1ZQphbHBoYSwxMA==',payment_signature:'opaque-facilitator-validated-payload'}}}}})});
+    const first=await handleA2A(request(),{DB:db});
+    assert.equal(first.status,200);
+    const body=(await first.json()).result;
+    assert.equal(body.status.state,'review_required');
+    assert.equal(body.artifacts[0].parts[0].data.error,'X402_OUTCOME_UNKNOWN');
+    assert.equal(db.tasks.get(id).status,'REVIEW_REQUIRED');
+    const second=await handleA2A(request(),{DB:db});
+    assert.equal(second.status,200);
+    assert.equal((await second.json()).result.status.state,'review_required');
+    assert.equal(delegated,1);
+    assert.equal(db.inserts,1);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test('A2A persists canonical x402 rejection and does not retry a failed task',async()=>{
+  const db=new FakeA2ADB(true); const id='a2a-failed-payment'; let delegated=0;
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{delegated++;return new Response(JSON.stringify({ok:false,error:'PAYMENT_INVALID'}),{status:402,headers:{'content-type':'application/json'}});};
+  try {
+    const request=()=>new Request('https://atlas.example/a2a',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'rpc-failed',method:'message/send',params:{message:{messageId:id,role:'user',parts:[{kind:'text',text:'Run data QA'}],metadata:{atlas_x402:{client_email:'agent@example.com',file_name:'sample.csv',file_base64:'bmFtZSx2YWx1ZQphbHBoYSwxMA==',payment_signature:'invalid-signature'}}}}})});
+    const first=await handleA2A(request(),{DB:db});
+    assert.equal(first.status,200);
+    assert.equal((await first.json()).result.status.state,'failed');
+    assert.equal(db.tasks.get(id).status,'FAILED');
+    const second=await handleA2A(request(),{DB:db});
+    assert.equal(second.status,200);
+    assert.equal((await second.json()).result.status.state,'failed');
+    assert.equal(delegated,1);
+    assert.equal(db.inserts,1);
+  } finally {globalThis.fetch=originalFetch;}
+});
