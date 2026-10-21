@@ -135,7 +135,6 @@ after(async () => {
   }
   if (facilitator) await new Promise(resolve => facilitator.close(resolve));
   try { execSync('pkill -9 -f "wrangler dev --local --port ' + WORKER_PORT + '" || true', { stdio: 'ignore' }); } catch {}
-  try { execSync('pkill -9 -f "workerd" || true', { stdio: 'ignore' }); } catch {}
   fs.rmSync(PERSIST, { recursive: true, force: true });
 });
 
