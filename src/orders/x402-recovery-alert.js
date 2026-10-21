@@ -112,7 +112,9 @@ export async function sendX402SettlementReviewAlert(paymentRecovery, env, depend
   // This works even when this sweep has no newly flagged payments.
   const retryResult = await retryX402SettlementReviewAlerts(env, dependencies);
 
-  if (total <= 0) return { sent: false, reason: 'NO_NEW_REVIEW_ROWS', retries: retryResult };
+  if (total <= 0) return env?.DB
+    ? { sent: false, reason: 'NO_NEW_REVIEW_ROWS', retries: retryResult }
+    : { sent: false, reason: 'NO_NEW_REVIEW_ROWS' };
 
   logger.warn('X402_PAYMENT_RECOVERY_REVIEW_REQUIRED', {
     reservations_flagged: reservations,
