@@ -51,7 +51,7 @@ class GrowthActionsDb {
   }
 }
 
-test('prepareGrowthActions binds the action key and qualifies a valid lead once', async () => {
+test('prepareGrowthActions binds the action key and qualifies a valid lead once idempotently', async () => {
   const db = new GrowthActionsDb();
 
   const first = await prepareGrowthActions(db);
