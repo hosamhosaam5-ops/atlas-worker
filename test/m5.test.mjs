@@ -331,7 +331,7 @@ async function addQuote(db, email, amount) {
 
   // ---- Revenue Watch: duplicate suppression + retry
   const rwAd = {
-    async checkAgentSouk() { return { data: [{ id: 1 }] }; },
+    async checkAgentSouk() { return { data: [{ id: 1, buyer: { first_party: false } }] }; },
     async checkDatapoint() { return {}; },
     async checkBountyBook() { return { completed: 5 }; },
     async loadWatchState() { const { results } = await db4.prepare("SELECT * FROM execution_state WHERE record_kind='revenue_watch_state'").bind().all(); return results; },

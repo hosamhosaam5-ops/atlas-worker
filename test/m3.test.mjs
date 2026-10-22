@@ -164,13 +164,13 @@ function T(name, cond, extra) {
 
 // ============ CRON: Revenue Watch ============
 (function () {
-  const ev1 = detectDemandEvents({ souk: { data: [{ id: 1 }, { id: 2 }] }, dp: { sales_count: 3 }, bb: { completed: 10 }, state: [{ idempotency_key: 'watch|bb|completed', progress: 5 }] });
+  const ev1 = detectDemandEvents({ souk: { data: [{ id: 1, buyer: { first_party: false } }] }, dp: { sales_count: 3 }, bb: { completed: 10 }, state: [{ idempotency_key: 'watch|bb|completed', progress: 5 }] });
   const kinds = ev1.filter(e => e.item_type === 'event').map(e => e.event_kind).sort();
   T('watch.detects 3 event kinds', JSON.stringify(kinds) === JSON.stringify(['BUYER_REQUEST_FOUND', 'ORDER_RECEIVED', 'PLATFORM_RECOVERY']));
   T('watch.marker emitted for bb completed', ev1.some(e => e.item_type === 'marker' && e.idempotency_key === 'watch|bb|completed' && e.progress === 10));
   // idempotency: seen keys suppressed
   const seenState = ev1.map(e => ({ idempotency_key: e.alert_key || e.idempotency_key, progress: e.progress }));
-  const ev2 = detectDemandEvents({ souk: { data: [{ id: 1 }, { id: 2 }] }, dp: { sales_count: 3 }, bb: { completed: 10 }, state: seenState.concat([{ idempotency_key: 'watch|bb|completed', progress: 10 }]) });
+  const ev2 = detectDemandEvents({ souk: { data: [{ id: 1, buyer: { first_party: false } }] }, dp: { sales_count: 3 }, bb: { completed: 10 }, state: seenState.concat([{ idempotency_key: 'watch|bb|completed', progress: 10 }]) });
   T('watch.rerun same inputs -> zero new events (idempotent)', ev2.filter(e => e.item_type === 'event').length === 0);
   // quiet cycle: no changes -> only marker
   const ev3 = detectDemandEvents({ souk: { data: [] }, dp: {}, bb: { completed: 10 }, state: [{ idempotency_key: 'watch|bb|completed', progress: 10 }] });
