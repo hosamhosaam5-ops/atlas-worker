@@ -81,7 +81,10 @@ function countExcludedSupplyOffers(payload){
 
 // Agent Souk's public /v1/listings endpoint is a seller-offer catalog, not buyer demand.
 // Keep it visible for diagnostics, but do not interpret those offers as requests.
-const DEFAULT_DEMAND_SOURCES=[\n  {source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'},\n  {source:'opentrain_public_jobs',url:'https://app.opentrain.ai/api/public/v1/jobs?q=software%20engineering&limit=50',provider:'OpenTrain Public Jobs'}\n];
+const DEFAULT_DEMAND_SOURCES=[
+  {source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'},
+  {source:'opentrain_public_jobs',url:'https://app.opentrain.ai/api/public/v1/jobs?q=software%20engineering&limit=50',provider:'OpenTrain Public Jobs'}
+];
 
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES}={}) {
   const budget=await checkBudget(db,{external_requests:sources.length});
