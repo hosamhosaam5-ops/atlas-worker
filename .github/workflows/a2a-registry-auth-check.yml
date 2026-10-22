@@ -1,0 +1,43 @@
+name: A2A Registry authenticated verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-registry-auth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Require registry token
+        env:
+          A2A_REGISTRY_API_TOKEN: ${{ secrets.A2A_REGISTRY_API_TOKEN }}
+        run: |
+          if [ -z "$A2A_REGISTRY_API_TOKEN" ]; then
+            echo "::error::Missing repository secret A2A_REGISTRY_API_TOKEN. Add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+      - name: Verify protected discovery endpoint without exposing token or response data
+        env:
+          A2A_REGISTRY_API_TOKEN: ${{ secrets.A2A_REGISTRY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          status="$(curl --silent --show-error --output "$tmp" --write-out '%{http_code}' \
+            --connect-timeout 10 --max-time 20 \
+            --header "Authorization: Bearer ${A2A_REGISTRY_API_TOKEN}" \
+            --header 'Accept: application/json' \
+            'https://api.a2a-registry.org/public/agents?q=ATLAS')"
+          echo "Registry protected discovery HTTP status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Authenticated discovery did not return HTTP 200. Response body intentionally withheld."
+            exit 1
+          fi
+          if ! jq -e '.success == true and (.agents | type == "array")' "$tmp" >/dev/null; then
+            echo "::error::HTTP 200 returned an unexpected response schema. Response body intentionally withheld."
+            exit 1
+          fi
+          echo "PASS: authenticated protected discovery returned the expected JSON schema."
