@@ -58,7 +58,7 @@ export function extractListings(payload){
     // Catalog listings are seller offers, not buyer demand. Never convert them to leads.
     if(x.object==='listing' || (x.pricing && x.seller && x.payment)) continue;
     const title=String(x.title??x.name??x.service??x.subject??'').trim().slice(0,500);
-    const description=String(x.description??x.summary??x.details??x.request??x.requirements??'').trim().slice(0,5000);
+    const description=String(x.description??x.descriptionText??x.summary??x.details??x.request??x.requirements??'').trim().slice(0,5000);
     const sourceUrl=String(x.url??x.href??x.listing_url??x.public_url??'').trim().slice(0,2000);
     if(!title && !description) continue;
     const providerId=x.id??x.listing_id??x.job_id??x.opportunity_id;
@@ -81,7 +81,7 @@ function countExcludedSupplyOffers(payload){
 
 // Agent Souk's public /v1/listings endpoint is a seller-offer catalog, not buyer demand.
 // Keep it visible for diagnostics, but do not interpret those offers as requests.
-const DEFAULT_DEMAND_SOURCES=[{source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'}];
+const DEFAULT_DEMAND_SOURCES=[\n  {source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'},\n  {source:'opentrain_public_jobs',url:'https://app.opentrain.ai/api/public/v1/jobs?q=software%20engineering&limit=50',provider:'OpenTrain Public Jobs'}\n];
 
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES}={}) {
   const budget=await checkBudget(db,{external_requests:sources.length});
