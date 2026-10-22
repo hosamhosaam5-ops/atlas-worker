@@ -1,0 +1,42 @@
+name: MCP OAuth discovery probe
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/mcp-oauth-discovery-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  unauthenticated-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe public MCP authorization discovery (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://atlas-worker.hosamhosaam5.workers.dev"
+          mkdir -p evidence
+
+          status="$(curl --silent --show-error --max-time 20 -D evidence/mcp-headers.txt -o evidence/mcp-body.json -w '%{http_code}' -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' --data-binary '{"jsonrpc":"2.0","id":"unauth-discovery-probe","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"atlas-readonly-probe","version":"1.0.0"}}}' "$BASE/mcp")"
+          echo "Unauthenticated MCP initialize HTTP=$status"
+          test "$status" = "401"
+          grep -Eiq 'WWW-Authenticate: Bearer' evidence/mcp-headers.txt
+          grep -Eiq 'resource_metadata=' evidence/mcp-headers.txt
+          echo "PASS: MCP endpoint rejects unauthenticated initialize and advertises Bearer resource metadata."
+
+          curl --fail-with-body --silent --show-error --max-time 20 "$BASE/.well-known/oauth-protected-resource/mcp" -o evidence/resource.json
+          jq -e '.resource == "https://atlas-worker.hosamhosaam5.workers.dev/mcp" and (.authorization_servers | index("https://atlas-worker.hosamhosaam5.workers.dev")) != null and (.scopes_supported | index("mcp:read")) != null' evidence/resource.json >/dev/null
+          echo "PASS: protected-resource metadata identifies the canonical MCP resource and read scope."
+
+          curl --fail-with-body --silent --show-error --max-time 20 "$BASE/.well-known/oauth-authorization-server" -o evidence/authorization-server.json
+          jq -e '.issuer == "https://atlas-worker.hosamhosaam5.workers.dev" and .authorization_endpoint == "https://atlas-worker.hosamhosaam5.workers.dev/authorize" and .token_endpoint == "https://atlas-worker.hosamhosaam5.workers.dev/token" and (.code_challenge_methods_supported | index("S256")) != null and (.scopes_supported | index("mcp:read")) != null' evidence/authorization-server.json >/dev/null
+          echo "PASS: authorization-server metadata advertises issuer, authorize/token endpoints, PKCE S256, and mcp:read."
+
+          status="$(curl --silent --show-error --max-time 20 -D evidence/get-headers.txt -o evidence/get-body.txt -w '%{http_code}' "$BASE/mcp")"
+          echo "Unauthenticated MCP GET HTTP=$status"
+          test "$status" = "405" -o "$status" = "401"
+          echo "PASS: endpoint does not allow unauthenticated GET access."
