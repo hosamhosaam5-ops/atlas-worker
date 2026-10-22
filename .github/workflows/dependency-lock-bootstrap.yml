@@ -37,21 +37,11 @@ jobs:
         run: node --test --test-concurrency=1 test/*.test.mjs
       - name: Audit locked dependency tree
         run: npm audit --audit-level=high
-      - name: Update CI to npm ci and commit lockfile
+      - name: Commit lockfile only
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path(".github/workflows/ci.yml")
-          s = p.read_text()
-          old = "run: npm install --no-audit --no-fund"
-          new = "run: npm ci --no-audit --no-fund"
-          if old not in s:
-              raise SystemExit("Expected npm install line was not found; refusing to modify CI")
-          p.write_text(s.replace(old, new, 1))
-          Path(".github/workflows/dependency-lock-bootstrap.yml").unlink()
-          PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json .github/workflows/ci.yml .github/workflows/dependency-lock-bootstrap.yml
+          git add package-lock.json
+          git diff --cached --quiet && { echo "Lockfile already committed; no changes needed."; exit 0; }
           git commit -m "build: lock dependencies for reproducible installs"
           git push origin HEAD:chore/reproducible-dependency-lockfile
