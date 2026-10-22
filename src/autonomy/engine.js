@@ -148,7 +148,7 @@ export async function prepareGrowthActions(db) {
   const actions=[];
   for(const r of (rows.results||[])){
     const key='qualify|'+r.signal_key;
-    const exists=await db.prepare('SELECT id FROM growth_actions WHERE action_key=?').first(key);
+    const exists=await db.prepare('SELECT id FROM growth_actions WHERE action_key=?').bind(key).first();
     if(exists) continue;
     const summary=String(r.request_summary||'');
     const safe=validateMarketplaceLead(sanitizeExternalInput({description:summary}).data);
