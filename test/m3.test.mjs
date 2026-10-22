@@ -166,7 +166,7 @@ function T(name, cond, extra) {
 (function () {
   const ev1 = detectDemandEvents({ souk: { data: [{ id: 1, buyer: { first_party: false } }, { id: 2, buyer: { first_party: false } }] }, dp: { sales_count: 3 }, bb: { completed: 10 }, state: [{ idempotency_key: 'watch|bb|completed', progress: 5 }] });
   const kinds = ev1.filter(e => e.item_type === 'event').map(e => e.event_kind).sort();
-  T('watch.detects 3 event kinds', JSON.stringify(kinds) === JSON.stringify(['BUYER_REQUEST_FOUND', 'ORDER_RECEIVED', 'PLATFORM_RECOVERY']), JSON.stringify(kinds));
+  T('watch.detects demand events per stable bounty ID plus sales and recovery', JSON.stringify(kinds) === JSON.stringify(['BUYER_REQUEST_FOUND', 'BUYER_REQUEST_FOUND', 'ORDER_RECEIVED', 'PLATFORM_RECOVERY']), JSON.stringify(kinds));
   T('watch.marker emitted for bb completed', ev1.some(e => e.item_type === 'marker' && e.idempotency_key === 'watch|bb|completed' && e.progress === 10));
   // idempotency: seen keys suppressed
   const seenState = ev1.map(e => ({ idempotency_key: e.alert_key || e.idempotency_key, progress: e.progress }));
