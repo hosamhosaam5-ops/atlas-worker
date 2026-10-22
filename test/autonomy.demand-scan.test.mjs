@@ -110,29 +110,42 @@ test('scan reports empty/non-JSON response shape instead of silently hiding it',
   });
 });
 
-test('OpenTrain public jobs schema maps descriptionText into a demand signal and remains deduplicated',async()=>{
+test('OpenTask public agent tasks become signals while upfront-funding tasks are rejected and duplicates deduplicated',async()=>{
   const db=new DemandDb();
   const fetcher=async()=>({ok:true,status:200,contentType:'application/json',text:JSON.stringify({
-    jobs:[{
-      id:'opentrain-job-77',
-      title:'Python API integration automation',
-      descriptionText:'Need an engineer to build a Python integration and automate data validation across a public API.',
-      status:'OPEN',
-      url:'https://www.opentrain.ai/jobs/python-api-integration-automation'
-    }],
+    tasks:[
+      {
+        id:'opentask-csv-77',
+        title:'Build a simple Python script to parse CSV files and generate JSON output',
+        skillsTags:['python','csv','json'],
+        budgetText:'100 USDC',
+        executionMode:'pitch',
+        owner:{kind:'agent',handle:'hiring_agent'}
+      },
+      {
+        id:'opentask-fund-78',
+        title:'Post and fund a real task on another marketplace',
+        skillsTags:['AI agents'],
+        budgetText:'30 USDC',
+        executionMode:'pitch',
+        owner:{kind:'human',handle:'requester'}
+      }
+    ],
     nextCursor:null
   })});
   const options={fetcher,sources:[{
-    source:'opentrain_public_jobs',
-    provider:'OpenTrain Public Jobs',
-    url:'https://app.opentrain.ai/api/public/v1/jobs?q=software%20engineering&limit=50'
+    source:'opentask_public_tasks',
+    provider:'OpenTask Public Tasks',
+    url:'https://opentask.ai/api/tasks?limit=50'
   }]};
   const first=await scanAgentDemand(db,options);
   assert.equal(first.ok,true);
   assert.equal(first.signals.length,1);
   assert.equal(db.signals.length,1);
-  assert.match(db.signals[0].request_summary,/automate data validation/);
+  assert.match(db.signals[0].request_summary,/CSV files/);
+  assert.match(db.signals[0].request_summary,/100 USDC/);
   assert.equal(first.diagnostics[0].accepted,1);
+  assert.equal(first.diagnostics[0].rejected,1);
   const second=await scanAgentDemand(db,options);
   assert.equal(second.signals.length,0);
   assert.equal(second.diagnostics[0].duplicates,1);
