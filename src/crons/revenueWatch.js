@@ -1,8 +1,25 @@
 // SMART REVENUE WATCH — ported from backup workflow "ATLAS — Smart Revenue Watch (read-only)" (XHS3xCpLGfPUm3G6).
-// Same logic: 3 HTTP checks (MOCK adapters) → Detect Demand Events → Save Watch State
-// (upsert) → alert only on real events. Idempotent: seen alert_keys never re-alert.
+// Provider calls are fail-closed: every external source defaults to MOCK and requires an explicit LIVE setting.
+// Same event logic: read providers → detect demand events → upsert watch state → alert only on real events.
+// Idempotent: seen alert_keys never re-alert.
 
-// ---- Detect Demand Events (ported VERBATIM from backup, HTTP reads via injected jsons) ----
+function providerMode(env, key) {
+  const mode = String(env?.[key] ?? 'MOCK').trim().toUpperCase();
+  if (mode !== 'MOCK' && mode !== 'LIVE') {
+    throw Object.assign(new Error('INVALID_PROVIDER_MODE_' + key), { code: 'INVALID_PROVIDER_MODE' });
+  }
+  return mode;
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!response.ok) {
+    throw Object.assign(new Error('PROVIDER_HTTP_' + response.status), { code: 'PROVIDER_HTTP_ERROR' });
+  }
+  return response.json();
+}
+
+// ---- Detect Demand Events ----
 export function detectDemandEvents({ souk, dp, bb, state }) {
   const seen = new Set((state || []).filter(r => r && r.idempotency_key).map(r => r.idempotency_key));
   const events = [];
@@ -30,11 +47,21 @@ export function detectDemandEvents({ souk, dp, bb, state }) {
   return out;
 }
 
-// Default adapters — production wiring (never called in M3 without approval; tests use MOCK).
+// Default adapters honor provider configuration. MOCK makes no network request.
+// LIVE must be explicitly enabled per provider in Worker vars.
 export const defaultAdapters = {
-  async checkAgentSouk() { const r = await fetch('https://api.agentsouk.dev/v1/bounties?status=open', { signal: AbortSignal.timeout(15000) }); return r.json().catch(() => ({})); },
-  async checkDatapoint() { const r = await fetch('https://api.datapoint.market/e/hosamhosaam5/de-lu-day-ahead-hourly', { signal: AbortSignal.timeout(15000) }); return r.json().catch(() => ({})); },
-  async checkBountyBook() { const r = await fetch('https://api.bountybook.ai/stats', { signal: AbortSignal.timeout(15000) }); return r.json().catch(() => ({})); },
+  async checkAgentSouk(env) {
+    if (providerMode(env, 'AGENT_SOUK_PROVIDER') === 'MOCK') return { data: [] };
+    return fetchJson('https://api.agentsouk.dev/v1/bounties?status=open');
+  },
+  async checkDatapoint(env) {
+    if (providerMode(env, 'DATAPOINT_PROVIDER') === 'MOCK') return {};
+    return fetchJson('https://api.datapoint.market/e/hosamhosaam5/de-lu-day-ahead-hourly');
+  },
+  async checkBountyBook(env) {
+    if (providerMode(env, 'BOUNTYBOOK_PROVIDER') === 'MOCK') return {};
+    return fetchJson('https://api.bountybook.ai/stats');
+  },
   async loadWatchState(env) {
     const { results } = await env.DB.prepare("SELECT * FROM execution_state WHERE record_kind = 'revenue_watch_state'").all();
     return results || [];
@@ -43,7 +70,7 @@ export const defaultAdapters = {
 
 export async function runRevenueWatch(env, adapters = defaultAdapters, alertAdapter, logger = console) {
   const [souk, dp, bb, state] = await Promise.all([
-    adapters.checkAgentSouk(), adapters.checkDatapoint(), adapters.checkBountyBook(), adapters.loadWatchState(env),
+    adapters.checkAgentSouk(env), adapters.checkDatapoint(env), adapters.checkBountyBook(env), adapters.loadWatchState(env),
   ]);
   const out = detectDemandEvents({ souk, dp, bb, state });
   const events = out.filter(o => o.item_type === 'event');
