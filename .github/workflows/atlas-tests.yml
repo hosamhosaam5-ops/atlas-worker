@@ -48,31 +48,18 @@ jobs:
         id: precheck
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+          A2A_REGISTRY_API_TOKEN: ${{ secrets.A2A_REGISTRY_API_TOKEN }}
         run: |
           set -euo pipefail
-          set +e
-          status="$(curl --silent --show-error --max-time 20 -o registry-precheck.json -w '%{http_code}' 'https://api.a2a-registry.org/public/agents?q=ATLAS')"
-          curl_rc=$?
-          set -e
-          if [ "$curl_rc" -ne 0 ]; then
-            echo "::warning::A2A Registry precheck transport failed; no registry mutation will be attempted."
-            echo "authenticated=false" >> "$GITHUB_OUTPUT"
-            echo "exists=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$status" = "401" ] || [ "$status" = "403" ]; then
-            echo "::warning::A2A Registry API requires authorization ($status); safely skipping all registry writes and verification."
-            echo "authenticated=false" >> "$GITHUB_OUTPUT"
-            echo "exists=unknown" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          test -n "$A2A_REGISTRY_API_TOKEN" || { echo "::error::Missing repository secret A2A_REGISTRY_API_TOKEN."; exit 1; }
+          status="$(curl --silent --show-error --max-time 20 -H "Authorization: Bearer ${A2A_REGISTRY_API_TOKEN}" -H 'Accept: application/json' -o registry-precheck.json -w '%{http_code}' 'https://api.a2a-registry.org/public/agents?q=ATLAS')"
+          echo "Authenticated A2A Registry precheck HTTP=$status"
           if [ "$status" != "200" ]; then
-            echo "A2A Registry precheck returned unexpected HTTP $status." >&2
-            cat registry-precheck.json >&2 || true
+            echo "::error::Authenticated A2A Registry precheck failed; no Registry mutation will be attempted."
             exit 1
           fi
+          jq -e '.success == true and (.agents | type == "array")' registry-precheck.json >/dev/null
           echo "authenticated=true" >> "$GITHUB_OUTPUT"
-          cat registry-precheck.json
           if grep -Fq "$AGENT_URL" registry-precheck.json; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "ATLAS registry entry already exists; skipping Submit Agent to avoid duplicates."
@@ -133,15 +120,17 @@ jobs:
         if: success() && steps.precheck.outputs.authenticated == 'true'
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+          A2A_REGISTRY_API_TOKEN: ${{ secrets.A2A_REGISTRY_API_TOKEN }}
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-search.json
-          cat registry-search.json
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer ${A2A_REGISTRY_API_TOKEN}" -H 'Accept: application/json' 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-search.json
+          jq -e '.success == true and (.agents | type == "array")' registry-search.json >/dev/null
           grep -Fq "$AGENT_URL" registry-search.json
       - name: Monitor existing Registry metadata after deployment
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.precheck.outputs.authenticated == 'true'
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+          A2A_REGISTRY_API_TOKEN: ${{ secrets.A2A_REGISTRY_API_TOKEN }}
         run: |
           set -euo pipefail
           BASE='https://atlas-worker.hosamhosaam5.workers.dev'
@@ -162,7 +151,7 @@ jobs:
           done
           test "$actual_sha" = "$expected_sha"
           curl --fail-with-body --silent --show-error "$AGENT_URL" -o deployed-agent-card.json
-          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-after-deploy.json
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer ${A2A_REGISTRY_API_TOKEN}" -H 'Accept: application/json' 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-after-deploy.json
           jq -e --arg url "$AGENT_URL" 'any(.agents[]; .manifestUrl==$url and .status=="ACTIVE")' registry-after-deploy.json
           deployed_description="$(jq -r '.description // ""' deployed-agent-card.json)"
           registry_description="$(jq -r --arg url "$AGENT_URL" '.agents[] | select(.manifestUrl==$url and .status=="ACTIVE") | .source_agent_card | fromjson | .description // ""' registry-after-deploy.json)"
