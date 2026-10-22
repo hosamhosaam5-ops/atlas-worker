@@ -58,7 +58,7 @@ test('Revenue watch treats malformed success as failure and retries until a prov
   const DB = fakeDb();
   const env = { DB, FOUNDER_CHAT_ID: 'test-chat' };
   const adapters = {
-    async checkAgentSouk() { return [{ id: 'synthetic-bounty' }]; },
+    async checkAgentSouk() { return [{ id: 'synthetic-bounty', buyer: { first_party: false } }]; },
     async checkDatapoint() { return {}; },
     async checkBountyBook() { return {}; },
     async loadWatchState() { return [...DB.rows.values()]; },
@@ -68,13 +68,13 @@ test('Revenue watch treats malformed success as failure and retries until a prov
   assert.equal(first.events_detected, 1);
   assert.equal(first.alerted, 0);
   assert.equal(first.failed, 1);
-  assert.equal(DB.rows.has('watch|alerted|watch|souk|1'), false);
+  assert.equal(DB.rows.has('watch|alerted|watch|souk|synthetic-bounty'), false);
 
   const success = { async send() { return { provider_message_id: 'tg-fixture-42' }; } };
   const second = await runRevenueWatch(env, adapters, success, quietLogger);
   assert.equal(second.alerted, 1);
   assert.equal(second.failed, 0);
-  assert.equal(DB.rows.has('watch|alerted|watch|souk|1'), true);
+  assert.equal(DB.rows.has('watch|alerted|watch|souk|synthetic-bounty'), true);
 
   const third = await runRevenueWatch(env, adapters, success, quietLogger);
   assert.equal(third.alerted, 0);
@@ -100,7 +100,7 @@ test('Revenue watch fails closed without founder recipient and never uses a fall
   const DB = fakeDb();
   const env = { DB };
   const adapters = {
-    async checkAgentSouk() { return [{ id: 'synthetic-bounty' }]; },
+    async checkAgentSouk() { return [{ id: 'synthetic-bounty', buyer: { first_party: false } }]; },
     async checkDatapoint() { return {}; },
     async checkBountyBook() { return {}; },
     async loadWatchState() { return []; },
