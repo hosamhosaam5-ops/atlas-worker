@@ -289,7 +289,7 @@ const mcpOAuth = new OAuthProvider({
   defaultHandler: { fetch: handleAccessRequest as any },
   tokenEndpoint: "/token",
   scopesSupported: ["mcp:read","mcp:write","mcp:execute"],
-  clientIdMetadataDocumentEnabled: true,
+  clientIdMetadataDocumentEnabled: false,
 });
 
 export default {
