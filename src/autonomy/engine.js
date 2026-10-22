@@ -48,13 +48,15 @@ export function extractListings(payload){
   try { data=typeof payload==='string'?JSON.parse(payload):payload; } catch { return []; }
   const candidates = Array.isArray(data) ? data : [
     data?.listings, data?.results, data?.items, data?.jobs, data?.opportunities,
-    data?.data?.listings, data?.data?.results, data?.data?.items, data?.data?.jobs,
-    data?.data?.opportunities, data?.data?.agents
+    data?.data, data?.data?.listings, data?.data?.results, data?.data?.items,
+    data?.data?.jobs, data?.data?.opportunities, data?.data?.agents
   ].find(Array.isArray) || [];
   const seen=new Set();
   const out=[];
   for(const x of candidates.slice(0,100)){
     if(!x || typeof x!=='object' || Array.isArray(x)) continue;
+    // Catalog listings are seller offers, not buyer demand. Never convert them to leads.
+    if(x.object==='listing' || (x.pricing && x.seller && x.payment)) continue;
     const title=String(x.title??x.name??x.service??x.subject??'').trim().slice(0,500);
     const description=String(x.description??x.summary??x.details??x.request??x.requirements??'').trim().slice(0,5000);
     const sourceUrl=String(x.url??x.href??x.listing_url??x.public_url??'').trim().slice(0,2000);
@@ -69,6 +71,16 @@ export function extractListings(payload){
   return out;
 }
 
+function countExcludedSupplyOffers(payload){
+  let data;
+  try { data=typeof payload==='string'?JSON.parse(payload):payload; } catch { return 0; }
+  const candidates=Array.isArray(data?.data)?data.data:[];
+  return candidates.filter(x=>x && typeof x==='object' && !Array.isArray(x) &&
+    (x.object==='listing' || (x.pricing && x.seller && x.payment))).length;
+}
+
+// Agent Souk's public /v1/listings endpoint is a seller-offer catalog, not buyer demand.
+// Keep it visible for diagnostics, but do not interpret those offers as requests.
 const DEFAULT_DEMAND_SOURCES=[{source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'}];
 
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES}={}) {
@@ -85,6 +97,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         continue;
       }
       const listings=extractListings(r.text);
+      const offersExcluded=countExcludedSupplyOffers(r.text);
       let accepted=0,duplicates=0,rejected=0;
       for(const lead of listings){
         const safe=sanitizeExternalInput(lead);
@@ -101,7 +114,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
         accepted++;
       }
-      diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,accepted,duplicates,rejected});
+      diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected});
     } catch(e) {
       diagnostics.push({source:s.source,status:'ERROR',error:String(e?.message||e).slice(0,300)});
     }
