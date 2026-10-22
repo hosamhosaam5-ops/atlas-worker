@@ -9,8 +9,9 @@ class DemandDb {
     let values=[];
     return {
       bind(...args){ values=args; return this; },
-      async first(...args){
-        const key=args[0] ?? values[0];
+      async first(){
+        // Cloudflare D1 binds placeholders via .bind(...).first(); first() itself does not bind values.
+        const key=values[0];
         if(sql.includes('autonomy_policies')) return {policy_id:'default',max_external_requests:30,max_tool_calls:20,max_retries:3,max_execution_seconds:120,max_build_iterations:5,outbound_spend_allowed:0};
         if(sql.includes('SELECT id FROM demand_signals')) return db.signals.find(s=>s.signal_key===key)||null;
         return null;
