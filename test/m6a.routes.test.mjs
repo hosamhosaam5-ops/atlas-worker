@@ -60,6 +60,8 @@ test('route.mcp: OAuth discovery is available and unauthenticated MCP is rejecte
   const aj = await authz.json();
   assert.ok(aj.authorization_endpoint);
   assert.ok(aj.token_endpoint);
+  assert.ok(aj.registration_endpoint);
+  assert.equal(aj.client_id_metadata_document_supported, false, 'CIMD is disabled because ChatGPT client metadata URL returned HTTP 404');
   const resource = await fetch(BASE + '/.well-known/oauth-protected-resource');
   assert.equal(resource.status, 200);
   const rj = await resource.json();
