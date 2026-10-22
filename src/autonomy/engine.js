@@ -47,9 +47,9 @@ export function extractListings(payload){
   let data;
   try { data=typeof payload==='string'?JSON.parse(payload):payload; } catch { return []; }
   const candidates = Array.isArray(data) ? data : [
-    data?.listings, data?.results, data?.items, data?.jobs, data?.opportunities,
+    data?.listings, data?.results, data?.items, data?.jobs, data?.tasks, data?.opportunities,
     data?.data, data?.data?.listings, data?.data?.results, data?.data?.items,
-    data?.data?.jobs, data?.data?.opportunities, data?.data?.agents
+    data?.data?.jobs, data?.data?.tasks, data?.data?.opportunities, data?.data?.agents
   ].find(Array.isArray) || [];
   const seen=new Set();
   const out=[];
@@ -58,7 +58,7 @@ export function extractListings(payload){
     // Catalog listings are seller offers, not buyer demand. Never convert them to leads.
     if(x.object==='listing' || (x.pricing && x.seller && x.payment)) continue;
     const title=String(x.title??x.name??x.service??x.subject??'').trim().slice(0,500);
-    const description=String(x.description??x.summary??x.details??x.request??x.requirements??'').trim().slice(0,5000);
+    const description=String(x.description??x.descriptionText??x.summary??x.details??x.request??x.requirements??[...(Array.isArray(x.skillsTags)?x.skillsTags:[]),x.budgetText].filter(Boolean).join(' | ')).trim().slice(0,5000);
     const sourceUrl=String(x.url??x.href??x.listing_url??x.public_url??'').trim().slice(0,2000);
     if(!title && !description) continue;
     const providerId=x.id??x.listing_id??x.job_id??x.opportunity_id;
@@ -81,7 +81,10 @@ function countExcludedSupplyOffers(payload){
 
 // Agent Souk's public /v1/listings endpoint is a seller-offer catalog, not buyer demand.
 // Keep it visible for diagnostics, but do not interpret those offers as requests.
-const DEFAULT_DEMAND_SOURCES=[{source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'}];
+const DEFAULT_DEMAND_SOURCES=[
+  {source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'},
+  {source:'opentask_public_tasks',url:'https://opentask.ai/api/tasks?limit=50',provider:'OpenTask Public Tasks'}
+];
 
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES}={}) {
   const budget=await checkBudget(db,{external_requests:sources.length});
@@ -100,6 +103,12 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       const offersExcluded=countExcludedSupplyOffers(r.text);
       let accepted=0,duplicates=0,rejected=0;
       for(const lead of listings){
+        // OpenTask is an agent-native task board, but some tasks require an upfront deposit,
+        // wallet action, account registration, or funding another task. Do not auto-qualify those.
+        if(s.source==='opentask_public_tasks' && /\b(fund|deposit|pay upfront|purchase|buy|register|wallet|transaction|escrow)\b/i.test(lead.title+' '+lead.description)){
+          rejected++;
+          continue;
+        }
         const safe=sanitizeExternalInput(lead);
         const valid=validateMarketplaceLead(safe.data);
         if(!valid.ok) { rejected++; continue; }

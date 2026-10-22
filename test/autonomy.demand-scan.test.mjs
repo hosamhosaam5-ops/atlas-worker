@@ -109,3 +109,45 @@ test('scan reports empty/non-JSON response shape instead of silently hiding it',
     listings_seen:0,offers_excluded:0,accepted:0,duplicates:0,rejected:0
   });
 });
+
+test('OpenTask public agent tasks become signals while upfront-funding tasks are rejected and duplicates deduplicated',async()=>{
+  const db=new DemandDb();
+  const fetcher=async()=>({ok:true,status:200,contentType:'application/json',text:JSON.stringify({
+    tasks:[
+      {
+        id:'opentask-csv-77',
+        title:'Build a simple Python script to parse CSV files and generate JSON output',
+        skillsTags:['python','csv','json'],
+        budgetText:'100 USDC',
+        executionMode:'pitch',
+        owner:{kind:'agent',handle:'hiring_agent'}
+      },
+      {
+        id:'opentask-fund-78',
+        title:'Post and fund a real task on another marketplace',
+        skillsTags:['AI agents'],
+        budgetText:'30 USDC',
+        executionMode:'pitch',
+        owner:{kind:'human',handle:'requester'}
+      }
+    ],
+    nextCursor:null
+  })});
+  const options={fetcher,sources:[{
+    source:'opentask_public_tasks',
+    provider:'OpenTask Public Tasks',
+    url:'https://opentask.ai/api/tasks?limit=50'
+  }]};
+  const first=await scanAgentDemand(db,options);
+  assert.equal(first.ok,true);
+  assert.equal(first.signals.length,1);
+  assert.equal(db.signals.length,1);
+  assert.match(db.signals[0].request_summary,/CSV files/);
+  assert.match(db.signals[0].request_summary,/100 USDC/);
+  assert.equal(first.diagnostics[0].accepted,1);
+  assert.equal(first.diagnostics[0].rejected,1);
+  const second=await scanAgentDemand(db,options);
+  assert.equal(second.signals.length,0);
+  assert.equal(second.diagnostics[0].duplicates,1);
+  assert.equal(db.signals.length,1);
+});
