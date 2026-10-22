@@ -17,7 +17,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - name: Generate lockfile
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Install exact locked tree
@@ -39,8 +38,6 @@ jobs:
       - name: Audit locked dependency tree
         run: npm audit --audit-level=high
       - name: Update CI to npm ci and commit lockfile
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
