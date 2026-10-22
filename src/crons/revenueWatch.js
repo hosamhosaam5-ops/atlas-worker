@@ -1,7 +1,7 @@
 // SMART REVENUE WATCH — ported from backup workflow "ATLAS — Smart Revenue Watch (read-only)" (XHS3xCpLGfPUm3G6).
 // Provider calls are fail-closed: every external source defaults to MOCK and requires an explicit LIVE setting.
 // Same event logic: read providers → detect demand events → upsert watch state → alert only on real events.
-// Idempotent: seen alert_keys never re-alert.
+// Idempotent: events are keyed by stable provider item IDs, not aggregate counts.
 
 function providerMode(env, key) {
   const mode = String(env?.[key] ?? 'MOCK').trim().toUpperCase();
@@ -21,24 +21,48 @@ async function fetchJson(url) {
 
 // ---- Detect Demand Events ----
 export function detectDemandEvents({ souk, dp, bb, state }) {
-  const seen = new Set((state || []).filter(r => r && r.idempotency_key).map(r => r.idempotency_key));
+  const seen = new Set();
+  const alertedPrefix = 'watch|alerted|';
+  for (const row of state || []) {
+    const key = row && row.idempotency_key;
+    if (typeof key !== 'string' || !key) continue;
+    seen.add(key);
+    // Alert rows are persisted with an outer "watch|alerted|" prefix.
+    // Normalize them so event generation and delivery idempotency share one key.
+    if (key.startsWith(alertedPrefix)) seen.add(key.slice(alertedPrefix.length));
+  }
+
   const events = [];
   function emit(kind, key, detail) {
-    if (!seen.has(key)) events.push({ alert_key: key, event_kind: kind, detail: detail, detected_at: new Date().toISOString() });
+    if (!seen.has(key)) events.push({ alert_key: key, event_kind: kind, detail, detected_at: new Date().toISOString() });
   }
+
   const soukJobs = Array.isArray(souk && souk.data) ? souk.data : (Array.isArray(souk) ? souk : []);
-  if (soukJobs.length > 0) {
-    emit('BUYER_REQUEST_FOUND', 'watch|souk|' + soukJobs.length, 'AgentSouk live open bounties: ' + soukJobs.length);
+  for (const job of soukJobs) {
+    if (!job || typeof job !== 'object') continue;
+    const id = String(job.id ?? '').trim();
+    // AgentSouk's public schema includes buyer.first_party. Fail closed if the
+    // buyer's third-party status is missing or indicates platform-owned demand.
+    if (!id || !job.buyer || job.buyer.first_party !== false) continue;
+    const title = String(job.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const budget = String(job.budget_display ?? '').replace(/\s+/g, ' ').trim().slice(0, 64);
+    const detail = 'AgentSouk live open bounty ' + id
+      + (title ? ': ' + title : '')
+      + (budget ? ' (' + budget + ')' : '');
+    emit('BUYER_REQUEST_FOUND', 'watch|souk|' + encodeURIComponent(id), detail);
   }
+
   const sales = (dp && (dp.sales_count || dp.purchases || dp.orders)) || 0;
   if (sales > 0) {
     emit('ORDER_RECEIVED', 'watch|dp|' + sales, 'datapoint DE-LU sales signal: ' + sales);
   }
+
   const completed = bb && bb.completed;
   const lastCompleted = (state || []).filter(r => r.idempotency_key === 'watch|bb|completed').map(r => Number(r.progress || 0))[0] || 0;
   if (typeof completed === 'number' && completed > lastCompleted && lastCompleted > 0) {
     emit('PLATFORM_RECOVERY', 'watch|bb|recovered|' + completed, 'BountyBook completed count rose: ' + lastCompleted + ' -> ' + completed);
   }
+
   const out = [];
   for (const e of events) out.push({ ...e, item_type: 'event' });
   if (typeof completed === 'number') {
@@ -52,7 +76,9 @@ export function detectDemandEvents({ souk, dp, bb, state }) {
 export const defaultAdapters = {
   async checkAgentSouk(env) {
     if (providerMode(env, 'AGENT_SOUK_PROVIDER') === 'MOCK') return { data: [] };
-    return fetchJson('https://api.agentsouk.dev/v1/bounties?status=open');
+    // Public API defaults to open, unexpired bounties. Exclude platform-owned
+    // first-party items server-side and request the largest supported page.
+    return fetchJson('https://api.agentsouk.dev/v1/bounties?limit=100&first_party=false');
   },
   async checkDatapoint(env) {
     if (providerMode(env, 'DATAPOINT_PROVIDER') === 'MOCK') return {};
@@ -79,9 +105,9 @@ export async function runRevenueWatch(env, adapters = defaultAdapters, alertAdap
   // Save Watch State (upsert markers — same as backup Save Watch State node)
   for (const m of markers) {
     await env.DB.prepare(
-      `INSERT INTO execution_state (idempotency_key, record_kind, tool, status, progress, payload_json, updated_at, created_at)
-       VALUES (?,?,?,?,?,?,?,?)
-       ON CONFLICT(idempotency_key) DO UPDATE SET progress=excluded.progress, payload_json=excluded.payload_json, updated_at=excluded.updated_at`
+      'INSERT INTO execution_state (idempotency_key, record_kind, tool, status, progress, payload_json, updated_at, created_at)\n'
+      + 'VALUES (?,?,?,?,?,?,?,?)\n'
+      + 'ON CONFLICT(idempotency_key) DO UPDATE SET progress=excluded.progress, payload_json=excluded.payload_json, updated_at=excluded.updated_at'
     ).bind(m.idempotency_key, 'revenue_watch_state', 'revenue_watch', 'WATCHING', m.progress, m.payload_json, m.updated_at, m.created_at).run();
   }
 
@@ -106,9 +132,9 @@ export async function runRevenueWatch(env, adapters = defaultAdapters, alertAdap
         throw Object.assign(new Error('TELEGRAM_DELIVERY_NOT_CONFIRMED'), { code: 'DELIVERY_NOT_CONFIRMED' });
       }
       await env.DB.prepare(
-        `INSERT INTO execution_state (idempotency_key, record_kind, tool, status, payload_json, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?)
-         ON CONFLICT(idempotency_key) DO NOTHING`
+        'INSERT INTO execution_state (idempotency_key, record_kind, tool, status, payload_json, created_at, updated_at)\n'
+        + 'VALUES (?,?,?,?,?,?,?)\n'
+        + 'ON CONFLICT(idempotency_key) DO NOTHING'
       ).bind(key, 'revenue_watch_state', 'revenue_watch', 'SENT', JSON.stringify({ alert_key: e.alert_key, message_id: String(messageId) }), new Date().toISOString(), new Date().toISOString()).run();
       alerted++;
     } catch (error) {
