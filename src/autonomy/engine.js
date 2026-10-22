@@ -60,7 +60,7 @@ export function extractListings(payload){
     const sourceUrl=String(x.url??x.href??x.listing_url??x.public_url??'').trim().slice(0,2000);
     if(!title && !description) continue;
     const providerId=x.id??x.listing_id??x.job_id??x.opportunity_id;
-    const normalized=[title,description,sourceUrl].map(v=>v.toLowerCase().replace(/\\s+/g,' ').trim()).join('|');
+    const normalized=[title,description,sourceUrl].map(v=>v.toLowerCase().replace(/\s+/g,' ').trim()).join('|');
     const id=String(providerId??('content:'+normalized));
     if(seen.has(id)) continue;
     seen.add(id);
