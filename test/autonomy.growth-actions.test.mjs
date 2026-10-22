@@ -43,7 +43,7 @@ class GrowthActionsDb {
           return { meta: { changes: 1 } };
         }
         if (sql.includes('UPDATE demand_signals SET status=')) {
-          db.updatedSignals.push({ id: values[1], status: values[0] });
+          db.updatedSignals.push({ id: values[0], status: 'QUALIFIED' });
         }
         return { meta: { changes: 1 } };
       }
