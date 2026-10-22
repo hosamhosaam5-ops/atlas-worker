@@ -1,0 +1,60 @@
+name: Bootstrap dependency lockfile (temporary)
+on:
+  push:
+    branches:
+      - chore/reproducible-dependency-lockfile
+permissions:
+  contents: write
+jobs:
+  lock-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chore/reproducible-dependency-lockfile
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Generate lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Install exact locked tree
+        run: npm ci --no-audit --no-fund
+      - name: Verify xlsx alias
+        run: |
+          node --input-type=module -e '
+          import fs from "node:fs";
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          const p = lock.packages?.["node_modules/xlsx"];
+          if (!p || p.name !== "@stackline/xlsx" || p.version !== "1.0.9") {
+            console.error("Unexpected xlsx alias resolution:", p);
+            process.exit(1);
+          }
+          console.log("Verified xlsx -> @stackline/xlsx@1.0.9");
+          '
+      - name: Run complete tests
+        run: node --test --test-concurrency=1 test/*.test.mjs
+      - name: Audit locked dependency tree
+        run: npm audit --audit-level=high
+      - name: Update CI to npm ci and commit lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path(".github/workflows/ci.yml")
+          s = p.read_text()
+          old = "run: npm install --no-audit --no-fund"
+          new = "run: npm ci --no-audit --no-fund"
+          if old not in s:
+              raise SystemExit("Expected npm install line was not found; refusing to modify CI")
+          p.write_text(s.replace(old, new, 1))
+          Path(".github/workflows/dependency-lock-bootstrap.yml").unlink()
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json .github/workflows/ci.yml .github/workflows/dependency-lock-bootstrap.yml
+          git commit -m "build: lock dependencies for reproducible installs"
+          git push origin HEAD:chore/reproducible-dependency-lockfile
