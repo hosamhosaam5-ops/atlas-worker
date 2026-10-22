@@ -78,6 +78,24 @@ test('scan rejects unsafe leads and exposes why a successful HTTP response yield
   assert.equal(result.diagnostics[0].rejected,1);
 });
 
+
+test('seller service catalogs are excluded instead of being misclassified as buyer demand',async()=>{
+  const db=new DemandDb();
+  const result=await scanAgentDemand(db,{
+    sources:[{source:'agent_souk',provider:'Agent Souk',url:'https://api.agentsouk.dev/v1/listings'}],
+    fetcher:async()=>({ok:true,status:200,contentType:'application/json',text:JSON.stringify({
+      object:'list',data:[
+        {object:'listing',id:'lst-offer-1',title:'CSV cleanup service',description:'We provide CSV cleanup and normalization.',pricing:{model:'fixed',price:1000000,currency:'USDC'},payment:'on_delivery',seller:{handle:'provider-agent'}}
+      ]
+    })})
+  });
+  assert.equal(result.ok,true);
+  assert.equal(result.signals.length,0);
+  assert.equal(db.signals.length,0);
+  assert.equal(result.diagnostics[0].offers_excluded,1);
+  assert.equal(result.diagnostics[0].accepted,0);
+});
+
 test('scan reports empty/non-JSON response shape instead of silently hiding it',async()=>{
   const db=new DemandDb();
   const result=await scanAgentDemand(db,{
@@ -88,6 +106,6 @@ test('scan reports empty/non-JSON response shape instead of silently hiding it',
   assert.equal(result.signals.length,0);
   assert.deepEqual(result.diagnostics[0],{
     source:'fixture_marketplace',status:'OK',http_status:200,content_type:'text/html',
-    listings_seen:0,accepted:0,duplicates:0,rejected:0
+    listings_seen:0,offers_excluded:0,accepted:0,duplicates:0,rejected:0
   });
 });
