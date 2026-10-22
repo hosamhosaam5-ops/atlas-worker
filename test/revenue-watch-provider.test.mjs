@@ -21,7 +21,7 @@ test('revenue watch makes provider requests only when each provider is explicitl
   const urls = [];
   globalThis.fetch = async (url) => {
     urls.push(String(url));
-    if (String(url).includes('agentsouk')) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    if (String(url).includes('agentsouk')) return new Response(JSON.stringify({ object: 'list', data: [], has_more: false, next_cursor: null }), { status: 200 });
     if (String(url).includes('datapoint')) return new Response(JSON.stringify({ sales_count: 0 }), { status: 200 });
     if (String(url).includes('bountybook')) return new Response(JSON.stringify({ completed: 42 }), { status: 200 });
     throw new Error('unexpected URL: ' + url);
@@ -38,7 +38,8 @@ test('revenue watch makes provider requests only when each provider is explicitl
       defaultAdapters.checkBountyBook(env),
     ]);
     assert.equal(urls.length, 3);
-    assert.ok(urls.some(url => url.includes('api.agentsouk.dev')));
+    assert.ok(urls.includes('https://api.agentsouk.dev/v1/bounties?limit=100&first_party=false'),
+      'AgentSouk request must exclude platform-owned bounties and use the maximum supported page size');
     assert.ok(urls.some(url => url.includes('api.datapoint.market')));
     assert.ok(urls.some(url => url.includes('api.bountybook.ai')));
   } finally {
