@@ -289,7 +289,7 @@ const mcpOAuth = new OAuthProvider({
   defaultHandler: { fetch: handleAccessRequest as any },
   tokenEndpoint: "/token",
   scopesSupported: ["mcp:read","mcp:write","mcp:execute"],
-  clientIdMetadataDocumentEnabled: true,
+  clientIdMetadataDocumentEnabled: false,
 });
 
 export default {
@@ -536,7 +536,7 @@ export default {
         code_challenge_methods_supported: ["S256"],
         scopes_supported: ["mcp:read","mcp:write","mcp:execute"],
         protected_resources: [origin + "/mcp"],
-        client_id_metadata_document_supported: true
+        client_id_metadata_document_supported: false
       }), { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store", "access-control-allow-origin": "*" } });
     }
     if (request.method === "GET" && (pathname === "/.well-known/oauth-protected-resource" || pathname === "/.well-known/oauth-protected-resource/mcp")) {
