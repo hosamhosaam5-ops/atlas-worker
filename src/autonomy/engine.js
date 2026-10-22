@@ -41,42 +41,85 @@ export async function discoverCapabilities(db) {
   return {ok:true,results};
 }
 
-function extractListings(payload){
+// Parse common marketplace response envelopes without treating arbitrary objects as listings.
+// A stable content fingerprint is used when providers omit a durable listing ID.
+export function extractListings(payload){
   let data;
-  try { data=JSON.parse(payload); } catch { return []; }
-  const candidates=Array.isArray(data)?data:(Array.isArray(data?.listings)?data.listings:(Array.isArray(data?.results)?data.results:[]));
-  return candidates.slice(0,50).map((x,i)=>({
-    id:String(x.id??x.listing_id??x.job_id??i),
-    title:String(x.title??x.name??x.service??''),
-    description:String(x.description??x.summary??x.details??''),
-    source_url:String(x.url??x.href??'')
-  })).filter(x=>x.title||x.description);
+  try { data=typeof payload==='string'?JSON.parse(payload):payload; } catch { return []; }
+  const candidates = Array.isArray(data) ? data : [
+    data?.listings, data?.results, data?.items, data?.jobs, data?.opportunities,
+    data?.data, data?.data?.listings, data?.data?.results, data?.data?.items,
+    data?.data?.jobs, data?.data?.opportunities, data?.data?.agents
+  ].find(Array.isArray) || [];
+  const seen=new Set();
+  const out=[];
+  for(const x of candidates.slice(0,100)){
+    if(!x || typeof x!=='object' || Array.isArray(x)) continue;
+    // Catalog listings are seller offers, not buyer demand. Never convert them to leads.
+    if(x.object==='listing' || (x.pricing && x.seller && x.payment)) continue;
+    const title=String(x.title??x.name??x.service??x.subject??'').trim().slice(0,500);
+    const description=String(x.description??x.summary??x.details??x.request??x.requirements??'').trim().slice(0,5000);
+    const sourceUrl=String(x.url??x.href??x.listing_url??x.public_url??'').trim().slice(0,2000);
+    if(!title && !description) continue;
+    const providerId=x.id??x.listing_id??x.job_id??x.opportunity_id;
+    const normalized=[title,description,sourceUrl].map(v=>v.toLowerCase().replace(/\s+/g,' ').trim()).join('|');
+    const id=String(providerId??('content:'+normalized));
+    if(seen.has(id)) continue;
+    seen.add(id);
+    out.push({id,title,description,source_url:sourceUrl});
+  }
+  return out;
 }
 
-export async function scanAgentDemand(db) {
-  const budget=await checkBudget(db,{external_requests:1});
-  if(!budget.allowed) return {ok:false,blocked:budget.violations};
-  const sources=[{source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings'}];
+function countExcludedSupplyOffers(payload){
+  let data;
+  try { data=typeof payload==='string'?JSON.parse(payload):payload; } catch { return 0; }
+  const candidates=Array.isArray(data?.data)?data.data:[];
+  return candidates.filter(x=>x && typeof x==='object' && !Array.isArray(x) &&
+    (x.object==='listing' || (x.pricing && x.seller && x.payment))).length;
+}
+
+// Agent Souk's public /v1/listings endpoint is a seller-offer catalog, not buyer demand.
+// Keep it visible for diagnostics, but do not interpret those offers as requests.
+const DEFAULT_DEMAND_SOURCES=[{source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'}];
+
+export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES}={}) {
+  const budget=await checkBudget(db,{external_requests:sources.length});
+  if(!budget.allowed) return {ok:false,blocked:budget.violations,signals:[]};
   const signals=[];
+  const diagnostics=[];
   for(const s of sources){
     try {
-      const r=await fetchJson(s.url);
-      if(!r.ok) { await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:'Agent Souk',protocol:'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}}); continue; }
-      for(const lead of extractListings(r.text)){
+      const r=await fetcher(s.url);
+      if(!r.ok) {
+        diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status});
+        await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
+        continue;
+      }
+      const listings=extractListings(r.text);
+      const offersExcluded=countExcludedSupplyOffers(r.text);
+      let accepted=0,duplicates=0,rejected=0;
+      for(const lead of listings){
         const safe=sanitizeExternalInput(lead);
         const valid=validateMarketplaceLead(safe.data);
-        if(!valid.ok) continue;
+        if(!valid.ok) { rejected++; continue; }
+        // The provider ID is preferred; content-derived IDs keep ID-less listings stable across scans.
         const key=s.source+'|'+lead.id;
         const exists=await db.prepare('SELECT id FROM demand_signals WHERE signal_key=?').first(key);
-        if(exists) continue;
+        if(exists) { duplicates++; continue; }
+        const summary=String([lead.title,lead.description].filter(Boolean).join(' — ')).slice(0,3000);
         const score=Number((valid.score*0.7 + 0.3).toFixed(4));
         await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status) VALUES(?,?,?,?,?)')
-          .bind(s.source,key,String(lead.title+' — '+lead.description).slice(0,3000),score,'NEW').run();
+          .bind(s.source,key,summary,score,'NEW').run();
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
+        accepted++;
       }
-    } catch(e) { signals.push({source:s.source,error:String(e?.message||e)}); }
+      diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected});
+    } catch(e) {
+      diagnostics.push({source:s.source,status:'ERROR',error:String(e?.message||e).slice(0,300)});
+    }
   }
-  return {ok:true,signals};
+  return {ok:true,signals,diagnostics};
 }
 
 export function selectLLMRoute(env,{preferFree=true}={}) {
