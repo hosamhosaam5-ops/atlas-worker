@@ -109,3 +109,32 @@ test('scan reports empty/non-JSON response shape instead of silently hiding it',
     listings_seen:0,offers_excluded:0,accepted:0,duplicates:0,rejected:0
   });
 });
+
+test('OpenTrain public jobs schema maps descriptionText into a demand signal and remains deduplicated',async()=>{
+  const db=new DemandDb();
+  const fetcher=async()=>({ok:true,status:200,contentType:'application/json',text:JSON.stringify({
+    jobs:[{
+      id:'opentrain-job-77',
+      title:'Python API integration automation',
+      descriptionText:'Need an engineer to build a Python integration and automate data validation across a public API.',
+      status:'OPEN',
+      url:'https://www.opentrain.ai/jobs/python-api-integration-automation'
+    }],
+    nextCursor:null
+  })});
+  const options={fetcher,sources:[{
+    source:'opentrain_public_jobs',
+    provider:'OpenTrain Public Jobs',
+    url:'https://app.opentrain.ai/api/public/v1/jobs?q=software%20engineering&limit=50'
+  }]};
+  const first=await scanAgentDemand(db,options);
+  assert.equal(first.ok,true);
+  assert.equal(first.signals.length,1);
+  assert.equal(db.signals.length,1);
+  assert.match(db.signals[0].request_summary,/automate data validation/);
+  assert.equal(first.diagnostics[0].accepted,1);
+  const second=await scanAgentDemand(db,options);
+  assert.equal(second.signals.length,0);
+  assert.equal(second.diagnostics[0].duplicates,1);
+  assert.equal(db.signals.length,1);
+});
