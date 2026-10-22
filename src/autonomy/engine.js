@@ -114,7 +114,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         if(!valid.ok) { rejected++; continue; }
         // The provider ID is preferred; content-derived IDs keep ID-less listings stable across scans.
         const key=s.source+'|'+lead.id;
-        const exists=await db.prepare('SELECT id FROM demand_signals WHERE signal_key=?').first(key);
+        const exists=await db.prepare('SELECT id FROM demand_signals WHERE signal_key=?').bind(key).first();
         if(exists) { duplicates++; continue; }
         const summary=String([lead.title,lead.description].filter(Boolean).join(' — ')).slice(0,3000);
         const score=Number((valid.score*0.7 + 0.3).toFixed(4));
