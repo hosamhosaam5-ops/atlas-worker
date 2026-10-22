@@ -97,7 +97,7 @@ test('settlement review alert persists SENT and deduplicates through the real ou
   assert.equal(rows[0].attempts, 1);
   assert.equal(rows[0].recipient, 'fixture-founder-only');
   assert.equal(rows[0].provider_message_id, 'fixture-telegram-message-42');
-  assert.match(rows[0].dedupe_key, /^x402-settlement-review\\|/);
+  assert.match(rows[0].dedupe_key, /^x402-settlement-review\|/);
 });
 
 test('definite Telegram failure is persisted FAILED then retried to SENT without new review rows', async () => {
