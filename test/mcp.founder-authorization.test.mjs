@@ -60,11 +60,25 @@ test('paid offer readiness fails closed when configuration is absent', async () 
   const { getPaidOfferReadinessError } = await import('../src/core/paidOfferReadiness.js');
   assert.equal(getPaidOfferReadinessError({}), 'PAID_PAYMENT_PROVIDER_NOT_READY');
   assert.equal(getPaidOfferReadinessError({ PAYMENT_PROVIDER: 'BASE_RPC' }), 'PAID_WALLET_NOT_CONFIGURED');
-  assert.equal(getPaidOfferReadinessError({ PAYMENT_PROVIDER: 'BASE_RPC', ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40) }), 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
-  const validPayment = { PAYMENT_PROVIDER: 'BASE_RPC', ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40), RESEND_API_KEY: 'test-key', EMAIL_FROM: 'atlas@example.invalid' };
+  assert.equal(getPaidOfferReadinessError({ PAYMENT_PROVIDER: 'BASE_RPC', ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40) }), 'PAID_STORAGE_PROVIDER_NOT_READY');
+  const validPayment = {
+    PAYMENT_PROVIDER: 'BASE_RPC',
+    ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40),
+    FILE_STORAGE: 'LOCAL',
+    DB: {},
+    EMAIL_PROVIDER: 'RESEND',
+    RESEND_API_KEY: 'test-key',
+    EMAIL_FROM: 'atlas@example.invalid',
+    EMAIL_DOMAIN_VERIFIED: '1',
+  };
   assert.equal(getPaidOfferReadinessError({ ...validPayment, EMAIL_PROVIDER: 'resend' }), 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
   assert.equal(getPaidOfferReadinessError({ ...validPayment, EMAIL_PROVIDER: ' RESEND ' }), 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
-  assert.equal(getPaidOfferReadinessError({ ...validPayment, EMAIL_PROVIDER: 'RESEND' }), null);
+  assert.equal(getPaidOfferReadinessError({ ...validPayment, EMAIL_DOMAIN_VERIFIED: '0' }), 'PAID_EMAIL_DOMAIN_NOT_VERIFIED');
+  assert.equal(getPaidOfferReadinessError({ ...validPayment, EMAIL_DOMAIN_VERIFIED: undefined }), 'PAID_EMAIL_DOMAIN_NOT_VERIFIED');
+  assert.equal(getPaidOfferReadinessError({ ...validPayment, FILE_STORAGE: 'R2' }), 'PAID_STORAGE_PROVIDER_NOT_READY');
+  assert.equal(getPaidOfferReadinessError({ ...validPayment, FILE_STORAGE: 'invalid' }), 'PAID_STORAGE_PROVIDER_NOT_READY');
+  assert.equal(getPaidOfferReadinessError({ ...validPayment, FILE_STORAGE: 'LOCAL', DB: null }), 'PAID_STORAGE_PROVIDER_NOT_READY');
+  assert.equal(getPaidOfferReadinessError(validPayment), null);
 });
 
 test('paid offer readiness rejects mock email, missing secrets, invalid wallet, and non-Base payment', async () => {
