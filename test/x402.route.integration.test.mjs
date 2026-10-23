@@ -132,6 +132,7 @@ before(async () => {
   }
   worker = spawn('npx', [
     'wrangler', 'dev', '--local', '--test-scheduled', '--port', String(WORKER_PORT), '--persist-to', PERSIST,
+    '--var', 'DEV_MODE:1',
     '--var', 'X402_TEST_MODE:1',
     '--var', `X402_FACILITATOR_URL:${FACILITATOR}`,
     '--var', `ATLAS_WALLET_ADDRESS:${WALLET}`,
