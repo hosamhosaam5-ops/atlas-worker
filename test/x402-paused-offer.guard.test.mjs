@@ -43,7 +43,7 @@ test('payment verification and nonce reservation occur after fail-closed product
     'if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1")',
     'if (request.method === "GET" && pathname === "/.well-known/oauth-authorization-server")'
   );
-  const productGate = route.indexOf('X402_PRODUCT_NOT_READY');
+  const productGate = route.indexOf('if (!product || String(product.status) !== "ACTIVE"');
   const requirements = route.indexOf('const req = x402Requirements');
   const nonceReservation = route.indexOf('const nonceKey = "x402_nonce|"');
   const facilitatorVerify = route.indexOf('facilitator + "/verify"');
