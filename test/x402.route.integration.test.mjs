@@ -45,7 +45,7 @@ async function waitUp(url) {
   }
   throw new Error('local endpoint did not start: ' + url);
 }
-function signatureFor(requirements, nonce) {
+function signatureFor(requirements, nonce, acceptedOverrides = {}) {
   const accepted = requirements.accepts[0];
   return Buffer.from(JSON.stringify({
     x402Version: 2,
@@ -55,6 +55,7 @@ function signatureFor(requirements, nonce) {
       asset: accepted.asset,
       payTo: accepted.payTo,
       amount: accepted.amount,
+      ...acceptedOverrides,
     },
     payload: { authorization: { nonce }, testFixture: true },
   })).toString('base64');
@@ -93,10 +94,18 @@ before(async () => {
         // competing requests overlap the reserved-nonce window.
         if (nonce.startsWith('concurrent-burst-')) await new Promise(resolve => setTimeout(resolve, 150));
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ isValid: true, invalidReason: null }));
+        res.end(JSON.stringify(nonce.startsWith('invalid-signature-')
+          ? { isValid: false, invalidReason: 'synthetic_invalid_signature' }
+          : { isValid: true, invalidReason: null }));
         return;
       }
       calls.settle.push({ nonce, idempotencyKey: req.headers['idempotency-key'] || null });
+      if (nonce.startsWith('disconnect-')) {
+        // Simulate a transport drop after the request reached the facilitator:
+        // the settlement outcome is unknown, so the route must keep the nonce locked.
+        req.socket.destroy();
+        return;
+      }
       if (nonce.startsWith('concurrent-burst-')) await new Promise(resolve => setTimeout(resolve, 150));
       if (nonce.startsWith('uncertain-')) {
         res.writeHead(503, { 'content-type': 'application/json' });
@@ -184,6 +193,66 @@ test('real local x402 route verifies, settles through mock facilitator, processe
   assert.equal((await replay.json()).error, 'PAYMENT_NONCE_ALREADY_USED');
   assert.equal(calls.verify.length, 1);
   assert.equal(calls.settle.length, 1);
+});
+
+
+test('malformed signatures, facilitator-rejected signatures, and mismatched chain/token/payTo/amount fail closed', async () => {
+  const discovery = await fetch(BASE + '/x402/atlas_ai_data_qa_v1');
+  assert.equal(discovery.status, 402);
+  const requirements = await discovery.json();
+  const verifyBefore = calls.verify.length;
+  const settleBefore = calls.settle.length;
+
+  const malformed = await fetch(BASE + '/x402/atlas_ai_data_qa_v1', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'PAYMENT-SIGNATURE': '%%%not-base64%%%' },
+    body: JSON.stringify({ client_email: 'synthetic-agent@example.test', file_name: 'x402-route-fixture.csv', file_base64: fileBase64 }),
+  });
+  assert.equal(malformed.status, 402);
+  assert.equal((await malformed.json()).error, 'INVALID_PAYMENT_SIGNATURE');
+
+  for (const [field, value] of [
+    ['network', 'eip155:1'],
+    ['asset', '0x2222222222222222222222222222222222222222'],
+    ['payTo', '0x3333333333333333333333333333333333333333'],
+    ['amount', '1'],
+  ]) {
+    const response = await fetch(BASE + '/x402/atlas_ai_data_qa_v1', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'PAYMENT-SIGNATURE': signatureFor(requirements, 'mismatch-' + field, { [field]: value }),
+      },
+      body: JSON.stringify({ client_email: 'synthetic-agent@example.test', file_name: 'x402-route-fixture.csv', file_base64: fileBase64 }),
+    });
+    assert.equal(response.status, 402, field + ' mismatch must be rejected');
+    assert.equal((await response.json()).error, 'PAYMENT_REQUIREMENTS_MISMATCH');
+  }
+
+  const invalidNonce = 'invalid-signature-x402-e2e-005';
+  const rejected = await postPaid(invalidNonce, requirements);
+  assert.equal(rejected.status, 402);
+  assert.equal((await rejected.json()).error, 'PAYMENT_NOT_VERIFIED');
+  assert.equal(calls.verify.filter(x => x.nonce === invalidNonce).length, 1);
+  assert.equal(calls.settle.filter(x => x.nonce === invalidNonce).length, 0);
+  assert.equal(calls.verify.length, verifyBefore + 1, 'only the facilitator-rejected signature may reach verify');
+  assert.equal(calls.settle.length, settleBefore, 'no invalid or mismatched payment may reach settle');
+});
+
+test('transport disconnect during settlement leaves nonce locked and blocks retry', async () => {
+  const discovery = await fetch(BASE + '/x402/atlas_ai_data_qa_v1');
+  assert.equal(discovery.status, 402);
+  const requirements = await discovery.json();
+  const nonce = 'disconnect-settlement-x402-e2e-006';
+  await assert.rejects(() => postPaid(nonce, requirements), /fetch failed|socket|reset|closed/i);
+  assert.equal(calls.verify.filter(x => x.nonce === nonce).length, 1);
+  assert.equal(calls.settle.filter(x => x.nonce === nonce).length, 1);
+
+  const replay = await postPaid(nonce, requirements);
+  assert.equal(replay.status, 409);
+  assert.equal((await replay.json()).error, 'PAYMENT_NONCE_ALREADY_USED');
+  assert.equal(calls.verify.filter(x => x.nonce === nonce).length, 1);
+  assert.equal(calls.settle.filter(x => x.nonce === nonce).length, 1);
 });
 
 test('uncertain settlement locks the nonce and prevents any second settle attempt', async () => {
