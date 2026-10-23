@@ -26,13 +26,10 @@ test('x402 requirements bind exact Base chain, USDC contract, payTo and 15 USDC 
   assert.equal(req.x402Version, 2);
   assert.equal(req.accepts.length, 1);
   assert.deepEqual(req.accepts[0], {
-    scheme: 'exact',
-    network: 'eip155:8453',
-    amount: '15000000',
+    scheme: 'exact', network: 'eip155:8453', amount: '15000000',
     asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     payTo: '0x1111111111111111111111111111111111111111',
-    maxTimeoutSeconds: 300,
-    extra: { name: 'USDC', version: '2' },
+    maxTimeoutSeconds: 300, extra: { name: 'USDC', version: '2' },
   });
   assert.equal(req.resource.url, 'https://atlas.test/x402/atlas_test_fixture_data_qa');
 });
@@ -56,22 +53,20 @@ test('invalid or absent signature is rejected before settlement; nonce is reserv
     'if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1")',
     'if (request.method === "GET" && pathname === "/.well-known/oauth-authorization-server")'
   );
-  const signature = route.indexOf('const paymentSignature =');
+  const signature = route.indexOf('const signatureHeader = request.headers.get("PAYMENT-SIGNATURE")');
   const claim = route.indexOf('const nonceKey = "x402_nonce|"');
   const verify = route.indexOf('facilitator + "/verify"');
   const settle = route.indexOf('facilitator + "/settle"');
   assert.ok(signature >= 0 && claim > signature && verify > claim && settle > verify);
-  assert.match(route, /PAYMENT_SIGNATURE_REQUIRED/);
+  assert.match(route, /PAYMENT-SIGNATURE header is required/);
+  assert.match(route, /INVALID_PAYMENT_SIGNATURE/);
   assert.match(route, /PAYMENT_NONCE_ALREADY_USED/);
   assert.match(route, /ON CONFLICT\(idempotency_key\) DO NOTHING/);
   assert.match(route, /"Idempotency-Key": "x402-" \+ nonce/);
 });
 
 test('ambiguous settlement retains nonce in SETTLEMENT_REVIEW; it is not released for retry', () => {
-  const route = section(
-    'let settleResponse;',
-    'const settled ='
-  );
+  const route = section('let settleResponse;', 'input.tx_hash = String(settleData.transaction);');
   assert.match(route, /settle_request_outcome_unknown/);
   assert.match(route, /SETTLEMENT_REVIEW/);
   assert.doesNotMatch(route, /DELETE FROM execution_state/);
@@ -82,12 +77,8 @@ function makeD1() {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE execution_state (
-      idempotency_key TEXT PRIMARY KEY,
-      record_kind TEXT NOT NULL,
-      status TEXT NOT NULL,
-      payload_json TEXT NOT NULL DEFAULT '{}',
-      error_code TEXT,
-      updated_at TEXT NOT NULL
+      idempotency_key TEXT PRIMARY KEY, record_kind TEXT NOT NULL, status TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}', error_code TEXT, updated_at TEXT NOT NULL
     );
     CREATE TABLE order_ledger (order_id TEXT PRIMARY KEY);
   `);
