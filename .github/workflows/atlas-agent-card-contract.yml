@@ -2,8 +2,6 @@ name: ATLAS live paused Agent Card contract audit
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/atlas-agent-card-contract.yml"
   workflow_dispatch:
 
 permissions:
