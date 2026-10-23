@@ -18,7 +18,7 @@ function between(start, end) {
 test('x402 route rejects missing wallet before constructing payment requirements', () => {
   const route = between(
     'if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1")',
-    'const req = x402Requirements(origin, { wallet, asset:'
+    'const paymentRequirements = req.accepts[0]'
   );
   assert.match(route, /if\s*\(!wallet\)/);
   assert.match(route, /X402_WALLET_NOT_CONFIGURED/);
