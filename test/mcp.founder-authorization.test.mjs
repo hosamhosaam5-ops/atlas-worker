@@ -81,11 +81,27 @@ test('paid offer readiness fails closed when configuration is absent', async () 
   assert.equal(getPaidOfferReadinessError(validPayment), null);
 });
 
-test('paid offer readiness rejects mock email, missing secrets, invalid wallet, and non-Base payment', async () => {
+test('paid offer readiness rejects mock email, missing secrets, invalid wallet, unverified domain, and unavailable storage', async () => {
   const { getPaidOfferReadinessError } = await import('../src/core/paidOfferReadiness.js');
-  assert.equal(getPaidOfferReadinessError({ PAYMENT_PROVIDER: 'MOCK', EMAIL_PROVIDER: 'RESEND', RESEND_API_KEY: 'k', EMAIL_FROM: 'atlas@example.invalid', ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40) }), 'PAID_PAYMENT_PROVIDER_NOT_READY');
-  assert.equal(getPaidOfferReadinessError({ PAYMENT_PROVIDER: 'BASE_RPC', EMAIL_PROVIDER: 'MOCK', RESEND_API_KEY: 'k', EMAIL_FROM: 'atlas@example.invalid', ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40) }), 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
-  assert.equal(getPaidOfferReadinessError({ PAYMENT_PROVIDER: 'BASE_RPC', EMAIL_PROVIDER: 'RESEND', RESEND_API_KEY: 'k', EMAIL_FROM: 'atlas@example.invalid', ATLAS_WALLET_ADDRESS: 'bad' }), 'PAID_WALLET_NOT_CONFIGURED');
-  assert.equal(getPaidOfferReadinessError({ PAYMENT_PROVIDER: 'BASE_RPC', EMAIL_PROVIDER: 'RESEND', ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40) }), 'PAID_EMAIL_CONFIGURATION_REQUIRED');
-  assert.equal(getPaidOfferReadinessError({ PAYMENT_PROVIDER: 'BASE_RPC', EMAIL_PROVIDER: 'RESEND', RESEND_API_KEY: 'test-key', EMAIL_FROM: 'atlas@example.invalid', ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40) }), null);
+  const storage = { FILE_STORAGE: 'LOCAL', DB: {} };
+  const wallet = '0x' + '1'.repeat(40);
+  const sendConfig = {
+    PAYMENT_PROVIDER: 'BASE_RPC',
+    ATLAS_WALLET_ADDRESS: wallet,
+    EMAIL_PROVIDER: 'RESEND',
+    RESEND_API_KEY: 'test-key-not-a-real-secret',
+    EMAIL_FROM: 'atlas@example.invalid',
+    EMAIL_DOMAIN_VERIFIED: '1',
+  };
+
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig, PAYMENT_PROVIDER: 'MOCK' }), 'PAID_PAYMENT_PROVIDER_NOT_READY');
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig, EMAIL_PROVIDER: 'MOCK' }), 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig, ATLAS_WALLET_ADDRESS: 'bad' }), 'PAID_WALLET_NOT_CONFIGURED');
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig, EMAIL_DOMAIN_VERIFIED: '0' }), 'PAID_EMAIL_DOMAIN_NOT_VERIFIED');
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig, EMAIL_DOMAIN_VERIFIED: undefined }), 'PAID_EMAIL_DOMAIN_NOT_VERIFIED');
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig, RESEND_API_KEY: '' }), 'PAID_EMAIL_CONFIGURATION_REQUIRED');
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig, FILE_STORAGE: 'R2' }), 'PAID_STORAGE_PROVIDER_NOT_READY');
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig, FILE_STORAGE: 'invalid' }), 'PAID_STORAGE_PROVIDER_NOT_READY');
+  assert.equal(getPaidOfferReadinessError({ ...sendConfig, FILE_STORAGE: 'LOCAL', DB: null }), 'PAID_STORAGE_PROVIDER_NOT_READY');
+  assert.equal(getPaidOfferReadinessError({ ...storage, ...sendConfig }), null);
 });
