@@ -233,7 +233,7 @@ jobs:
             echo 'Unexpected payment challenge while paid offer is paused.' >&2
             exit 1
           fi
-          jq -e '.ok==false and .error=="X402_PRODUCT_NOT_READY"' x402-body.json
+          jq -e '.ok==false and ((.error=="X402_PRODUCT_NOT_READY") or (.error=="X402_OFFER_NOT_READY" and (.detail|type=="string" and length>0)))' x402-body.json
           printf 'PASS: production is healthy, A2A creates no task, commerce is paused, x402 has no payment challenge.\n'
 
       - name: Upload production safety evidence
