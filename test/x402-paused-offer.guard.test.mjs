@@ -35,7 +35,7 @@ test('test-mode bootstrap never overwrites an existing paused production product
     'if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1")',
     'const wallet = String(env.ATLAS_WALLET_ADDRESS || "").trim();'
   );
-  assert.match(route, /isLocalX402TestMode\(env as any\)/);
+  assert.match(route, /isLocalX402TestMode\(env as any, request\.url\)/);
   assert.match(route, /if \(localX402TestMode\)/);
   assert.match(route, /if \(!testProduct\) await upsertProduct/);
   assert.doesNotMatch(route, /UPDATE products SET status\s*=\s*['"]ACTIVE['"]/);
