@@ -38,12 +38,18 @@ test('activating an MCP product requires founder identity; the paid Data-QA prod
   assert.throws(() => assertFounderCanActivateProduct({ product_id: 'atlas_ai_data_qa_v1', status: 'ACTIVE' }, founderCtx, {}), /FOUNDER_IDENTITY_REQUIRED/);
 });
 
-test('X402 test mode is disabled unless both explicit local-test flags are set', () => {
+test('X402 test mode requires both test flags and a loopback request URL', () => {
+  const flags = { X402_TEST_MODE: '1', DEV_MODE: '1' };
   assert.equal(isLocalX402TestMode({ X402_TEST_MODE: '1' }), false);
   assert.equal(isLocalX402TestMode({ DEV_MODE: '1' }), false);
-  assert.equal(isLocalX402TestMode({ X402_TEST_MODE: '1', DEV_MODE: '1' }), true);
-  assert.equal(isLocalX402TestMode({ X402_TEST_MODE: '0', DEV_MODE: '1' }), false);
-  assert.equal(isLocalX402TestMode({}), false);
+  assert.equal(isLocalX402TestMode(flags), false, 'flags without a request URL cannot enable test mode');
+  assert.equal(isLocalX402TestMode(flags, 'http://127.0.0.1:8799/x402/atlas_ai_data_qa_v1'), true);
+  assert.equal(isLocalX402TestMode(flags, 'http://localhost:8799/x402/atlas_ai_data_qa_v1'), true);
+  assert.equal(isLocalX402TestMode(flags, 'http://worker.localhost:8799/x402/atlas_ai_data_qa_v1'), true);
+  assert.equal(isLocalX402TestMode(flags, 'http://[::1]:8799/x402/atlas_ai_data_qa_v1'), true);
+  assert.equal(isLocalX402TestMode(flags, 'https://atlas-worker.hosamhosaam5.workers.dev/x402/atlas_ai_data_qa_v1'), false);
+  assert.equal(isLocalX402TestMode({ ...flags, X402_TEST_MODE: '0' }, 'http://127.0.0.1:8799/x402/atlas_ai_data_qa_v1'), false);
+  assert.equal(isLocalX402TestMode({}, 'http://127.0.0.1:8799/x402/atlas_ai_data_qa_v1'), false);
 });
 
 test('payment receipt provider fails closed when PAYMENT_PROVIDER is missing', async () => {
