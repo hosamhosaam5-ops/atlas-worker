@@ -26,8 +26,8 @@ test('x402 route rejects missing wallet before constructing payment requirements
   assert.match(route, /String\(product\.status\) !== "ACTIVE"/);
   assert.match(route, /Number\(product\.price_usdc\) !== 15/);
   assert.match(route, /X402_PRODUCT_NOT_READY/);
-  assert.ok(route.indexOf('X402_PRODUCT_NOT_READY') < route.indexOf('const req = x402Requirements'),
-    'product readiness must be checked before payment requirements are constructed');
+  assert.ok(route.indexOf('X402_PRODUCT_NOT_READY') < route.indexOf('const paymentRequirements = req.accepts[0]'),
+    'product readiness must be checked before the payment requirements are exposed');
 });
 
 test('test-mode bootstrap never overwrites an existing paused production product', () => {
