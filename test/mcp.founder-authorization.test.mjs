@@ -24,9 +24,12 @@ test('activating an MCP product requires founder identity; the paid Data-QA prod
     ...founderEnv,
     PAYMENT_PROVIDER: 'BASE_RPC',
     ATLAS_WALLET_ADDRESS: '0x' + '1'.repeat(40),
+    FILE_STORAGE: 'LOCAL',
+    DB: {},
     EMAIL_PROVIDER: 'RESEND',
     RESEND_API_KEY: 'test-key-not-a-real-secret',
     EMAIL_FROM: 'atlas@example.invalid',
+    EMAIL_DOMAIN_VERIFIED: '1',
   };
   assert.doesNotThrow(() => assertFounderCanActivateProduct({ product_id: 'atlas_ai_data_qa_v1', status: 'ACTIVE' }, founderCtx, readyEnv));
   assert.doesNotThrow(() => assertFounderCanActivateProduct({ product_id: 'other_product', status: 'ACTIVE' }, founderCtx, founderEnv));
