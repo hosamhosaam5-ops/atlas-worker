@@ -26,6 +26,8 @@ test('x402 route rejects missing wallet before constructing payment requirements
   assert.match(route, /String\(product\.status\) !== "ACTIVE"/);
   assert.match(route, /Number\(product\.price_usdc\) !== 15/);
   assert.match(route, /X402_PRODUCT_NOT_READY/);
+  assert.match(route, /getPaidOfferReadinessError/);
+  assert.match(route, /X402_OFFER_NOT_READY/);
 });
 
 test('test-mode bootstrap never overwrites an existing paused production product', () => {
@@ -33,7 +35,8 @@ test('test-mode bootstrap never overwrites an existing paused production product
     'if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1")',
     'const wallet = String(env.ATLAS_WALLET_ADDRESS || "").trim();'
   );
-  assert.match(route, /if \(String\(\(env as any\)\.X402_TEST_MODE \|\| ""\) === "1"\)/);
+  assert.match(route, /isLocalX402TestMode\(env as any\)/);
+  assert.match(route, /if \(localX402TestMode\)/);
   assert.match(route, /if \(!testProduct\) await upsertProduct/);
   assert.doesNotMatch(route, /UPDATE products SET status\s*=\s*['"]ACTIVE['"]/);
 });
