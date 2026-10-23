@@ -127,7 +127,7 @@ function logX402Route503(
 // or its status cannot be read.
 async function atlasOfferIsActive(db: D1Database, env: any): Promise<boolean> {
   // Public discovery must fail closed if payment or delivery dependencies are not ready.
-  if (getPaidOfferReadinessError(env)) return false;
+  if (!isLocalX402TestMode(env) && getPaidOfferReadinessError(env)) return false;
   try {
     const p = await db.prepare("SELECT status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first() as any;
     return !!p && String(p.status) === "ACTIVE" && Number(p.price_usdc) === 15;
