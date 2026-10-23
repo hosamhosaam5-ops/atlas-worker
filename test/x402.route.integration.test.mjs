@@ -244,7 +244,9 @@ test('transport disconnect during settlement leaves nonce locked and blocks retr
   assert.equal(discovery.status, 402);
   const requirements = await discovery.json();
   const nonce = 'disconnect-settlement-x402-e2e-006';
-  await assert.rejects(() => postPaid(nonce, requirements), /fetch failed|socket|reset|closed/i);
+  const first = await postPaid(nonce, requirements);
+  assert.equal(first.status, 503, 'transport loss during settlement must be surfaced as review-required');
+  assert.equal((await first.json()).error, 'X402_SETTLEMENT_REVIEW_REQUIRED');
   assert.equal(calls.verify.filter(x => x.nonce === nonce).length, 1);
   assert.equal(calls.settle.filter(x => x.nonce === nonce).length, 1);
 
