@@ -50,6 +50,14 @@ import { ensureGrowthAssets, getGrowthAsset, runGrowthCycle, growthSnapshot, tra
 import { commerceManifest, trustSnapshot, createCommerceSession, advanceCommerceSession, commerceSnapshot } from './autonomy/p3.js';
 import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { handleAccessRequest } from './mcp/access-handler.ts';
+// @ts-ignore
+import { assertFounderCanActivateProduct } from './mcp/authorization.js';
+// @ts-ignore
+import { isLocalX402TestMode } from './core/runtimeFlags.js';
+// @ts-ignore
+import { getPaidOfferReadinessError } from './core/paidOfferReadiness.js';
+// @ts-ignore
+import { normalizeActiveCommerceManifestRequest } from './core/commerceManifestGuard.js';
 
 interface Env {
   DB: D1Database;
@@ -117,7 +125,9 @@ function logX402Route503(
 
 // Fail closed for every public discovery surface when the paid offer is paused
 // or its status cannot be read.
-async function atlasOfferIsActive(db: D1Database): Promise<boolean> {
+async function atlasOfferIsActive(db: D1Database, env: any): Promise<boolean> {
+  // Public discovery must fail closed if payment or delivery dependencies are not ready.
+  if (getPaidOfferReadinessError(env)) return false;
   try {
     const p = await db.prepare("SELECT status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first() as any;
     return !!p && String(p.status) === "ACTIVE" && Number(p.price_usdc) === 15;
@@ -219,7 +229,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="write_state"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_STATE_ROWS");let written=0;for(const row of args.rows){if(!row||!row.idempotency_key)throw new Error("INVALID_STATE_ROW");if(String(row.record_kind||"").toLowerCase()==="approval"||String(row.entity_type||"").toLowerCase()==="approval")throw new Error("APPROVAL_STATE_FORBIDDEN");const payload=row.payload_json!==undefined?String(row.payload_json):JSON.stringify(row.payload??{});await env.DB.prepare("INSERT INTO execution_state (idempotency_key,record_kind,correlation_id,request_id,entity_type,entity_id,action_id,tool,status,progress,payload_json,error_code,attempt_count,delivery_state,message_key,chunk_index,expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(idempotency_key) DO UPDATE SET status=excluded.status,payload_json=excluded.payload_json,updated_at=datetime('now')").bind(String(row.idempotency_key),row.record_kind??null,row.correlation_id??null,row.request_id??null,row.entity_type??null,row.entity_id??null,row.action_id??null,row.tool??null,row.status??null,row.progress??null,payload,row.error_code??null,row.attempt_count??0,row.delivery_state??null,row.message_key??null,row.chunk_index??null,row.expires_at??null).run();written++;}out={written};}
    else if(name==="write_memory"){if(!Array.isArray(args.rows)||args.rows.length>100)throw new Error("INVALID_MEMORY_ROWS");for(const row of args.rows){if(!row||!String(row.content||"").trim())throw new Error("INVALID_MEMORY_ROW");await env.DB.prepare("INSERT INTO ceo_memory (category,content) VALUES (?,?)").bind(String(row.category||"fact"),String(row.content)).run();}out={written:args.rows.length};}
    else if(name==="list_products"){out={products:await listProducts(env.DB,args.include_drafts===true)};}
-   else if(name==="upsert_product"){out=await upsertProduct(env.DB,args);}
+   else if(name==="upsert_product"){assertFounderCanActivateProduct(args,ctx,env);out=await upsertProduct(env.DB,args);}
    else if(name==="create_quote"){out=await createQuote(env.DB,args);}
    else if(name==="request_financial_approval"){out=await requestFinancialApproval(env.DB,args);}
    else if(name==="decide_financial_approval"){
@@ -238,7 +248,15 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="growth_snapshot"){out=await growthSnapshot(env.DB);}
    else if(name==="run_growth_cycle"){out=await runGrowthCycle(env.DB,new URL(request.url).origin);}
    else if(name==="trust_snapshot"){out=await trustSnapshot(env.DB);}
-   else if(name==="commerce_manifest"){out=commerceManifest(new URL(request.url).origin,{...args,wallet:env.ATLAS_WALLET_ADDRESS});}
+   else if(name==="commerce_manifest"){
+    const manifestOrigin=new URL(request.url).origin;
+    if(!await atlasOfferIsActive(env.DB,env)){
+     out={schema_version:"atlas.commerce.v1",provider:"ATLAS",audience:"AI agents and agent systems",product_id:"atlas_ai_data_qa_v1",offer_status:"PAUSED",pricing:null,protocols:{mcp:manifestOrigin+"/mcp",a2a:manifestOrigin+"/a2a"},payment:null,safety:{outbound_spend_usdc:0,external_outreach:"FOUNDER_CONTROLLED",automatic_payouts:false}};
+    }else out=commerceManifest(manifestOrigin,{
+     ...normalizeActiveCommerceManifestRequest(args),
+     wallet:env.ATLAS_WALLET_ADDRESS
+    });
+   }
    else if(name==="commerce_snapshot"){out=await commerceSnapshot(env.DB);}
    else if(name==="create_commerce_session"){out=await createCommerceSession(env.DB,args);}
    else if(name==="advance_commerce_session"){out=await advanceCommerceSession(env.DB,args);}
@@ -300,18 +318,18 @@ export default {
     try { await ensureAutonomySchema(env.DB); } catch (e) { console.error('AUTONOMY_SCHEMA_INIT_FAILED', String(e)); }
     const origin = new URL(request.url).origin;
     if (pathname === "/.well-known/agent-card.json") {
-      const active = await atlasOfferIsActive(env.DB);
+      const active = await atlasOfferIsActive(env.DB, env);
       return new Response(JSON.stringify(active ? agentCard(origin) : pausedAgentCard(origin)),{headers:{"content-type":"application/json","cache-control":"no-store"}});
     }
     if (pathname === "/catalog.json" && request.method === "GET") {
-      if (!await atlasOfferIsActive(env.DB)) return json({ schema_version:"atlas.catalog.v1", provider:"ATLAS", offer_status:"PAUSED", products:[], message:"No paid offers are currently available." },200);
+      if (!await atlasOfferIsActive(env.DB, env)) return json({ schema_version:"atlas.catalog.v1", provider:"ATLAS", offer_status:"PAUSED", products:[], message:"No paid offers are currently available." },200);
       await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"catalog.json");
       return new Response(a?.content||"{}",{headers:{"content-type":"application/json","cache-control":"no-store"}});
     }
     // Agent-native x402 discovery: Agent402 crawls the origin-level manifest
     // before probing paid routes. Keep this public and free; it contains no secrets.
     if (pathname === "/.well-known/x402" && request.method === "GET") {
-      if (!await atlasOfferIsActive(env.DB)) return json({ version:1, resources:[], offer_status:"PAUSED", instructions:"No paid ATLAS resource is currently available. Do not submit payment." },200);
+      if (!await atlasOfferIsActive(env.DB, env)) return json({ version:1, resources:[], offer_status:"PAUSED", instructions:"No paid ATLAS resource is currently available. Do not submit payment." },200);
       return json({
         version: 1,
         resources: [origin + "/x402/atlas_ai_data_qa_v1"],
@@ -319,7 +337,7 @@ export default {
       });
     }
     if (pathname === "/openapi.json" && request.method === "GET") {
-      if (!await atlasOfferIsActive(env.DB)) return json({ openapi:"3.1.0", info:{title:"ATLAS API",version:"1.0.0",description:"Paid data-QA offer is paused; no paid endpoint is available."}, servers:[{url:origin}], paths:{} },200);
+      if (!await atlasOfferIsActive(env.DB, env)) return json({ openapi:"3.1.0", info:{title:"ATLAS API",version:"1.0.0",description:"Paid data-QA offer is paused; no paid endpoint is available."}, servers:[{url:origin}], paths:{} },200);
       return json({
         openapi: "3.1.0",
         info: {
@@ -344,26 +362,36 @@ export default {
       });
     }
     if (pathname === "/llms.txt" && request.method === "GET") {
-      if (!await atlasOfferIsActive(env.DB)) return new Response("# ATLAS\n\nStatus: paid offer PAUSED. No paid data-QA service is currently available. Do not submit payment.\n",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});
+      if (!await atlasOfferIsActive(env.DB, env)) return new Response("# ATLAS\n\nStatus: paid offer PAUSED. No paid data-QA service is currently available. Do not submit payment.\n",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});
       await ensureGrowthAssets(env.DB,origin); const a=await getGrowthAsset(env.DB,"llms.txt");
       return new Response(a?.content||"# ATLAS",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"no-store"}});
     }
     if (pathname === "/robots.txt" && request.method === "GET") return new Response("User-agent: *\nAllow: /\nAllow: /.well-known/\nAllow: /catalog.json\nAllow: /llms.txt\nDisallow: /dev/\nDisallow: /bridge/\nDisallow: /webhook/\n", {headers:{"content-type":"text/plain"}});
     if (pathname.startsWith("/r/") && request.method === "GET") { const code=decodeURIComponent(pathname.slice(3)).slice(0,100); await trackReferral(env.DB,{code,path:pathname,user_agent:request.headers.get("user-agent"),source:request.headers.get("referer")}); return Response.redirect(origin+"/catalog.json?ref="+encodeURIComponent(code),302); }
-    if (pathname === "/a2a" && request.method === "GET" && !await atlasOfferIsActive(env.DB)) return new Response(JSON.stringify(pausedAgentCard(origin)),{headers:{"content-type":"application/json","cache-control":"no-store"}});
+    if (pathname === "/a2a" && request.method === "GET" && !await atlasOfferIsActive(env.DB, env)) return new Response(JSON.stringify(pausedAgentCard(origin)),{headers:{"content-type":"application/json","cache-control":"no-store"}});
     if (pathname === "/a2a") return handleA2A(request,env);
     if (pathname === "/commerce.json" && request.method === "GET") {
-      if (!await atlasOfferIsActive(env.DB)) return json({schema_version:"atlas.commerce.v1",provider:"ATLAS",audience:"AI agents and agent systems",offer_status:"PAUSED",pricing:null,protocols:{mcp:origin+"/mcp",a2a:origin+"/a2a"},payment:null,safety:{outbound_spend_usdc:0,external_outreach:"FOUNDER_CONTROLLED",automatic_payouts:false}});
+      if (!await atlasOfferIsActive(env.DB, env)) return json({schema_version:"atlas.commerce.v1",provider:"ATLAS",audience:"AI agents and agent systems",offer_status:"PAUSED",pricing:null,protocols:{mcp:origin+"/mcp",a2a:origin+"/a2a"},payment:null,safety:{outbound_spend_usdc:0,external_outreach:"FOUNDER_CONTROLLED",automatic_payouts:false}});
       return json(commerceManifest(origin,{wallet:env.ATLAS_WALLET_ADDRESS}));
     }
     if (pathname === "/trust.json" && request.method === "GET") return json(await trustSnapshot(env.DB));
     if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1") {
-      if (String((env as any).X402_TEST_MODE || "") === "1") {
+      const localX402TestMode = isLocalX402TestMode(env as any);
+      if (localX402TestMode) {
         // Test-only local route bootstrapping: production D1 schema remains managed by deployment migrations.
         await ensureOrderSchema(env.DB);
         await ensureCommercialSchema(env.DB);
         const testProduct = await env.DB.prepare("SELECT product_id FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
         if (!testProduct) await upsertProduct(env.DB,{product_id:"atlas_ai_data_qa_v1",name:"ATLAS AI Agent Data QA",description:"Synthetic route-test product",unit:"order",price_usdc:15,pricing_mode:"FIXED",status:"ACTIVE"});
+      }
+      // Live payment challenges require real verification and delivery configuration.
+      // The dual-flag local test mode is isolated and uses a mock facilitator.
+      if (!localX402TestMode) {
+        const readinessError = getPaidOfferReadinessError(env as any);
+        if (readinessError) {
+          logX402Route503(request, "X402_OFFER_NOT_READY", { product_id: "atlas_ai_data_qa_v1", dependency: "paid_offer_readiness" });
+          return json({ ok: false, error: "X402_OFFER_NOT_READY", detail: readinessError }, 503);
+        }
       }
       const wallet = String(env.ATLAS_WALLET_ADDRESS || "").trim();
       if (!wallet) {
@@ -592,7 +620,7 @@ export default {
       } catch (e) {
         db = 'error';
       }
-      return new Response(JSON.stringify({ ok: true, service: 'atlas-worker', phase: 'M6', git_sha: env.ATLAS_GIT_SHA || 'unknown', db, ai_provider: env.AI_PROVIDER || 'MOCK', brave: env.BRAVE || 'MOCK', telegram: env.TELEGRAM_PROVIDER || 'MOCK', email: env.EMAIL_PROVIDER || 'MOCK', payment: env.PAYMENT_PROVIDER || 'MOCK' }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+      return new Response(JSON.stringify({ ok: true, service: 'atlas-worker', phase: 'M6', git_sha: env.ATLAS_GIT_SHA || 'unknown', db, ai_provider: env.AI_PROVIDER || 'MOCK', brave: env.BRAVE || 'MOCK', telegram: env.TELEGRAM_PROVIDER || 'MOCK', email: env.EMAIL_PROVIDER || 'MOCK', payment: String(env.PAYMENT_PROVIDER || '').trim() || 'UNSET' }), { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
     }
 
     // ---- M3 bridges (same contracts as backup workflows; MOCK adapters by default) ----
@@ -616,6 +644,10 @@ export default {
       const suppliedSecret = request.headers.get('x-atlas-order-webhook-secret');
       if (suppliedSecret !== env.ORDER_WEBHOOK_SECRET) {
         return json({ ok: false, error: 'forbidden' }, 403);
+      }
+      const orderReadinessError = getPaidOfferReadinessError(env as any);
+      if (orderReadinessError) {
+        return json({ ok: false, error: 'ORDER_NOT_READY', detail: orderReadinessError }, 503);
       }
       const t0 = Date.now();
       await ensureCommercialSchema(env.DB);
