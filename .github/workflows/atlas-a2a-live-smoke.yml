@@ -1,0 +1,75 @@
+name: ATLAS live A2A smoke test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/atlas-a2a-live-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-a2a-live-smoke
+  cancel-in-progress: false
+
+jobs:
+  live-a2a-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Submit one harmless A2A test task and verify it can be fetched
+        env:
+          A2A_URL: https://atlas-worker.hosamhosaam5.workers.dev/a2a
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          TEST_ID="atlas-smoke-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_RUN_ID}"
+          jq -n --arg id "$TEST_ID" '{
+            jsonrpc: "2.0",
+            id: $id,
+            method: "message/send",
+            params: {
+              message: {
+                messageId: $id,
+                role: "user",
+                parts: [{
+                  kind: "text",
+                  text: "ATLAS live A2A connectivity smoke test. Do not call external tools, send messages, make purchases, or perform financial actions. Reply with a short acknowledgement only."
+                }]
+              }
+            }
+          }' > evidence/request.json
+
+          code="$(curl --silent --show-error --max-time 20 -H 'content-type: application/json' -H 'accept: application/json' --data-binary @evidence/request.json -o evidence/response.json -w '%{http_code}' "$A2A_URL")"
+          echo "A2A_POST_HTTP_STATUS=$code"
+          cat evidence/response.json
+          test "$code" = "200"
+          jq -e --arg id "$TEST_ID" '.jsonrpc == "2.0" and .id == $id and (.result | type == "object")' evidence/response.json >/dev/null
+
+          task_id="$(jq -r '.result.id // .result.task.id // empty' evidence/response.json)"
+          if [ -n "$task_id" ]; then
+            jq -n --arg id "$TEST_ID-get" --arg task_id "$task_id" '{
+              jsonrpc: "2.0",
+              id: $id,
+              method: "tasks/get",
+              params: {id: $task_id}
+            }' > evidence/task-get-request.json
+            get_code="$(curl --silent --show-error --max-time 20 -H 'content-type: application/json' -H 'accept: application/json' --data-binary @evidence/task-get-request.json -o evidence/task-get-response.json -w '%{http_code}' "$A2A_URL")"
+            echo "A2A_TASK_GET_HTTP_STATUS=$get_code"
+            cat evidence/task-get-response.json
+            test "$get_code" = "200"
+            jq -e --arg id "$TEST_ID-get" '.jsonrpc == "2.0" and .id == $id and (.result | type == "object")' evidence/task-get-response.json >/dev/null
+          else
+            echo "A2A response did not expose a task ID; POST response is preserved, task retrieval not attempted."
+            exit 1
+          fi
+      - name: Upload A2A smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atlas-live-a2a-smoke-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
