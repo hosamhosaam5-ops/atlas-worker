@@ -1,5 +1,6 @@
-// Commercial product integration proof — local D1, real order pipeline, MOCK payment/email only.
-// This verifies the ACTIVE catalog product path, not a live customer transaction.
+// Commercial integration proof — isolated local D1 fixture, MOCK payment/email only.
+// The fixture is created inside a disposable local SQLite database; it is not a
+// production catalog product and never requires enabling the paused offer.
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { ensureCommercialSchema, upsertProduct } from '../src/commercial/control.js';
@@ -38,12 +39,16 @@ for (const f of ['schema.sql','schema-m2.sql','schema-m3.sql']) {
 }
 await ensureOrderSchema(db);
 await ensureCommercialSchema(db);
+
+// This product exists only in the isolated test database. Keep its ID distinct
+// from the paused production offer and from any historical integration products.
+const fixtureProductId='atlas_test_fixture_data_qa';
 await upsertProduct(db,{
-  product_id:'atlas_ai_data_qa_v1',
-  name:'AI Agent Data QA & Transformation',
-  description:'Test catalog copy',
-  unit:'dataset',
-  price_usdc:15,
+  product_id:fixtureProductId,
+  name:'ATLAS Synthetic Integration Fixture',
+  description:'Local-only synthetic fixture; never offered to customers',
+  unit:'test_dataset',
+  price_usdc:1,
   pricing_mode:'FOUNDER_QUOTE',
   status:'ACTIVE'
 });
@@ -52,18 +57,18 @@ const result=await runCommercialIntegration(db,{
   PAYMENT_PROVIDER:'MOCK',
   EMAIL_PROVIDER:'MOCK',
   FILE_STORAGE:'LOCAL'
-},{product_id:'atlas_ai_data_qa_v1'});
+},{product_id:fixtureProductId});
 
-if(!result.ok || !result.target_product_test || result.product_id!=='atlas_ai_data_qa_v1') {
-  throw new Error('ACTIVE_PRODUCT_INTEGRATION_FAILED: '+JSON.stringify(result));
+if(!result.ok || !result.target_product_test || result.product_id!==fixtureProductId) {
+  throw new Error('ISOLATED_FIXTURE_INTEGRATION_FAILED: '+JSON.stringify(result));
 }
 if(!result.product_id_invariant?.pass || result.order?.status!=='DELIVERED' || result.order?.payment_status!=='PAID') {
-  throw new Error('ACTIVE_PRODUCT_E2E_INVARIANT_FAILED: '+JSON.stringify(result));
+  throw new Error('ISOLATED_FIXTURE_E2E_INVARIANT_FAILED: '+JSON.stringify(result));
 }
 if(result.stress?.delivered!==1 || result.stress?.duplicate_tx!==7 || result.stress?.other!==0 || (result.stress?.errors||[]).length) {
-  throw new Error('ACTIVE_PRODUCT_IDEMPOTENCY_FAILED: '+JSON.stringify(result));
+  throw new Error('ISOLATED_FIXTURE_IDEMPOTENCY_FAILED: '+JSON.stringify(result));
 }
-console.log('PASS active catalog product integration: '+JSON.stringify({
+console.log('PASS isolated local fixture integration: '+JSON.stringify({
   product_id:result.product_id,
   quote_id:result.quote_id,
   delivered:result.order.status,
