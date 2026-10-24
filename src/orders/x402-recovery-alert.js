@@ -133,7 +133,7 @@ export async function sendX402SettlementReviewAlert(paymentRecovery, env, depend
     'تسويات مؤكدة بلا سجل طلب: ' + missingOrders,
     'لم تُفك حجوزات nonce ولم تُعَد أي تسوية تلقائيًا.',
     'يرجى إجراء المطابقة يدويًا قبل أي إجراء مالي.',
-  ].join('\\n');
+  ].join('\n');
 
   // Production path: persist first, then send through the shared durable outbox.
   // If no DB was injected, retain the provider-only path for isolated unit tests.
