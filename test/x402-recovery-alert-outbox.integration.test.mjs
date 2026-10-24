@@ -151,3 +151,75 @@ test('definite Telegram failure is persisted FAILED then retried to SENT without
   assert.equal(rows[0].last_error, null);
   assert.equal(rows[0].provider_message_id, 'fixture-retry-message-43');
 });
+
+test('no newly flagged settlement rows creates no persistent alert and sends nothing', async () => {
+  const DB = makeD1();
+  const logs = makeLogger();
+  let sends = 0;
+  const result = await sendX402SettlementReviewAlert(
+    { reservations_flagged: 0, settled_without_order_flagged: 0 },
+    { DB, FOUNDER_CHAT_ID: 'fixture-founder-only' },
+    {
+      logger: logs,
+      providerFactory: () => ({ async send() { sends++; return { ok: true, provider_message_id: 'should-not-exist' }; } }),
+      outboxFactory: db => createOutbox(db),
+    },
+  );
+
+  assert.equal(result.reason, 'NO_NEW_REVIEW_ROWS');
+  assert.equal(sends, 0);
+  const rows = await DB.read(
+    "SELECT id FROM delivery_outbox WHERE dedupe_key LIKE 'x402-settlement-review|%'",
+  );
+  assert.equal(rows.length, 0);
+});
+
+test('ambiguous timeout stays persisted and is not automatically resent', async () => {
+  const DB = makeD1();
+  const logs = makeLogger();
+  let sends = 0;
+  const env = { DB, FOUNDER_CHAT_ID: 'fixture-founder-only' };
+  const deps = {
+    logger: logs,
+    now: () => Date.now(),
+    providerFactory: () => ({
+      async send() {
+        sends++;
+        throw new Error('provider timeout after 15000ms');
+      },
+    }),
+    outboxFactory: db => createOutbox(db),
+  };
+
+  const first = await sendX402SettlementReviewAlert(
+    { reservations_flagged: 1, settled_without_order_flagged: 0 }, env, deps,
+  );
+  assert.equal(first.sent, false);
+  assert.equal(first.reason, 'DELIVERY_NOT_CONFIRMED');
+
+  let rows = await DB.read(
+    "SELECT status, attempts, last_error, provider_message_id FROM delivery_outbox WHERE dedupe_key LIKE 'x402-settlement-review|%'",
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'FAILED');
+  assert.equal(rows[0].attempts, 1);
+  assert.match(rows[0].last_error, /timeout/i);
+  assert.equal(rows[0].provider_message_id, null);
+
+  deps.now = () => Date.now() + 10 * 60_000;
+  const second = await sendX402SettlementReviewAlert(
+    { reservations_flagged: 0, settled_without_order_flagged: 0 }, env, deps,
+  );
+  assert.equal(second.reason, 'NO_NEW_REVIEW_ROWS');
+  assert.equal(second.retries.retried, 0);
+  assert.equal(second.retries.skipped, 1);
+  assert.equal(sends, 1, 'ambiguous delivery must never be automatically resent');
+
+  rows = await DB.read(
+    "SELECT status, attempts, last_error, provider_message_id FROM delivery_outbox WHERE dedupe_key LIKE 'x402-settlement-review|%'",
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'FAILED');
+  assert.equal(rows[0].attempts, 1);
+  assert.match(rows[0].last_error, /timeout/i);
+});

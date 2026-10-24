@@ -27,6 +27,8 @@ test('review alert sends one bounded founder notice only when new rows were flag
   assert.equal(calls.length, 1);
   assert.equal(calls[0].to, 'founder-test-chat');
   assert.match(calls[0].text, /SETTLEMENT_REVIEW/);
+  assert.equal(calls[0].text.includes('\\n'), false, 'message must not contain literal backslash-n sequences');
+  assert.ok(calls[0].text.split('\n').length >= 6, 'message must contain real line breaks');
   assert.match(calls[0].text, /لم تُفك حجوزات nonce ولم تُعَد أي تسوية تلقائيًا/);
   assert.equal(logs.entries.filter(e => e[0] === 'log' && e[1] === 'X402_PAYMENT_RECOVERY_ALERT_SENT').length, 1);
 });
