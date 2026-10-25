@@ -180,7 +180,7 @@ test('route.404: unknown path -> 404 JSON', async () => {
   assert.equal(r.status, 404);
 });
 
-test('provider-gap: all provider modules expose both MOCK and LIVE branches', async () => {
+test('provider-gap: provider modules expose expected MOCK/LIVE branches; file storage is D1-only', async () => {
   const fs = await import('node:fs');
   const checks = [
     ['src/core/outbox.js', /kind === 'MOCK'/, /kind === 'LIVE'/],
@@ -188,7 +188,6 @@ test('provider-gap: all provider modules expose both MOCK and LIVE branches', as
     ['src/ceo/webresearch.js', [/mode === 'MOCK'/, /api\.search\.brave\.com/]],
     ['src/orders/email.js', [/kind === 'MOCK'/, /kind === 'RESEND'/]],
     ['src/orders/payment.js', [/provider === 'MOCK'/, /provider === 'BASE_RPC'/]],
-    ['src/orders/storage.js', [/kind === 'LOCAL'/, /kind === 'R2'/]],
     ['src/bridges/siwe.js', [/mode === 'MOCK'/, /api\.datapoint\.market/]],
     ['src/bridges/bountybook.js', [/mode === 'MOCK'/, /api\.bountybook\.ai/]],
   ];
@@ -198,4 +197,7 @@ test('provider-gap: all provider modules expose both MOCK and LIVE branches', as
     assert.ok(p1.test(c), f + ' missing MOCK branch');
     assert.ok(p2 && p2.test(c), f + ' missing LIVE branch');
   }
+  const storage = fs.readFileSync(path.join(ROOT, 'src/orders/storage.js'), 'utf8');
+  assert.ok(/kind: 'D1'/.test(storage), 'storage adapter must identify as D1');
+  assert.ok(!/kind === 'R2'|env\.R2|FILE_STORAGE/.test(storage), 'storage adapter must not retain R2 or backend selector');
 });
