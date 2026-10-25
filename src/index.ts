@@ -31,6 +31,7 @@ import { runTelegraphMonitor } from './crons/telegraphMonitor.js';
 // @ts-ignore
 import { getTelegramProvider } from './core/outbox.js';
 import { sendCriticalOpsAlert } from './core/critical-alerts.js';
+import { handleTelegramSmokeTest } from './core/telegram-smoke-test.js';
 // @ts-ignore
 import { sendDnsExitSmtp } from './orders/dnsexit-smtp.js';
 // Autonomy foundation: capability registry, bounded execution, trust boundary, reputation.
@@ -578,6 +579,11 @@ export default {
     }
     if (pathname === "/mcp" || pathname === "/authorize" || pathname === "/callback" || pathname === "/register" || pathname === "/token") return mcpOAuth.fetch(request, env, ctx);
     const url = new URL(request.url);
+
+    // One-shot founder-authorized Telegram smoke test. Fixed founder recipient; never touches orders or settlements.
+    if (url.pathname === '/internal/telegram-test') {
+      return handleTelegramSmokeTest(request, env as any);
+    }
 
     // One-shot founder-authorized SMTP smoke test. Fixed recipient, no customer-order path.
     // D1 uniqueness claim is inserted before sending, so retries cannot send a second test email.
