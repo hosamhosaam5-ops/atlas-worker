@@ -48,7 +48,7 @@ test('sends only the fixed founder message and returns provider message id', asy
   assert.equal(body.status, 'SENT');
   assert.equal(body.provider_message_id, 'tg-123');
   assert.deepEqual(f.calls.sent, [{ to: 'founder-fixed-id', text: 'ATLAS Telegram delivery test — no payment or settlement was created.' }]);
-  assert.match(telegramSmokeTestContract.message, /no payment or settlement was created/i);
+  assert.match(f.calls.sent[0].text, /no payment or settlement was created/i);
 });
 
 test('does not send again after a one-shot claim already exists', async () => {
