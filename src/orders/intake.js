@@ -16,6 +16,8 @@ import { recordReputation } from '../autonomy/registry.js';
 import { emitAgentEvent } from '../autonomy/p1.js';
 
 const MAX_DATA_ROWS = 5000;
+// D1 stores file bytes as Base64 text. Keep the encoded value safely below D1's 2,000,000-byte row/value limit.
+const MAX_FILE_BYTES = 1_300_000;
 
 // Validate payment-provider configuration before inserting a transaction claim.
 export function assertKnownPaymentProvider(env) {
@@ -326,6 +328,21 @@ export async function processOrder(db, env, input) {
     const a = await audit(db, 'order', meta.order_id, meta, 'REJECTED', reason);
     return { order_id: meta.order_id, order_status: 'REJECTED', reason, audit: a, latency_ms: Date.now() - t0 };
   }
+  // D1-only storage encodes the original file as Base64 (~4/3 expansion). Reject oversized
+  // uploads before quote/payment verification so a valid payment cannot be accepted and then
+  // stranded by a storage-size failure.
+  if (!input.__file_bytes || input.__file_bytes.byteLength > MAX_FILE_BYTES) {
+    const actualBytes = input.__file_bytes?.byteLength ?? 0;
+    const reason = 'FILE_SIZE_LIMIT_EXCEEDED: maximum ' + MAX_FILE_BYTES + ' bytes for D1-only storage';
+    await insertLedger(db, {
+      order_id: meta.order_id, client_email: meta.client_email, tx_hash: meta.tx_hash,
+      status: 'REJECTED', payment_status: 'NOT_CHECKED', file_name: meta.file_name, file_ext: meta.file_ext,
+      last_error: reason + ' (received ' + actualBytes + ' bytes)',
+    });
+    const a = await audit(db, 'order', meta.order_id, meta, 'REJECTED', reason);
+    return { order_id: meta.order_id, order_status: 'REJECTED', reason, max_file_bytes: MAX_FILE_BYTES, actual_file_bytes: actualBytes, audit: a, latency_ms: Date.now() - t0 };
+  }
+
   // --- Extract rows (ports Extract CSV / Extract XLSX + Repack File Binary) ---
   let rows = [];
   let extractError = null;
