@@ -33,18 +33,27 @@ jobs:
     name: Deploy tested commit to Cloudflare
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout exact commit
         uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked project dependencies
+        run: npm ci --no-audit --no-fund
       - name: Fail closed if deployment token is not configured
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN"; exit 1; }
-      - name: Deploy exact tested SHA
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: c46718094ced1f5f75492f4c67c7d390
-          command: deploy --var ATLAS_GIT_SHA:${{ github.sha }}
+      - name: Deploy exact tested SHA using the project's locked Wrangler v4
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        run: |
+          set -euo pipefail
+          test -n "$GITHUB_SHA"
+          npx --no-install wrangler deploy --var "ATLAS_GIT_SHA:$GITHUB_SHA"
