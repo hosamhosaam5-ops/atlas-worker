@@ -28,7 +28,7 @@ function fixture({ existing = false, providerResult = { ok: true, provider_messa
       return providerResult;
     },
   });
-  return { calls, db, providerFactory };
+  return { calls, db, providerFactory, verifyBotIdentity: async () => ({ ok: true, username: 'my_ai_ceo_bot_bot' }) };
 }
 const env = { TELEGRAM_TEST_TOKEN: 'test-secret', TELEGRAM_BOT_TOKEN: 'bot-secret', FOUNDER_CHAT_ID: 'founder-fixed-id' };
 const request = (auth = 'Bearer test-secret', method = 'POST') => new Request('https://atlas.test/internal/telegram-test', { method, headers: { authorization: auth } });
@@ -65,4 +65,24 @@ test('marks ambiguous provider exceptions for review and never retries in the sa
   assert.equal(response.status, 502);
   assert.equal(body.status, 'REVIEW_REQUIRED');
   assert.equal(f.calls.sent.length, 1);
+});
+
+test('wrong Telegram bot identity fails closed before consuming the one-shot claim', async () => {
+  const f = fixture();
+  f.verifyBotIdentity = async () => ({ ok: true, username: 'some_other_bot' });
+  const response = await handleTelegramSmokeTest(request(), env, f);
+  const body = await response.json();
+  assert.equal(response.status, 409);
+  assert.equal(body.error, 'telegram_bot_identity_mismatch');
+  assert.equal(f.calls.sent.length, 0);
+  assert.equal(f.calls.claimCount, 0);
+});
+
+test('Telegram identity API failure fails closed without sending', async () => {
+  const f = fixture();
+  f.verifyBotIdentity = async () => ({ ok: false, error_code: 'TELEGRAM_BOT_IDENTITY_UNAVAILABLE' });
+  const response = await handleTelegramSmokeTest(request(), env, f);
+  assert.equal(response.status, 503);
+  assert.equal(f.calls.sent.length, 0);
+  assert.equal(f.calls.claimCount, 0);
 });
