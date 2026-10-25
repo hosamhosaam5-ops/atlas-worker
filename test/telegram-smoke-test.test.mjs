@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleTelegramSmokeTest, telegramSmokeTestContract } from '../src/core/telegram-smoke-test.js';
+import { handleTelegramSmokeTest } from '../src/core/telegram-smoke-test.js';
 
 function fixture({ existing = false, providerResult = { ok: true, provider_message_id: 'tg-123' }, providerThrows = false } = {}) {
   const calls = { sent: [], sql: [], claimCount: 0 };
@@ -47,7 +47,7 @@ test('sends only the fixed founder message and returns provider message id', asy
   assert.equal(response.status, 200);
   assert.equal(body.status, 'SENT');
   assert.equal(body.provider_message_id, 'tg-123');
-  assert.deepEqual(f.calls.sent, [{ to: 'founder-fixed-id', text: telegramSmokeTestContract.message }]);
+  assert.deepEqual(f.calls.sent, [{ to: 'founder-fixed-id', text: 'ATLAS Telegram delivery test — no payment or settlement was created.' }]);
   assert.match(telegramSmokeTestContract.message, /no payment or settlement was created/i);
 });
 
