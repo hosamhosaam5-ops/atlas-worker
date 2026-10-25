@@ -14,11 +14,6 @@ database_id = "a5a75faa-e800-4112-b67a-3c53d7b0d8d4"
 [ai]
 binding = "AI"
 
-# R2 binding is only needed when FILE_STORAGE=R2. Declared now, harmless unused.
-# [[r2_buckets]]
-# binding = "R2"
-# bucket_name = "atlas-order-files"
-
 # Cron schedules are configured here; they run only after this Worker is deployed.
 [triggers]
 crons = [
@@ -38,7 +33,6 @@ TELEGRAM_PROVIDER = "LIVE"
 EMAIL_PROVIDER = "MOCK"
 EMAIL_FROM = "no-reply@atlas-agent.work.gd"
 PAYMENT_PROVIDER = "BASE_RPC"
-FILE_STORAGE = "LOCAL"
 AGENT_SOUK_PROVIDER = "MOCK"
 DATAPOINT_PROVIDER = "MOCK"
 BOUNTYBOOK_PROVIDER = "MOCK"
