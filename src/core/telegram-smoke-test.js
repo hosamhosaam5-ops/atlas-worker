@@ -61,4 +61,3 @@ export async function handleTelegramSmokeTest(request, env, dependencies = {}) {
   }
 }
 
-export const telegramSmokeTestContract = Object.freeze({ testKey: TEST_KEY, message: TEST_MESSAGE });
