@@ -42,7 +42,7 @@ import { sanitizeExternalInput, authorizeAction, validateMarketplaceLead } from 
 // @ts-ignore
 import { acquisitionCycle, discoverCapabilities, scanAgentDemand, selectLLMRoute } from './autonomy/engine.js';
 // @ts-ignore
-import { agentCard, createWebhook, listWebhooks, discoverAgentMarketplaces, prepareOffer, negotiateOffer, productIntelligence, x402Requirements, handleA2A } from './autonomy/p1.js';
+import { agentCard, createWebhook, listWebhooks, discoverAgentMarketplaces, prepareOffer, negotiateOffer, productIntelligence, x402Requirements, handleA2A, verifyA2ATaskCapability } from './autonomy/p1.js';
 // P2 growth: bounded acquisition intelligence, machine-readable discovery assets, referrals.
 // @ts-ignore
 import { ensureGrowthAssets, getGrowthAsset, runGrowthCycle, growthSnapshot, trackReferral } from './autonomy/p2.js';
@@ -385,6 +385,19 @@ export default {
         const testProduct = await env.DB.prepare("SELECT product_id FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
         if (!testProduct) await upsertProduct(env.DB,{product_id:"atlas_ai_data_qa_v1",name:"ATLAS AI Agent Data QA",description:"Synthetic route-test product",unit:"order",price_usdc:15,pricing_mode:"FIXED",status:"ACTIVE"});
       }
+      // API/A2A delivery is only allowed for a task already claimed by /a2a and
+      // whose payment proof matches the task-scoped capability hash in D1. A caller
+      // cannot bypass the email delivery path by forging this header alone.
+      const deliveryProvider = String(env.DELIVERY_PROVIDER || "EMAIL").trim().toUpperCase();
+      const a2aTaskId = String(request.headers.get("x-atlas-a2a-task-id") || "").trim();
+      const signatureForTask = String(request.headers.get("PAYMENT-SIGNATURE") || "").trim();
+      let a2aTaskContextValid = false;
+      if (request.method === "POST" && a2aTaskId && signatureForTask) {
+        try { a2aTaskContextValid = await verifyA2ATaskCapability(env.DB, a2aTaskId, signatureForTask); } catch { a2aTaskContextValid = false; }
+      }
+      if (!localX402TestMode && deliveryProvider === "A2A" && request.method === "POST" && !a2aTaskContextValid) {
+        return json({ ok: false, error: "A2A_TASK_CONTEXT_REQUIRED", message: "When API/A2A delivery is configured, submit work through the authenticated A2A task route." }, 403);
+      }
       // Live payment challenges require real verification and delivery configuration.
       // The dual-flag local test mode is isolated and uses a mock facilitator.
       if (!localX402TestMode) {
@@ -437,7 +450,8 @@ export default {
           }
         }
       } catch { return json({ ok: false, error: "bad request body" }, 400); }
-      if (!input.client_email || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: "client_email and file_upload/file_base64 are required" }, 400);
+      if ((!input.client_email && !a2aTaskContextValid) || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: a2aTaskContextValid ? "file_upload/file_base64 is required" : "client_email and file_upload/file_base64 are required" }, 400);
+      input.__delivery_mode = deliveryProvider === "A2A" && a2aTaskContextValid ? "A2A" : "EMAIL";
       const MAX_ORDER_FILE_BYTES = 1_400_000;
       if (input.__file_bytes.length > MAX_ORDER_FILE_BYTES) return json({ ok: false, error: "FILE_SIZE_LIMIT_EXCEEDED", max_bytes: MAX_ORDER_FILE_BYTES, received_bytes: input.__file_bytes.length }, 413);
       const ext = String(input.__file_name).toLowerCase().split(".").pop();
