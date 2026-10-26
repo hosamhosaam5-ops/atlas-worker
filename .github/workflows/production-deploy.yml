@@ -57,3 +57,26 @@ jobs:
           set -euo pipefail
           test -n "$GITHUB_SHA"
           npx --no-install wrangler deploy --var "ATLAS_GIT_SHA:$GITHUB_SHA"
+
+      - name: Verify deployed source SHA and health
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_SHA"
+          for attempt in $(seq 1 15); do
+            if curl --fail --silent --show-error --max-time 10 https://atlas-worker.hosamhosaam5.workers.dev/health -o health.json; then
+              cat health.json
+              ACTUAL_SHA="$(jq -r '.git_sha // ""' health.json)"
+              if [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] && jq -e '.ok == true and .db == "ok"' health.json >/dev/null; then
+                echo "DEPLOYED_SOURCE_SHA=$ACTUAL_SHA"
+                exit 0
+              fi
+              echo "Waiting for Worker propagation: expected=$EXPECTED_SHA actual=${ACTUAL_SHA:-missing} attempt=$attempt"
+            else
+              echo "Health request failed attempt=$attempt"
+            fi
+            sleep 2
+          done
+          echo "SOURCE_SHA_VERIFICATION_FAILED expected=$EXPECTED_SHA"
+          exit 1
