@@ -1,4 +1,4 @@
-name: ATLAS live A2A paused-offer guard probe
+name: ATLAS read-only A2A protocol smoke
 
 on:
   push:
@@ -19,50 +19,76 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify live A2A rejects paid task creation while offer is paused
+      - name: Verify live health and active Agent Card contract
+        env:
+          BASE: https://atlas-worker.hosamhosaam5.workers.dev
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          health_code="$(curl --silent --show-error --max-time 20 -o evidence/health.json -w '%{http_code}' "$BASE/health")"
+          echo "HEALTH_HTTP_STATUS=$health_code"
+          test "$health_code" = "200"
+          jq -e '.ok == true and .service == "atlas-worker" and .db == "ok"' evidence/health.json >/dev/null
+
+          card_code="$(curl --silent --show-error --max-time 20 -o evidence/agent-card.json -w '%{http_code}' "$BASE/.well-known/agent-card.json")"
+          echo "AGENT_CARD_HTTP_STATUS=$card_code"
+          test "$card_code" = "200"
+          jq -e --arg origin "$BASE" '
+            .name == "ATLAS" and
+            .version == "1.0.0" and
+            any(.supportedInterfaces[]?; .url == ($origin + "/a2a") and .protocolBinding == "JSONRPC" and .protocolVersion == "1.0") and
+            any(.skills[]?; .id == "data_qa") and
+            any(.capabilities.extensions[]?; .uri == "https://a2a-registry.org/extensions/registry/v1") and
+            any(.capabilities.extensions[]?; .uri == ($origin + "/extensions/commerce/v1"))
+          ' evidence/agent-card.json >/dev/null
+          echo "PASS: live health and active A2A discovery contract verified."
+
+      - name: Verify JSON-RPC tasks/get without creating a task or order
         env:
           A2A_URL: https://atlas-worker.hosamhosaam5.workers.dev/a2a
         run: |
           set -euo pipefail
-          mkdir -p evidence
-          TEST_ID="atlas-guard-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_RUN_ID}"
-          jq -n --arg id "$TEST_ID" '{
+          PROBE_ID="atlas-readonly-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          MISSING_TASK_ID="atlas-never-created-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          jq -n --arg rpc "$PROBE_ID" --arg task "$MISSING_TASK_ID" '{
             jsonrpc: "2.0",
-            id: $id,
-            method: "message/send",
-            params: {
-              message: {
-                messageId: $id,
-                role: "user",
-                parts: [{
-                  kind: "text",
-                  text: "ATLAS live A2A guard probe only. Do not call tools, send messages, make purchases, or perform financial actions."
-                }]
-              }
-            }
-          }' > evidence/request.json
+            id: $rpc,
+            method: "tasks/get",
+            params: { id: $task }
+          }' > evidence/tasks-get-request.json
 
-          code="$(curl --silent --show-error --max-time 20 -H 'content-type: application/json' -H 'accept: application/json' --data-binary @evidence/request.json -o evidence/response.json -w '%{http_code}' "$A2A_URL")"
-          echo "A2A_POST_HTTP_STATUS=$code"
-          cat evidence/response.json
-
-          # The product is intentionally paused. A safe rejection is the expected result.
-          test "$code" = "400"
-          jq -e --arg id "$TEST_ID" '
+          code="$(curl --silent --show-error --max-time 20 -H 'content-type: application/json' -H 'accept: application/json' --data-binary @evidence/tasks-get-request.json -o evidence/tasks-get-response.json -w '%{http_code}' "$A2A_URL")"
+          echo "A2A_TASKS_GET_HTTP_STATUS=$code"
+          cat evidence/tasks-get-response.json
+          test "$code" = "404"
+          jq -e --arg rpc "$PROBE_ID" '
             .jsonrpc == "2.0" and
-            .id == $id and
-            .error.code == -32001 and
-            (.error.message | contains("offer is paused")) and
-            (.error.message | contains("No task was created"))
-          ' evidence/response.json >/dev/null
-          test "$(jq -r 'has("result")' evidence/response.json)" = "false"
-          echo "PASS: live A2A route reached; paused offer rejected execution; no task created."
+            .id == $rpc and
+            .error.code == -32004 and
+            .error.message == "Task not found" and
+            (has("result") | not)
+          ' evidence/tasks-get-response.json >/dev/null
+          echo "PASS: JSON-RPC response received for read-only tasks/get; no task/order/payment was submitted."
 
-      - name: Upload A2A guard evidence
+      - name: Verify x402 resource advertises payment requirements without paying
+        env:
+          BASE: https://atlas-worker.hosamhosaam5.workers.dev
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --max-time 20 -D evidence/x402-headers.txt -o evidence/x402-body.json -w '%{http_code}' "$BASE/x402/atlas_ai_data_qa_v1")"
+          echo "X402_REQUIREMENTS_HTTP_STATUS=$code"
+          cat evidence/x402-headers.txt
+          cat evidence/x402-body.json
+          test "$code" = "402"
+          grep -Eiq '^PAYMENT-REQUIRED:' evidence/x402-headers.txt
+          jq -e 'type == "object"' evidence/x402-body.json >/dev/null
+          echo "PASS: payment requirements were read only; no payment signature or transaction was sent."
+
+      - name: Upload read-only protocol evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: atlas-live-a2a-guard-evidence
+          name: atlas-read-only-a2a-protocol-evidence
           path: evidence/
           if-no-files-found: warn
           retention-days: 14
