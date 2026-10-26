@@ -451,7 +451,7 @@ export default {
           }
         }
       } catch { return json({ ok: false, error: "bad request body" }, 400); }
-      if ((!input.client_email && !a2aTaskContextValid) || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: a2aTaskContextValid ? "file_upload/file_base64 is required" : "client_email and file_upload/file_base64 are required" }, 400);
+      if ((!input.client_email && !(deliveryProvider === "A2A" && a2aTaskContextValid)) || !input.__file_bytes || !input.__file_name) return json({ ok: false, error: a2aTaskContextValid ? "file_upload/file_base64 is required" : "client_email and file_upload/file_base64 are required" }, 400);
       input.__delivery_mode = deliveryProvider === "A2A" && a2aTaskContextValid ? "A2A" : "EMAIL";
       const MAX_ORDER_FILE_BYTES = 1_400_000;
       if (input.__file_bytes.length > MAX_ORDER_FILE_BYTES) return json({ ok: false, error: "FILE_SIZE_LIMIT_EXCEEDED", max_bytes: MAX_ORDER_FILE_BYTES, received_bytes: input.__file_bytes.length }, 413);
