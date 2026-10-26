@@ -86,7 +86,7 @@ export async function handleA2A(request,env){
     const fileName=String(atlas?.file_name||'').trim();
     const fileBase64=String(atlas?.file_base64||'').trim();
     const paymentSignature=String(atlas?.payment_signature||'').trim();
-    if(!/^\S+@\S+\.\S+$/.test(clientEmail)||!fileName||!/^.+\.(csv|xlsx)$/i.test(fileName)||!fileBase64||fileBase64.length>1900000||!paymentSignature){
+    if((clientEmail&&!/^\S+@\S+\.\S+$/.test(clientEmail))||!fileName||!/^.+\.(csv|xlsx)$/i.test(fileName)||!fileBase64||fileBase64.length>1900000||!paymentSignature){
       return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Paid data-QA tasks require metadata.atlas_x402 with client_email, file_name (.csv/.xlsx), file_base64, and payment_signature. Payment is validated only by the canonical x402 resource.'}}),{status:400,headers});
     }
     const resultAccessToken=await deriveTaskAccessToken(taskId,paymentSignature);
@@ -108,8 +108,8 @@ export async function handleA2A(request,env){
       // exact production x402 handler. A2A never verifies or settles payment itself.
       const delegated=await fetch(origin+'/x402/atlas_ai_data_qa_v1',{
         method:'POST',
-        headers:{'content-type':'application/json','PAYMENT-SIGNATURE':paymentSignature},
-        body:JSON.stringify({client_email:clientEmail,file_name:fileName,file_base64:fileBase64}),
+        headers:{'content-type':'application/json','PAYMENT-SIGNATURE':paymentSignature,'x-atlas-a2a-task-id':taskId},
+        body:JSON.stringify({...(clientEmail?{client_email:clientEmail}:{}),file_name:fileName,file_base64:fileBase64}),
         signal:AbortSignal.timeout(65000)
       });
       try{responseBody=await delegated.json()}catch{responseBody={error:'INVALID_X402_RESPONSE'}}
