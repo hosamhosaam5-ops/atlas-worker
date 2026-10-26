@@ -414,7 +414,7 @@ export async function processOrder(db, env, input) {
       return { order_id: meta.order_id, order_status: 'DUPLICATE_TX', message: 'This x402 settlement transaction was already used.', audit: a, latency_ms: Date.now() - t0 };
     }
     const receipt = await fetchReceipt(env, meta.tx_hash);
-    gate = evaluatePaymentSafe(receipt, priceMeta);
+    gate = evaluatePaymentSafe(receipt, priceMeta, meta.tx_hash, '0x2105');
     if (gate.payment_status !== 'PAID') {
       // Facilitator settlement is already confirmed. A lagging/mismatched independent
       // receipt check must trigger reconciliation, never erase the confirmed payment.
@@ -475,7 +475,7 @@ export async function processOrder(db, env, input) {
 
     // --- Payment gate (Evaluate Payment via provider adapter; fixtures are SYNTHETIC) ---
     const receipt = await fetchReceipt(env, meta.tx_hash);
-    gate = evaluatePaymentSafe(receipt, priceMeta);
+    gate = evaluatePaymentSafe(receipt, priceMeta, meta.tx_hash, '0x2105');
     if (gate.payment_status !== 'PAID') {
       await finalizeLedger(db, meta.order_id, {
         status: 'PAYMENT_FAILED', payment_status: gate.payment_status, amount_paid: gate.amount_paid, product_id: priceMeta.product_id,
