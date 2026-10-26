@@ -74,7 +74,7 @@ test('paid readiness accepts D1-backed A2A delivery without email and rejects un
 test('A2A delivery mode requires a claimed task and matching payment proof before x402 POST', () => {
   const route = between(
     'if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1")',
-    'const paymentRequirements = req.accepts[0]'
+    'if (request.method === "GET" && pathname === "/.well-known/oauth-authorization-server")'
   );
   const contextGate = route.indexOf('A2A_TASK_CONTEXT_REQUIRED');
   const readinessGate = route.indexOf('getPaidOfferReadinessError');
