@@ -72,6 +72,7 @@ interface Env {
   TAVILY_API_KEY?: string;
   TELEGRAM_PROVIDER?: string;
   EMAIL_PROVIDER?: string;
+  DELIVERY_PROVIDER?: string;
   EMAIL_MOCK_SCENARIO?: string;
   EMAIL_FROM?: string;
   DNS_EXIT_SMTP_HOST?: string;
