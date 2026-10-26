@@ -54,6 +54,9 @@ await upsertProduct(db,{
 });
 
 const result=await runCommercialIntegration(db,{
+  DB:db,
+  ATLAS_TEST_DB:'1',
+  ATLAS_TEST_DB_ID:'atlas-ci-isolated',
   PAYMENT_PROVIDER:'MOCK',
   EMAIL_PROVIDER:'MOCK',
   FILE_STORAGE:'LOCAL'
