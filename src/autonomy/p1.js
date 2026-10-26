@@ -1,6 +1,7 @@
 async function ensureP1Schema(db){await db.prepare(`CREATE TABLE IF NOT EXISTS agent_webhooks (webhook_id TEXT PRIMARY KEY,agent_id TEXT NOT NULL,url TEXT NOT NULL,events_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'ACTIVE',created_at TEXT NOT NULL DEFAULT (datetime('now')),updated_at TEXT)`).run();await db.prepare(`CREATE TABLE IF NOT EXISTS agent_tasks (task_id TEXT PRIMARY KEY,source TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'SUBMITTED',input_json TEXT NOT NULL DEFAULT '{}',output_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT (datetime('now')),updated_at TEXT)`).run();await db.prepare('CREATE INDEX IF NOT EXISTS idx_agent_webhooks_agent ON agent_webhooks(agent_id,status)').run();await db.prepare('CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status,created_at)').run();await db.prepare(`CREATE TABLE IF NOT EXISTS customer_events (id INTEGER PRIMARY KEY AUTOINCREMENT,event_type TEXT NOT NULL,entity_id TEXT,payload_json TEXT NOT NULL DEFAULT '{}',status TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT (datetime('now')))` ).run();}
 import { checkBudget, registerCapability } from './registry.js';
 import { sanitizeExternalInput, validateMarketplaceLead, authorizeAction } from './policy.js';
+import { getFileStorage, base64FromBytes } from '../orders/storage.js';
 const clean=v=>sanitizeExternalInput(v).data;
 async function hashTaskAccessToken(token){
   const bytes=new TextEncoder().encode(String(token||''));
@@ -20,6 +21,26 @@ async function taskAccessAllowed(task,token){
   if(actual.length!==expected.length)return false;
   let diff=0;for(let i=0;i<actual.length;i++)diff|=actual.charCodeAt(i)^expected.charCodeAt(i);
   return diff===0;
+}
+export async function verifyA2ATaskCapability(db,taskId,paymentSignature){
+  if(!String(taskId||'')||!String(paymentSignature||''))return false;
+  await ensureP1Schema(db);
+  const task=await db.prepare('SELECT task_id,status,input_json FROM agent_tasks WHERE task_id=?').bind(String(taskId)).first();
+  if(!task||String(task.status)!=='PROCESSING')return false;
+  return taskAccessAllowed(task,await deriveTaskAccessToken(String(taskId),String(paymentSignature)));
+}
+async function buildTaskArtifacts(env,resultData){
+  const artifacts=[{parts:[{kind:'data',data:resultData}]}];
+  const orderId=String(resultData?.order_id||'');
+  if(!orderId||!env?.DB)return artifacts;
+  const storage=getFileStorage(env);
+  for(const [kind,mimeType] of [['clean_csv','text/csv'],['qa_report','text/plain']]){
+    try{
+      const file=await storage.get(env.DB,orderId,kind);
+      if(file?.bytes)artifacts.push({parts:[{kind:'data',data:{file_name:file.file_name,mime_type:mimeType,content_base64:base64FromBytes(file.bytes)}}]});
+    }catch{}
+  }
+  return artifacts;
 }
 export function agentCard(origin){return {name:'ATLAS',description:'Machine-readable CSV/XLSX data QA capability discovery for AI agents. Paid A2A task submissions require x402 payment metadata and delegate to the canonical paid resource; unpaid task submissions are not accepted.',version:'1.0.0',provider:{organization:'ATLAS',url:origin},securitySchemes:{},securityRequirements:[],supportedInterfaces:[{url:origin+'/a2a',protocolBinding:'JSONRPC',protocolVersion:'1.0'}],capabilities:{streaming:false,pushNotifications:false,extensions:[{uri:'https://a2a-registry.org/extensions/registry/v1',description:'A2A Registry identity and payment discovery metadata',required:false,params:{identity:{provider:'github',username:'hosamhosaam5-ops',packageName:'github.hosamhosaam5-ops.atlas'},payment:{model:'paid',protocols:['x402'],direction:'inbound',rails:[{network:'base',token:'USDC',type:'stablecoin',protocol:'x402',caip2:'eip155:8453',contractAddress:'0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'}]}}},{uri:origin+'/extensions/commerce/v1',description:'ATLAS machine-readable commerce lifecycle and payment safety metadata',required:false,params:{manifestUrl:origin+'/commerce.json',x402RequirementsUrl:origin+'/x402/atlas_ai_data_qa_v1',settlement:'BASE_RPC_INBOUND',x402Settlement:'IMPLEMENTED_UNVERIFIED'}}]},skills:[{id:'data_qa',name:'AI Agent Data QA & Transformation',description:'Paid CSV/XLSX data cleaning and quality checks up to 5,000 rows are available through the canonical x402 processing path. A2A message/send requires x402 payment metadata; completion is reported only after the paid pipeline confirms delivery.',tags:['csv','xlsx','data-quality','data-cleaning','data-validation','dataset-transformation','ai-agents','machine-readable'],examples:['Discover the published x402 data-QA resource and its exact payment requirements.','Read the data-QA API contract before submitting a paid dataset.'],inputModes:['application/json'],outputModes:['application/json','text/csv']}],defaultInputModes:['application/json'],defaultOutputModes:['application/json','text/csv'],documentationUrl:origin+'/llms.txt'};}
 export async function createWebhook(db,{agent_id,url,events=['order.completed','order.failed']}={}){await ensureP1Schema(db);if(!agent_id||!/^https:\/\//i.test(String(url||'')))throw new Error('INVALID_WEBHOOK');const s=clean({agent_id,url,events});const id='wh_'+crypto.randomUUID().replaceAll('-','').slice(0,20);await db.prepare('INSERT INTO agent_webhooks(webhook_id,agent_id,url,events_json,status) VALUES(?,?,?,?,?)').bind(id,String(s.agent_id).slice(0,200),String(s.url).slice(0,2048),JSON.stringify(Array.isArray(s.events)?s.events.slice(0,20):[]),'ACTIVE').run();return {ok:true,webhook_id:id,status:'ACTIVE'};}
@@ -53,7 +74,8 @@ export async function handleA2A(request,env){
     if(prior){
       if(!await taskAccessAllowed(prior,suppliedAccessToken))return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32003,message:'Task result access denied. A valid task result access token is required.'}}),{status:403,headers});
       let saved={};try{saved=JSON.parse(prior.output_json||'{}')}catch{}
-      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:prior.task_id,status:{state:String(prior.status).toLowerCase()},...(Object.keys(saved).length?{artifacts:[{parts:[{kind:'data',data:saved}]}]}:{})}}),{headers});
+      const artifacts=Object.keys(saved).length?await buildTaskArtifacts(env,saved):[];
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:prior.task_id,status:{state:String(prior.status).toLowerCase()},...(artifacts.length?{artifacts}:{})}}),{headers});
     }
     const product=await env.DB.prepare("SELECT product_id,status,price_usdc FROM products WHERE product_id=?").bind("atlas_ai_data_qa_v1").first();
     if(!product||String(product.status)!=='ACTIVE'||Number(product.price_usdc)!==15){
@@ -76,7 +98,8 @@ export async function handleA2A(request,env){
       const current=await env.DB.prepare('SELECT task_id,status,input_json,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
       if(!await taskAccessAllowed(current,suppliedAccessToken))return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32003,message:'Task result access denied. A valid task result access token is required.'}}),{status:403,headers});
       let saved={};try{saved=JSON.parse(current.output_json||'{}')}catch{}
-      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:String(current?.status||'processing').toLowerCase()},...(Object.keys(saved).length?{artifacts:[{parts:[{kind:'data',data:saved}]}]}:{})}}),{headers});
+      const artifacts=Object.keys(saved).length?await buildTaskArtifacts(env,saved):[];
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:String(current?.status||'processing').toLowerCase()},...(artifacts.length?{artifacts}:{})}}),{headers});
     }
     let responseBody={};
     let status='FAILED';
@@ -104,7 +127,7 @@ export async function handleA2A(request,env){
       };
       await env.DB.prepare("UPDATE agent_tasks SET status=?,output_json=?,updated_at=datetime('now') WHERE task_id=? AND status='PROCESSING'")
         .bind(status,JSON.stringify(resultData),taskId).run();
-      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:status.toLowerCase()},result_access_token:resultAccessToken,artifacts:[{parts:[{kind:'data',data:resultData}]}]}}),{status:200,headers});
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:status.toLowerCase()},result_access_token:resultAccessToken,artifacts:await buildTaskArtifacts(env,resultData)}}),{status:200,headers});
     }catch(e){
       // A transport timeout can happen after the facilitator settled. Keep the task
       // non-retryable and explicitly require reconciliation; never call x402 again.
@@ -121,7 +144,8 @@ export async function handleA2A(request,env){
     const accessToken=String(msg?.params?.metadata?.atlas_result_access_token||msg?.params?.atlas_result_access_token||'');
     if(!await taskAccessAllowed(t,accessToken))return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32003,message:'Task result access denied. A valid task result access token is required.'}}),{status:403,headers});
     let output={};try{output=JSON.parse(t.output_json||'{}')}catch{}
-    return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:t.task_id,status:{state:String(t.status).toLowerCase()},...(Object.keys(output).length?{artifacts:[{parts:[{kind:'data',data:output}]}]}:{})}}),{headers});
+    const artifacts=Object.keys(output).length?await buildTaskArtifacts(env,output):[];
+    return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:t.task_id,status:{state:String(t.status).toLowerCase()},...(artifacts.length?{artifacts}:{})}}),{headers});
   }
   return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}}),{status:400,headers});
 }
