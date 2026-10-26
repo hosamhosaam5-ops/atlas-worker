@@ -157,8 +157,10 @@ export function evaluatePaymentSafe(receiptResponse, meta, expectedTxHash = null
     if (typeof response.chainId !== 'string' || response.chainId.toLowerCase() !== String(expectedChainId).toLowerCase()) {
       return { ...meta, payment_status: 'WRONG_CHAIN', amount_paid: 0, payment_detail: 'RPC chain id missing or does not match Base Mainnet' };
     }
-    if (!r || typeof r !== 'object' || typeof r.transactionHash !== 'string'
-        || r.transactionHash.toLowerCase() !== String(expectedTxHash).toLowerCase()) {
+    // A null receipt is a normal pending/not-found result, not a malformed receipt.
+    // If a receipt exists, it must identify the exact requested transaction.
+    if (r !== null && r !== undefined && (typeof r !== 'object' || typeof r.transactionHash !== 'string'
+        || r.transactionHash.toLowerCase() !== String(expectedTxHash).toLowerCase())) {
       return { ...meta, payment_status: 'INVALID_RECEIPT', amount_paid: 0, payment_detail: 'receipt transactionHash missing or does not match requested transaction' };
     }
   }
