@@ -126,53 +126,8 @@ jobs:
           curl --fail-with-body --silent --show-error -H "Authorization: Bearer ${A2A_REGISTRY_API_TOKEN}" -H 'Accept: application/json' 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-search.json
           jq -e '.success == true and (.agents | type == "array")' registry-search.json >/dev/null
           grep -Fq "$AGENT_URL" registry-search.json
-      - name: Monitor existing Registry metadata after deployment
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.precheck.outputs.authenticated == 'true'
-        env:
-          AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
-          A2A_REGISTRY_API_TOKEN: ${{ secrets.A2A_REGISTRY_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          BASE='https://atlas-worker.hosamhosaam5.workers.dev'
-          # The deploy workflow is path-filtered. For test-only commits, compare
-          # against the latest commit that can actually change the deployed Worker.
-          expected_sha="$(git log -1 --format=%H -- src wrangler.toml package.json package-lock.json 'schema*.sql' migrations .github/workflows/atlas-worker-deploy.yml)"
-          test -n "$expected_sha"
-          actual_sha=""
-          for attempt in $(seq 1 60); do
-            health_json="$(curl --fail --silent --show-error --max-time 10 "$BASE/health" || true)"
-            actual_sha="$(printf '%s' "$health_json" | jq -r '.git_sha // ""' 2>/dev/null || true)"
-            if [ "$actual_sha" = "$expected_sha" ]; then
-              echo "POST_DEPLOY_SOURCE_SHA=$actual_sha"
-              break
-            fi
-            echo "Waiting for deployed Worker before checking Registry freshness: expected=$expected_sha actual=${actual_sha:-missing} attempt=$attempt"
-            sleep 2
-          done
-          test "$actual_sha" = "$expected_sha"
-          curl --fail-with-body --silent --show-error "$AGENT_URL" -o deployed-agent-card.json
-          curl --fail-with-body --silent --show-error -H "Authorization: Bearer ${A2A_REGISTRY_API_TOKEN}" -H 'Accept: application/json' 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-after-deploy.json
-          jq -e --arg url "$AGENT_URL" 'any(.agents[]; .manifestUrl==$url and .status=="ACTIVE")' registry-after-deploy.json
-          deployed_description="$(jq -r '.description // ""' deployed-agent-card.json)"
-          registry_description="$(jq -r --arg url "$AGENT_URL" '.agents[] | select(.manifestUrl==$url and .status=="ACTIVE") | .source_agent_card | fromjson | .description // ""' registry-after-deploy.json)"
-          deployed_push="$(jq -r '.capabilities.pushNotifications // false' deployed-agent-card.json)"
-          registry_push="$(jq -r --arg url "$AGENT_URL" '.agents[] | select(.manifestUrl==$url and .status=="ACTIVE") | .source_agent_card | fromjson | .capabilities.pushNotifications // false' registry-after-deploy.json)"
-          if [ "$deployed_description" = "$registry_description" ] && [ "$deployed_push" = "$registry_push" ]; then
-            printf 'REGISTRY_METADATA_FRESH=PASS\nsource_sha=%s\nlisting_status=ACTIVE\n' "$actual_sha" | tee registry-freshness.txt
-          else
-            {
-              echo 'REGISTRY_METADATA_FRESH=STALE'
-              echo "source_sha=$actual_sha"
-              echo 'listing_status=ACTIVE'
-              echo "deployed_description=$deployed_description"
-              echo "registry_description=$registry_description"
-              echo "deployed_pushNotifications=$deployed_push"
-              echo "registry_pushNotifications=$registry_push"
-              echo 'action=No new listing submitted; refresh of the existing entry requires Registry-supported owner action or automatic re-indexing.'
-            } | tee registry-freshness.txt
-            echo "::warning::The existing A2A Registry listing is active but its stored card metadata is stale. No new listing was submitted."
-          fi
-
+      # Production freshness is verified by the explicit production-deploy workflow after a deployment.
+      # CI pushes must not wait for production to match main while deployments are intentionally manual.
       - name: Upload registry evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -184,7 +139,8 @@ jobs:
             registry-freshness.txt
           if-no-files-found: warn
   production_a2a_probe:
-    if: github.event_name != 'pull_request'
+    # Live A2A probes are opt-in and never run on routine pushes or PRs.
+    if: github.event_name == 'workflow_dispatch' && vars.ATLAS_RUN_PRODUCTION_A2A_PROBE == 'true' && github.ref == 'refs/heads/main'
     needs: [test, registry_submit]
     runs-on: ubuntu-latest
     timeout-minutes: 10
