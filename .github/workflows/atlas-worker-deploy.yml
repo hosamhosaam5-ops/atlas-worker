@@ -1,16 +1,6 @@
 name: atlas-worker-deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "wrangler.toml"
-      - "package.json"
-      - "package-lock.json"
-      - "schema*.sql"
-      - "migrations/**"
-      - ".github/workflows/atlas-worker-deploy.yml"
   workflow_dispatch:
 
 permissions:
