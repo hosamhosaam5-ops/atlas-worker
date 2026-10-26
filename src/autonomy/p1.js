@@ -87,7 +87,7 @@ export async function handleA2A(request,env){
     const fileBase64=String(atlas?.file_base64||'').trim();
     const paymentSignature=String(atlas?.payment_signature||'').trim();
     if((clientEmail&&!/^\S+@\S+\.\S+$/.test(clientEmail))||(String(env.DELIVERY_PROVIDER||'EMAIL').trim().toUpperCase()!=='A2A'&&!/^\S+@\S+\.\S+$/.test(clientEmail))||!fileName||!/^.+\.(csv|xlsx)$/i.test(fileName)||!fileBase64||fileBase64.length>1900000||!paymentSignature){
-      return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Paid data-QA tasks require metadata.atlas_x402 with client_email, file_name (.csv/.xlsx), file_base64, and payment_signature. Payment is validated only by the canonical x402 resource.'}}),{status:400,headers});
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Paid data-QA tasks require metadata.atlas_x402 with file_name (.csv/.xlsx), file_base64, and payment_signature; client_email is required only when DELIVERY_PROVIDER is EMAIL. Payment is validated only by the canonical x402 resource.'}}),{status:400,headers});
     }
     const resultAccessToken=await deriveTaskAccessToken(taskId,paymentSignature);
     if(!resultAccessToken)return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'A valid payment capability is required.'}}),{status:400,headers});
