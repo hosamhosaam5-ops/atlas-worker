@@ -11,6 +11,14 @@ export function getPaidOfferReadinessError(env) {
   if (storageProvider === "LOCAL" && !env?.DB) return "PAID_STORAGE_PROVIDER_NOT_READY";
   if (storageProvider === "R2" && !env?.R2) return "PAID_STORAGE_PROVIDER_NOT_READY";
 
+  const deliveryProvider = String(env?.DELIVERY_PROVIDER || "EMAIL").trim().toUpperCase();
+  if (deliveryProvider === "A2A") {
+    // API/A2A delivery is valid only with the already-verified D1 storage binding above.
+    // The request route independently requires a claimed task + matching payment proof.
+    return null;
+  }
+  if (deliveryProvider !== "EMAIL") return "PAID_DELIVERY_PROVIDER_NOT_LIVE";
+
   const emailProvider = String(env?.EMAIL_PROVIDER || "MOCK");
   if (emailProvider !== "RESEND") return "PAID_DELIVERY_PROVIDER_NOT_LIVE";
 
