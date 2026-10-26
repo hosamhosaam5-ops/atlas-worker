@@ -108,6 +108,18 @@ await (async function () {
   T('payment.invalid_receipt -> INVALID_RECEIPT', inv.payment_status === 'INVALID_RECEIPT');
   const over = evaluatePayment(await fetchReceipt(env('valid_overpay'), VALID_TX), meta);
   T('payment.overpay amount recorded 1.5', over.amount_paid === 1.5);
+
+  // Defense-in-depth: production intake supplies the requested tx hash and expected Base chain.
+  const verified = evaluatePaymentSafe(await fetchReceipt(env('valid'), VALID_TX), meta, VALID_TX, '0x2105');
+  T('payment.receipt hash + Base chain verified -> PAID', verified.payment_status === 'PAID');
+  const wrongHash = evaluatePaymentSafe(await fetchReceipt(env('wrong_tx_hash'), VALID_TX), meta, VALID_TX, '0x2105');
+  T('payment.receipt transactionHash mismatch rejected', wrongHash.payment_status === 'INVALID_RECEIPT');
+  const wrongChain = evaluatePaymentSafe(await fetchReceipt(env('wrong_chain'), VALID_TX), meta, VALID_TX, '0x2105');
+  T('payment.wrong RPC chain rejected', wrongChain.payment_status === 'WRONG_CHAIN');
+  const missingHash = evaluatePaymentSafe({ chainId: '0x2105', result: { status: '0x1', logs: [] } }, meta, VALID_TX, '0x2105');
+  T('payment.missing receipt transactionHash rejected', missingHash.payment_status === 'INVALID_RECEIPT');
+  const missingChain = evaluatePaymentSafe({ result: { transactionHash: VALID_TX, status: '0x1', logs: [] } }, meta, VALID_TX, '0x2105');
+  T('payment.missing RPC chain identity rejected', missingChain.payment_status === 'WRONG_CHAIN');
 })();
 
 // ================= UNIT: CSV extraction + Clean & QA =================
