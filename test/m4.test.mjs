@@ -112,6 +112,8 @@ await (async function () {
   // Defense-in-depth: production intake supplies the requested tx hash and expected Base chain.
   const verified = evaluatePaymentSafe(await fetchReceipt(env('valid'), VALID_TX), meta, VALID_TX, '0x2105');
   T('payment.receipt hash + Base chain verified -> PAID', verified.payment_status === 'PAID');
+  const pending = evaluatePaymentSafe(await fetchReceipt(env('not_found'), VALID_TX), meta, VALID_TX, '0x2105');
+  T('payment.pending receipt remains NOT_FOUND', pending.payment_status === 'NOT_FOUND');
   const wrongHash = evaluatePaymentSafe(await fetchReceipt(env('wrong_tx_hash'), VALID_TX), meta, VALID_TX, '0x2105');
   T('payment.receipt transactionHash mismatch rejected', wrongHash.payment_status === 'INVALID_RECEIPT');
   const wrongChain = evaluatePaymentSafe(await fetchReceipt(env('wrong_chain'), VALID_TX), meta, VALID_TX, '0x2105');
