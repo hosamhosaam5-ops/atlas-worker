@@ -40,6 +40,8 @@ const MOCK_SCENARIOS = {
   wrong_contract: () => ({ result: mockReceipt({ contract: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359' }) }),
   wrong_recipient: () => ({ result: mockReceipt({ to: '0x000000000000000000000000000000000000dEaD' }) }),
   invalid_receipt: () => ({ result: 'this is not a receipt object' }),
+  wrong_tx_hash: () => ({ result: { ...mockReceipt(), transactionHash: '0x' + 'cd'.repeat(32) } }),
+  wrong_chain: () => ({ result: mockReceipt() }),
   rpc_error: () => ({ error: { message: 'rate limit exceeded' } }),
   uppercase: () => ({
     result: {
@@ -61,16 +63,32 @@ export async function fetchReceipt(env, txHash) {
     const scenario = env.PAYMENT_MOCK_SCENARIO || 'valid';
     const fn = MOCK_SCENARIOS[scenario];
     if (!fn) throw new Error('unknown PAYMENT_MOCK_SCENARIO: ' + scenario);
-    return fn(env);
+    const fixture = fn(env);
+    if (fixture.result && typeof fixture.result === 'object' && !Array.isArray(fixture.result)) {
+      fixture.result = { ...fixture.result, transactionHash: fixture.result.transactionHash || txHash };
+    }
+    return { ...fixture, chainId: scenario === 'wrong_chain' ? '0x14a34' : '0x2105' };
   }
   if (provider === 'BASE_RPC') {
     // Production path (not used in M4; no real RPC calls locally).
-    const res = await fetch(env.BASE_RPC_URL || 'https://mainnet.base.org', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getTransactionReceipt', params: [txHash] }),
+    const rpcUrl = env.BASE_RPC_URL || BASE_RPC_URL_DEFAULT;
+    const chainRes = await fetch(rpcUrl, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
     });
-    return await res.json();
+    const chainJson = await chainRes.json();
+    if (!chainRes.ok || chainJson.error || typeof chainJson.result !== 'string') {
+      return { error: { message: 'CHAIN_ID_UNVERIFIED' } };
+    }
+    if (chainJson.result.toLowerCase() !== '0x2105') {
+      return { error: { message: 'WRONG_CHAIN_ID' }, chainId: chainJson.result };
+    }
+    const res = await fetch(rpcUrl, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'eth_getTransactionReceipt', params: [txHash] }),
+    });
+    const receiptJson = await res.json();
+    return { ...receiptJson, chainId: chainJson.result };
   }
   throw new Error('unknown PAYMENT_PROVIDER: ' + provider);
 }
@@ -129,10 +147,23 @@ export function evaluatePayment(receiptResponse, meta) {
 
 // INVALID_RECEIPT taxonomy: receipt exists but is not an object with a hex status.
 // The n8n code would throw inside the Code node; here we classify honestly.
-export function evaluatePaymentSafe(receiptResponse, meta) {
-  const r = receiptResponse && receiptResponse.result;
+export function evaluatePaymentSafe(receiptResponse, meta, expectedTxHash = null, expectedChainId = '0x2105') {
+  const response = receiptResponse || {};
+  const r = response.result;
+  if (response.error && String(response.error.message || response.error).includes('WRONG_CHAIN_ID')) {
+    return { ...meta, payment_status: 'WRONG_CHAIN', amount_paid: 0, payment_detail: 'RPC chain id is not Base Mainnet' };
+  }
+  if (expectedTxHash) {
+    if (typeof response.chainId !== 'string' || response.chainId.toLowerCase() !== String(expectedChainId).toLowerCase()) {
+      return { ...meta, payment_status: 'WRONG_CHAIN', amount_paid: 0, payment_detail: 'RPC chain id missing or does not match Base Mainnet' };
+    }
+    if (!r || typeof r !== 'object' || typeof r.transactionHash !== 'string'
+        || r.transactionHash.toLowerCase() !== String(expectedTxHash).toLowerCase()) {
+      return { ...meta, payment_status: 'INVALID_RECEIPT', amount_paid: 0, payment_detail: 'receipt transactionHash missing or does not match requested transaction' };
+    }
+  }
   if (r && (typeof r !== 'object' || typeof r.status !== 'string' || !r.status.startsWith('0x'))) {
     return { ...meta, payment_status: 'INVALID_RECEIPT', amount_paid: 0, payment_detail: 'receipt shape invalid' };
   }
-  return evaluatePayment(receiptResponse, meta);
+  return evaluatePayment(response, meta);
 }
