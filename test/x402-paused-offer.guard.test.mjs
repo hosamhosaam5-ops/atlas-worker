@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { getPaidOfferReadinessError } from '../src/core/paidOfferReadiness.js';
 
 const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 
@@ -54,4 +55,32 @@ test('payment verification and nonce reservation occur after fail-closed product
   assert.ok(requirements > productGate, 'payment requirements must follow product gate');
   assert.ok(nonceReservation > requirements, 'nonce reservation must follow product gate');
   assert.ok(facilitatorVerify > nonceReservation, 'facilitator verification must follow nonce reservation');
+});
+
+
+test('paid readiness accepts D1-backed A2A delivery without email and rejects unverified public email delivery', () => {
+  const base = {
+    PAYMENT_PROVIDER: 'BASE_RPC',
+    ATLAS_WALLET_ADDRESS: '0x1111111111111111111111111111111111111111',
+    FILE_STORAGE: 'LOCAL',
+    DB: {},
+    EMAIL_PROVIDER: 'MOCK',
+  };
+  assert.equal(getPaidOfferReadinessError({ ...base, DELIVERY_PROVIDER: 'A2A' }), null);
+  assert.equal(getPaidOfferReadinessError({ ...base, DELIVERY_PROVIDER: 'EMAIL' }), 'PAID_DELIVERY_PROVIDER_NOT_LIVE');
+  assert.equal(getPaidOfferReadinessError({ ...base, DELIVERY_PROVIDER: 'A2A', DB: undefined }), 'PAID_STORAGE_PROVIDER_NOT_READY');
+});
+
+test('A2A delivery mode requires a claimed task and matching payment proof before x402 POST', () => {
+  const route = between(
+    'if ((request.method === "GET" || request.method === "POST") && pathname === "/x402/atlas_ai_data_qa_v1")',
+    'if (request.method === "GET" && pathname === "/.well-known/oauth-authorization-server")'
+  );
+  const contextGate = route.indexOf('A2A_TASK_CONTEXT_REQUIRED');
+  const readinessGate = route.indexOf('getPaidOfferReadinessError');
+  const nonceReservation = route.indexOf('const nonceKey = "x402_nonce|"');
+  assert.ok(contextGate >= 0, 'A2A context gate must exist');
+  assert.ok(readinessGate > contextGate, 'A2A context gate must run before paid readiness/payment flow');
+  assert.ok(nonceReservation > contextGate, 'A2A context gate must run before nonce reservation');
+  assert.match(route, /verifyA2ATaskCapability\(env\.DB, a2aTaskId, signatureForTask\)/);
 });

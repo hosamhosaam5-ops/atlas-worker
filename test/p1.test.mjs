@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+const sha256 = (value) => createHash('sha256').update(String(value)).digest('hex');
 import { agentCard, x402Requirements, handleA2A } from '../src/autonomy/p1.js';
 
 test('A2A agent card exposes bounded ATLAS capability',()=>{const c=agentCard('https://atlas.example');assert.equal(c.name,'ATLAS');assert.equal(c.provider.organization,'ATLAS');assert.equal(c.provider.url,'https://atlas.example');assert.match(c.description,/CSV\/XLSX data QA capability/i);const dataSkill=c.skills.find(s=>s.id==='data_qa');assert.ok(dataSkill.tags.includes('data-cleaning'));assert.ok(dataSkill.tags.includes('data-validation'));assert.ok(dataSkill.examples.length>=2);assert.deepEqual(c.securitySchemes,{});assert.deepEqual(c.securityRequirements,[]);assert.equal(c.capabilities.pushNotifications,false);assert.ok(c.skills.some(s=>s.id==='data_qa'));assert.equal(c.supportedInterfaces[0].url,'https://atlas.example/a2a');assert.equal(c.supportedInterfaces[0].protocolBinding,'JSONRPC');assert.equal(c.supportedInterfaces[0].protocolVersion,'1.0');const ext=c.capabilities.extensions.find(e=>e.uri==='https://a2a-registry.org/extensions/registry/v1');assert.ok(ext);assert.equal(ext.required,false);assert.equal(ext.params.identity.provider,'github');assert.equal(ext.params.identity.username,'hosamhosaam5-ops');assert.equal(ext.params.identity.packageName,'github.hosamhosaam5-ops.atlas');const commerce=c.capabilities.extensions.find(e=>e.uri==='https://atlas.example/extensions/commerce/v1');assert.ok(commerce);assert.equal(commerce.params.x402Settlement,'IMPLEMENTED_UNVERIFIED');});
@@ -48,11 +50,13 @@ test('A2A message/send fails closed while offer is paused and creates no task',a
 test('A2A replays a saved task result while offer is paused without payment delegation',async()=>{
   const db=new FakeA2ADB(false);
   const id='a2a-saved-result-paused';
-  db.tasks.set(id,{task_id:id,source:'a2a',status:'COMPLETED',input_json:'{}',output_json:JSON.stringify({order_id:'saved-order-1',order_status:'DELIVERED',payment_status:'PAID',rows_in:2,rows_out:2,qa_report:'PASS'})});
+  const paymentSignature='opaque-original-payment-proof';
+  const accessToken=sha256(id+':'+paymentSignature);
+  db.tasks.set(id,{task_id:id,source:'a2a',status:'COMPLETED',input_json:JSON.stringify({result_access_token_hash:sha256(accessToken)}),output_json:JSON.stringify({order_id:'saved-order-1',order_status:'DELIVERED',payment_status:'PAID',rows_in:2,rows_out:2,qa_report:'PASS'})});
   const originalFetch=globalThis.fetch; let delegated=0;
   globalThis.fetch=async()=>{delegated++;throw new Error('must not call x402 for a replay');};
   try {
-    const response=await handleA2A(new Request('https://atlas.example/a2a',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'rpc-replay-paused',method:'message/send',params:{message:{messageId:id,role:'user',parts:[{kind:'text',text:'Replay existing result'}]}}})}),{DB:db});
+    const response=await handleA2A(new Request('https://atlas.example/a2a',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'rpc-replay-paused',method:'message/send',params:{message:{messageId:id,role:'user',parts:[{kind:'text',text:'Replay existing result'}],metadata:{atlas_x402:{payment_signature:paymentSignature}}}}})}),{DB:db});
     assert.equal(response.status,200);
     const body=await response.json();
     assert.equal(body.result.id,id);
@@ -81,7 +85,7 @@ test('A2A paid task delegates once to canonical x402 and persists result for ret
     const second=await handleA2A(request(),{DB:db}); assert.equal(second.status,200);
     const again=(await second.json()).result; assert.equal(again.status.state,'completed'); assert.equal(again.artifacts[0].parts[0].data.order_id,'X402-test');
     assert.equal(delegated,1); assert.equal(db.inserts,1);
-    const get=await handleA2A(new Request('https://atlas.example/a2a',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'get-1',method:'tasks/get',params:{id}})}),{DB:db});
+    const get=await handleA2A(new Request('https://atlas.example/a2a',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'get-1',method:'tasks/get',params:{id,metadata:{atlas_result_access_token:result.result_access_token}}})}),{DB:db});
     assert.equal((await get.json()).result.artifacts[0].parts[0].data.order_status,'DELIVERED');
   } finally {globalThis.fetch=originalFetch;}
 });
@@ -108,7 +112,7 @@ test('A2A tasks/get returns not-found for an absent task',async()=>{
   assert.equal(body.id,'task-get-missing');
   assert.equal(body.error.code,-32004);
   assert.match(body.error.message,/Task not found/i);
-  assert.ok(statements.some(sql=>sql.includes('SELECT task_id,status,output_json FROM agent_tasks')));
+  assert.ok(statements.some(sql=>sql.includes('SELECT task_id,status,input_json,output_json FROM agent_tasks')));
 });
 
 test('x402 requirements are exact Base USDC payment requirements',()=>{const r=x402Requirements('https://atlas.example',{price_usdc:15,wallet:'0x1111111111111111111111111111111111111111',asset:'0x2222222222222222222222222222222222222222'});assert.equal(r.x402Version,2);assert.equal(r.accepts[0].scheme,'exact');assert.equal(r.accepts[0].network,'eip155:8453');assert.equal(r.accepts[0].amount,'15000000');});

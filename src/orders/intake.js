@@ -38,7 +38,7 @@ export function prepareOrderMeta(first, hasFile, env = {}) {
   const txHash = String(first.tx_hash || (testMode ? '0x' + '1'.repeat(64) : '')).trim();
   // Price NEVER comes from the client. A form field named expected_amount is deliberately ignored.
   const missing = [];
-  if (!email && !testMode) missing.push('client_email');
+  if (!email && !testMode && String(first.__delivery_mode || '').trim().toUpperCase() !== 'A2A') missing.push('client_email');
   if (!/^0x[0-9a-fA-F]{64}$/.test(txHash) && !testMode) missing.push('tx_hash');
   if (fileKeys.length === 0) missing.push('file_upload');
   const fname = first.__file_name || '';
@@ -303,6 +303,7 @@ export async function processOrder(db, env, input) {
     tx_hash: input.tx_hash,
     __file_name: input.__file_name,
     __test_mode: input.__test_mode === true,
+    __delivery_mode: input.__delivery_mode,
   }, hasFile, env);
   if (input.__order_id) meta.order_id = String(input.__order_id); // stable id for idempotency tests
   const requestedSettlementMode = String(input.__settlement_mode || '').trim().toUpperCase();
@@ -527,16 +528,19 @@ export async function processOrder(db, env, input) {
   // --- Delivery (outbox, idempotent) ---
   const subject = `ATLAS order ${meta.order_id} — cleaned data + QA report`;
   const text = `Order ${meta.order_id} complete.\n\nQA: ${qa.qa_report}\n\nAttached: cleaned CSV and QA report.`;
-  const dlv = await deliverOrder(db, env, meta.order_id, meta.client_email, subject, text, ['clean_csv', 'qa_report']);
+  const a2aDelivery = String(input.__delivery_mode || '').trim().toUpperCase() === 'A2A';
+  const dlv = a2aDelivery
+    ? { delivery_status: 'AVAILABLE', delivery_error: null, duplicate: false, attempts: 0 }
+    : await deliverOrder(db, env, meta.order_id, meta.client_email, subject, text, ['clean_csv', 'qa_report']);
 
   // --- Final ledger (ports Log Delivered / Respond Final) ---
-  const finalStatus = dlv.delivery_status === 'SENT' ? 'DELIVERED' : 'DELIVERY_FAILED';
+  const finalStatus = dlv.delivery_status === 'SENT' || (a2aDelivery && dlv.delivery_status === 'AVAILABLE') ? 'DELIVERED' : 'DELIVERY_FAILED';
   const finalRow = {
     status: finalStatus, qa_status: 'PASS', qa_report: qa.qa_report,
     payment_status: qa.payment_status, amount_paid: qa.amount_paid,
     price_source: qa.price_source, expected_amount: qa.expected_amount, quote_ref: qa.quote_ref, product_id: priceMeta.product_id,
     file_name: meta.file_name, file_ext: meta.file_ext, rows_in: qa.rows_in, rows_out: qa.rows_out,
-    delivery_channel: 'email', delivery_status: dlv.delivery_status,
+    delivery_channel: a2aDelivery ? 'a2a' : 'email', delivery_status: dlv.delivery_status,
     settlement_mode: settlementMode, chain_id: chainId,
     last_error: dlv.delivery_error || null,
   };
@@ -560,6 +564,6 @@ export async function processOrder(db, env, input) {
     rows_in: qa.rows_in, rows_out: qa.rows_out,
     payment_status: qa.payment_status, amount_paid: qa.amount_paid,
     reputation,
-    message: 'Order processed. Delivery by email.', audit: a, latency_ms: Date.now() - t0,
+    message: a2aDelivery ? 'Order processed. Results are available through authenticated A2A task retrieval.' : 'Order processed. Delivery by email.', audit: a, latency_ms: Date.now() - t0,
   };
 }

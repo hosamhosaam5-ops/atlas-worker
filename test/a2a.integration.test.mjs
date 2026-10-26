@@ -54,18 +54,21 @@ async function initializeTestDb(filename) {
   return db;
 }
 
-function messageRequest(method, rpcId, messageId = taskId) {
+function messageRequest(method, rpcId, messageId = taskId, accessToken = '', paymentSignature = 'TEST_ONLY_MOCK_SETTLEMENT_NOT_A_REAL_SIGNATURE') {
   const params = method === 'tasks/get'
-    ? { id: messageId }
+    ? { id: messageId, ...(accessToken ? { metadata: { atlas_result_access_token: accessToken } } : {}) }
     : { message: {
         messageId, role: 'user',
         parts: [{ kind: 'text', text: 'Process the attached synthetic CSV and return the QA result.' }],
-        metadata: { atlas_x402: {
-          client_email: 'synthetic-agent@example.test',
-          file_name: 'synthetic-quality-fixture.csv',
-          file_base64: base64,
-          payment_signature: 'TEST_ONLY_MOCK_SETTLEMENT_NOT_A_REAL_SIGNATURE',
-        } },
+        metadata: {
+          atlas_x402: {
+            client_email: '',
+            file_name: 'synthetic-quality-fixture.csv',
+            file_base64: base64,
+            payment_signature: paymentSignature,
+          },
+          ...(accessToken ? { atlas_result_access_token: accessToken } : {}),
+        },
       } };
   return new Request('https://atlas.test/a2a', {
     method: 'POST',
@@ -85,6 +88,7 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     PAYMENT_MOCK_AMOUNT_USDC: '15',
     ATLAS_WALLET_ADDRESS: wallet,
     EMAIL_PROVIDER: 'MOCK',
+    DELIVERY_PROVIDER: 'A2A',
     FILE_STORAGE: 'LOCAL',
   };
   const originalFetch = globalThis.fetch;
@@ -104,7 +108,7 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     assert.equal(init.method, 'POST');
     assert.equal(init.headers['PAYMENT-SIGNATURE'], 'TEST_ONLY_MOCK_SETTLEMENT_NOT_A_REAL_SIGNATURE');
     const input = JSON.parse(init.body);
-    assert.equal(input.client_email, 'synthetic-agent@example.test');
+    assert.equal(input.client_email, undefined, 'A2A delivery must not require or fabricate a customer email');
     assert.equal(input.file_name, 'synthetic-quality-fixture.csv');
     assert.equal(input.file_base64, base64);
 
@@ -113,7 +117,8 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     // adapter all run for real against this isolated temporary database.
     actualPipelineCalls++;
     const order = await processOrder(db, env, {
-      client_email: input.client_email,
+      client_email: input.client_email || '',
+      __delivery_mode: 'A2A',
       tx_hash: txHash,
       __file_name: input.file_name,
       __file_bytes: Uint8Array.from(Buffer.from(input.file_base64, 'base64')),
@@ -143,8 +148,18 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     const firstBody = await firstResponse.json();
     assert.equal(firstBody.result.id, taskId);
     assert.equal(firstBody.result.status.state, 'completed');
+    const accessToken = firstBody.result.result_access_token;
+    assert.equal(typeof accessToken, 'string');
+    assert.ok(accessToken.length >= 64, 'task-scoped result capability must be returned');
     const firstResult = firstBody.result.artifacts[0].parts[0].data;
     assert.equal(firstResult.order_id, orderId);
+    const savedTaskInput = await db.prepare('SELECT input_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
+    assert.ok(savedTaskInput, 'task input metadata must persist');
+    assert.equal(JSON.parse(savedTaskInput.input_json).result_access_token_hash.length, 64);
+    assert.equal(JSON.parse(savedTaskInput.input_json).result_access_token_hash.includes(accessToken), false,
+      'raw result access token must never be persisted');
+    const deniedGet = await handleA2A(messageRequest('tasks/get', 'rpc-unauthorized'), env);
+    assert.equal(deniedGet.status, 403, 'task result must not be readable by task ID alone');
     assert.equal(firstResult.order_status, 'DELIVERED');
     assert.equal(firstResult.payment_status, 'PAID');
     assert.equal(firstResult.rows_in, 3);
@@ -154,12 +169,14 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     assert.equal(actualPipelineCalls, 1);
 
     const ledger = await db.prepare(
-      'SELECT order_id,status,payment_status,settlement_mode,rows_in,rows_out,qa_report FROM order_ledger WHERE order_id=?'
+      'SELECT order_id,status,payment_status,settlement_mode,delivery_channel,delivery_status,rows_in,rows_out,qa_report FROM order_ledger WHERE order_id=?'
     ).bind(orderId).first();
     assert.ok(ledger, 'real order ledger row must exist');
     assert.equal(ledger.status, 'DELIVERED');
     assert.equal(ledger.payment_status, 'PAID');
     assert.equal(ledger.settlement_mode, 'MOCK');
+    assert.equal(ledger.delivery_channel, 'a2a');
+    assert.equal(ledger.delivery_status, 'AVAILABLE');
     assert.equal(ledger.rows_in, 3);
     assert.equal(ledger.rows_out, 2);
     assert.match(ledger.qa_report, /duplicates_removed=1/);
@@ -184,6 +201,8 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     db = makeD1(filename);
     env.DB = db;
 
+    const invalidReplay = await handleA2A(messageRequest('message/send', 'rpc-invalid-replay', taskId, '', 'wrong-payment-capability'), env);
+    assert.equal(invalidReplay.status, 403, 'a different payment proof must not recover another caller task result');
     const replayResponse = await handleA2A(messageRequest('message/send', 'rpc-replay'), env);
     assert.equal(replayResponse.status, 200);
     const replayBody = await replayResponse.json();
@@ -193,11 +212,16 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     assert.equal(delegatedCalls, 1, 'duplicate request must not re-enter mocked x402');
     assert.equal(actualPipelineCalls, 1, 'duplicate request must not process or settle twice');
 
-    const getResponse = await handleA2A(messageRequest('tasks/get', 'rpc-get'), env);
+    const getResponse = await handleA2A(messageRequest('tasks/get', 'rpc-get', taskId, accessToken), env);
     assert.equal(getResponse.status, 200);
     const getBody = await getResponse.json();
     assert.equal(getBody.result.status.state, 'completed');
     assert.deepEqual(getBody.result.artifacts[0].parts[0].data, firstResult);
+    const cleanArtifact = getBody.result.artifacts.find(a => a.parts?.[0]?.data?.file_name?.startsWith('clean_'));
+    assert.ok(cleanArtifact, 'authenticated tasks/get must return the stored clean CSV');
+    assert.equal(Buffer.from(cleanArtifact.parts[0].data.content_base64, 'base64').toString('utf8'), 'name,score\nAlice,10\nBob,20');
+    const reportArtifact = getBody.result.artifacts.find(a => a.parts?.[0]?.data?.file_name?.startsWith('qa_'));
+    assert.ok(reportArtifact, 'authenticated tasks/get must return the stored QA report');
 
     const counts = await db.prepare(
       'SELECT (SELECT COUNT(*) FROM agent_tasks WHERE task_id=?) AS tasks, (SELECT COUNT(*) FROM order_ledger WHERE order_id=?) AS orders'

@@ -133,7 +133,7 @@ test('route.dev-endpoints: explicit local mode enables diagnostics; a single X40
 
   // Separate local Worker deliberately lacks DEV_MODE. X402_TEST_MODE alone must not
   // bootstrap a synthetic ACTIVE product or bypass the live-delivery readiness gate.
-  const proc2 = spawn('npx', ['wrangler', 'dev', '--local', '--port', '8798', '--persist-to', path.join(ROOT, '.wrangler-m6a'), '--var', 'X402_TEST_MODE:1'], { cwd: ROOT, stdio: 'ignore', detached: true });
+  const proc2 = spawn('npx', ['wrangler', 'dev', '--local', '--port', '8798', '--persist-to', path.join(ROOT, '.wrangler-m6a'), '--var', 'X402_TEST_MODE:1', '--var', 'DELIVERY_PROVIDER:EMAIL'], { cwd: ROOT, stdio: 'ignore', detached: true });
   proc2.unref();
   try {
     let up = false;
