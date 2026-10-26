@@ -54,18 +54,21 @@ async function initializeTestDb(filename) {
   return db;
 }
 
-function messageRequest(method, rpcId, messageId = taskId) {
+function messageRequest(method, rpcId, messageId = taskId, accessToken = '') {
   const params = method === 'tasks/get'
-    ? { id: messageId }
+    ? { id: messageId, ...(accessToken ? { metadata: { atlas_result_access_token: accessToken } } : {}) }
     : { message: {
         messageId, role: 'user',
         parts: [{ kind: 'text', text: 'Process the attached synthetic CSV and return the QA result.' }],
-        metadata: { atlas_x402: {
-          client_email: 'synthetic-agent@example.test',
-          file_name: 'synthetic-quality-fixture.csv',
-          file_base64: base64,
-          payment_signature: 'TEST_ONLY_MOCK_SETTLEMENT_NOT_A_REAL_SIGNATURE',
-        } },
+        metadata: {
+          atlas_x402: {
+            client_email: 'synthetic-agent@example.test',
+            file_name: 'synthetic-quality-fixture.csv',
+            file_base64: base64,
+            payment_signature: 'TEST_ONLY_MOCK_SETTLEMENT_NOT_A_REAL_SIGNATURE',
+          },
+          ...(accessToken ? { atlas_result_access_token: accessToken } : {}),
+        },
       } };
   return new Request('https://atlas.test/a2a', {
     method: 'POST',
@@ -143,8 +146,18 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     const firstBody = await firstResponse.json();
     assert.equal(firstBody.result.id, taskId);
     assert.equal(firstBody.result.status.state, 'completed');
+    const accessToken = firstBody.result.result_access_token;
+    assert.equal(typeof accessToken, 'string');
+    assert.ok(accessToken.length >= 64, 'task-scoped result capability must be returned');
     const firstResult = firstBody.result.artifacts[0].parts[0].data;
     assert.equal(firstResult.order_id, orderId);
+    const savedTaskInput = await db.prepare('SELECT input_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
+    assert.ok(savedTaskInput, 'task input metadata must persist');
+    assert.equal(JSON.parse(savedTaskInput.input_json).result_access_token_hash.length, 64);
+    assert.equal(JSON.parse(savedTaskInput.input_json).result_access_token_hash.includes(accessToken), false,
+      'raw result access token must never be persisted');
+    const deniedGet = await handleA2A(messageRequest('tasks/get', 'rpc-unauthorized'));
+    assert.equal(deniedGet.status, 403, 'task result must not be readable by task ID alone');
     assert.equal(firstResult.order_status, 'DELIVERED');
     assert.equal(firstResult.payment_status, 'PAID');
     assert.equal(firstResult.rows_in, 3);
