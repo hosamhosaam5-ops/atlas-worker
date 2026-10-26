@@ -1,4 +1,4 @@
-name: ATLAS live paused Agent Card contract audit
+name: ATLAS live active Agent Card contract audit
 
 on:
   pull_request:
@@ -12,28 +12,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Check live discovery card matches paused-offer contract
+      - name: Check live discovery card matches founder-approved active-offer contract
         shell: bash
         run: |
           set -euo pipefail
-          URL="https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json"
+          ORIGIN="https://atlas-worker.hosamhosaam5.workers.dev"
+          URL="$ORIGIN/.well-known/agent-card.json"
           code="$(curl --silent --show-error --max-time 20 -o agent-card.json -w '%{http_code}' "$URL")"
           echo "AGENT_CARD_HTTP_STATUS=$code"
           test "$code" = "200"
-          jq -e '
+          jq -e --arg origin "$ORIGIN" '
             .name == "ATLAS" and
             .version == "1.0.0" and
             .provider.organization == "ATLAS" and
-            .supportedInterfaces[0].url == "https://atlas-worker.hosamhosaam5.workers.dev/a2a" and
+            .supportedInterfaces[0].url == ($origin + "/a2a") and
             .supportedInterfaces[0].protocolBinding == "JSONRPC" and
             .supportedInterfaces[0].protocolVersion == "1.0" and
             .securitySchemes == {} and
             .securityRequirements == [] and
-            .skills == [] and
+            any(.skills[]?; .id == "data_qa") and
             .capabilities.streaming == false and
             .capabilities.pushNotifications == false and
-            .capabilities.extensions == [] and
-            .documentationUrl == "https://atlas-worker.hosamhosaam5.workers.dev/llms.txt"
+            any(.capabilities.extensions[]?; .uri == "https://a2a-registry.org/extensions/registry/v1") and
+            any(.capabilities.extensions[]?; .uri == ($origin + "/extensions/commerce/v1")) and
+            .documentationUrl == ($origin + "/llms.txt")
           ' agent-card.json >/dev/null
-          echo "PASS: live Agent Card preserves A2A transport metadata and suppresses skills/extensions while the paid offer is paused."
-          echo "NOTE: this verifies public discovery metadata only; it does not verify paid execution or payment settlement."
+          echo "PASS: live Agent Card preserves A2A transport metadata and advertises the founder-approved active data-QA offer and commerce discovery extensions."
+          echo "NOTE: this verifies public discovery metadata only; it does not verify customer activity, paid execution, payment settlement, or revenue."
