@@ -17,6 +17,11 @@ function tx(seed) {
 }
 
 export async function runCommercialIntegration(db, env, options={}) {
+  // Fail closed by default: this harness writes synthetic orders into its DB binding.
+  // Only a separately provisioned CI D1 may opt in; production bridge calls lack these markers.
+  if (env?.ATLAS_TEST_DB !== '1' || env?.ATLAS_TEST_DB_ID !== 'atlas-ci-isolated' || env?.DB !== db) {
+    throw new Error('HARNESS_REQUIRES_ISOLATED_TEST_D1');
+  }
   await ensureCommercialSchema(db);
   await ensureOrderSchema(db);
   const suffix=Date.now().toString(16);
