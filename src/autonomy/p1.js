@@ -2,6 +2,21 @@ async function ensureP1Schema(db){await db.prepare(`CREATE TABLE IF NOT EXISTS a
 import { checkBudget, registerCapability } from './registry.js';
 import { sanitizeExternalInput, validateMarketplaceLead, authorizeAction } from './policy.js';
 const clean=v=>sanitizeExternalInput(v).data;
+async function hashTaskAccessToken(token){
+  const bytes=new TextEncoder().encode(String(token||''));
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function taskAccessAllowed(task,token){
+  if(!task||!String(token||''))return false;
+  let input={};try{input=JSON.parse(task.input_json||'{}')}catch{return false}
+  const expected=String(input.result_access_token_hash||'');
+  if(!expected)return false;
+  const actual=await hashTaskAccessToken(token);
+  if(actual.length!==expected.length)return false;
+  let diff=0;for(let i=0;i<actual.length;i++)diff|=actual.charCodeAt(i)^expected.charCodeAt(i);
+  return diff===0;
+}
 export function agentCard(origin){return {name:'ATLAS',description:'Machine-readable CSV/XLSX data QA capability discovery for AI agents. Paid A2A task submissions require x402 payment metadata and delegate to the canonical paid resource; unpaid task submissions are not accepted.',version:'1.0.0',provider:{organization:'ATLAS',url:origin},securitySchemes:{},securityRequirements:[],supportedInterfaces:[{url:origin+'/a2a',protocolBinding:'JSONRPC',protocolVersion:'1.0'}],capabilities:{streaming:false,pushNotifications:false,extensions:[{uri:'https://a2a-registry.org/extensions/registry/v1',description:'A2A Registry identity and payment discovery metadata',required:false,params:{identity:{provider:'github',username:'hosamhosaam5-ops',packageName:'github.hosamhosaam5-ops.atlas'},payment:{model:'paid',protocols:['x402'],direction:'inbound',rails:[{network:'base',token:'USDC',type:'stablecoin',protocol:'x402',caip2:'eip155:8453',contractAddress:'0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'}]}}},{uri:origin+'/extensions/commerce/v1',description:'ATLAS machine-readable commerce lifecycle and payment safety metadata',required:false,params:{manifestUrl:origin+'/commerce.json',x402RequirementsUrl:origin+'/x402/atlas_ai_data_qa_v1',settlement:'BASE_RPC_INBOUND',x402Settlement:'IMPLEMENTED_UNVERIFIED'}}]},skills:[{id:'data_qa',name:'AI Agent Data QA & Transformation',description:'Paid CSV/XLSX data cleaning and quality checks up to 5,000 rows are available through the canonical x402 processing path. A2A message/send requires x402 payment metadata; completion is reported only after the paid pipeline confirms delivery.',tags:['csv','xlsx','data-quality','data-cleaning','data-validation','dataset-transformation','ai-agents','machine-readable'],examples:['Discover the published x402 data-QA resource and its exact payment requirements.','Read the data-QA API contract before submitting a paid dataset.'],inputModes:['application/json'],outputModes:['application/json','text/csv']}],defaultInputModes:['application/json'],defaultOutputModes:['application/json','text/csv'],documentationUrl:origin+'/llms.txt'};}
 export async function createWebhook(db,{agent_id,url,events=['order.completed','order.failed']}={}){await ensureP1Schema(db);if(!agent_id||!/^https:\/\//i.test(String(url||'')))throw new Error('INVALID_WEBHOOK');const s=clean({agent_id,url,events});const id='wh_'+crypto.randomUUID().replaceAll('-','').slice(0,20);await db.prepare('INSERT INTO agent_webhooks(webhook_id,agent_id,url,events_json,status) VALUES(?,?,?,?,?)').bind(id,String(s.agent_id).slice(0,200),String(s.url).slice(0,2048),JSON.stringify(Array.isArray(s.events)?s.events.slice(0,20):[]),'ACTIVE').run();return {ok:true,webhook_id:id,status:'ACTIVE'};}
 export async function listWebhooks(db,{agent_id}={}){await ensureP1Schema(db);const q=agent_id?await db.prepare('SELECT webhook_id,agent_id,url,events_json,status,created_at,updated_at FROM agent_webhooks WHERE agent_id=? ORDER BY created_at DESC LIMIT 50').bind(String(agent_id)).all():await db.prepare('SELECT webhook_id,agent_id,url,events_json,status,created_at,updated_at FROM agent_webhooks ORDER BY created_at DESC LIMIT 50').all();return q.results||[];}
@@ -28,8 +43,10 @@ export async function handleA2A(request,env){
     // A saved result remains retrievable after the offer is paused; replay never re-enters x402.
     await ensureP1Schema(env.DB);
     // New work is accepted only while the paid offer is explicitly active.
-    const prior=await env.DB.prepare('SELECT task_id,status,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
+    const prior=await env.DB.prepare('SELECT task_id,status,input_json,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
+    const suppliedAccessToken=String(message?.metadata?.atlas_result_access_token||'');
     if(prior){
+      if(!await taskAccessAllowed(prior,suppliedAccessToken))return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32003,message:'Task result access denied. A valid task result access token is required.'}}),{status:403,headers});
       let saved={};try{saved=JSON.parse(prior.output_json||'{}')}catch{}
       return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:prior.task_id,status:{state:String(prior.status).toLowerCase()},...(Object.keys(saved).length?{artifacts:[{parts:[{kind:'data',data:saved}]}]}:{})}}),{headers});
     }
@@ -45,11 +62,15 @@ export async function handleA2A(request,env){
     if(!/^\S+@\S+\.\S+$/.test(clientEmail)||!fileName||!/^.+\.(csv|xlsx)$/i.test(fileName)||!fileBase64||fileBase64.length>1900000||!paymentSignature){
       return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Paid data-QA tasks require metadata.atlas_x402 with client_email, file_name (.csv/.xlsx), file_base64, and payment_signature. Payment is validated only by the canonical x402 resource.'}}),{status:400,headers});
     }
+    const resultAccessToken=crypto.randomUUID()+crypto.randomUUID();
+    const resultAccessTokenHash=await hashTaskAccessToken(resultAccessToken);
     const claimed=await env.DB.prepare("INSERT INTO agent_tasks(task_id,source,status,input_json,output_json) VALUES(?,?,'PROCESSING',?,'{}') ON CONFLICT(task_id) DO NOTHING")
-      .bind(taskId,'a2a',JSON.stringify({product_id:'atlas_ai_data_qa_v1',file_name:fileName})).run();
+      .bind(taskId,'a2a',JSON.stringify({product_id:'atlas_ai_data_qa_v1',file_name:fileName,result_access_token_hash:resultAccessTokenHash})).run();
     if(Number(claimed.meta?.changes||0)!==1){
-      const current=await env.DB.prepare('SELECT task_id,status,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
-      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:String(current?.status||'processing').toLowerCase()}}}),{headers});
+      const current=await env.DB.prepare('SELECT task_id,status,input_json,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
+      if(!await taskAccessAllowed(current,suppliedAccessToken))return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32003,message:'Task result access denied. A valid task result access token is required.'}}),{status:403,headers});
+      let saved={};try{saved=JSON.parse(current.output_json||'{}')}catch{}
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:String(current?.status||'processing').toLowerCase()},...(Object.keys(saved).length?{artifacts:[{parts:[{kind:'data',data:saved}]}]}:{})}}),{headers});
     }
     let responseBody={};
     let status='FAILED';
@@ -77,20 +98,22 @@ export async function handleA2A(request,env){
       };
       await env.DB.prepare("UPDATE agent_tasks SET status=?,output_json=?,updated_at=datetime('now') WHERE task_id=? AND status='PROCESSING'")
         .bind(status,JSON.stringify(resultData),taskId).run();
-      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:status.toLowerCase()},artifacts:[{parts:[{kind:'data',data:resultData}]}]}}),{status:200,headers});
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:status.toLowerCase()},result_access_token:resultAccessToken,artifacts:[{parts:[{kind:'data',data:resultData}]}]}}),{status:200,headers});
     }catch(e){
       // A transport timeout can happen after the facilitator settled. Keep the task
       // non-retryable and explicitly require reconciliation; never call x402 again.
       const resultData={order_status:'REVIEW_REQUIRED',message:'x402 outcome is unknown. Task is locked for reconciliation; do not resubmit payment.',error:'X402_OUTCOME_UNKNOWN'};
       await env.DB.prepare("UPDATE agent_tasks SET status='REVIEW_REQUIRED',output_json=?,updated_at=datetime('now') WHERE task_id=? AND status='PROCESSING'")
         .bind(JSON.stringify(resultData),taskId).run();
-      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:'review_required'},artifacts:[{parts:[{kind:'data',data:resultData}]}]}}),{status:200,headers});
+      return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:taskId,status:{state:'review_required'},result_access_token:resultAccessToken,artifacts:[{parts:[{kind:'data',data:resultData}]}]}}),{status:200,headers});
     }
   }
   if(msg.method==='tasks/get'){
     await ensureP1Schema(env.DB);
-    const t=await env.DB.prepare('SELECT task_id,status,output_json FROM agent_tasks WHERE task_id=?').bind(String(msg?.params?.id||'')).first();
+    const t=await env.DB.prepare('SELECT task_id,status,input_json,output_json FROM agent_tasks WHERE task_id=?').bind(String(msg?.params?.id||'')).first();
     if(!t)return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32004,message:'Task not found'}}),{status:404,headers});
+    const accessToken=String(msg?.params?.metadata?.atlas_result_access_token||msg?.params?.atlas_result_access_token||'');
+    if(!await taskAccessAllowed(t,accessToken))return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32003,message:'Task result access denied. A valid task result access token is required.'}}),{status:403,headers});
     let output={};try{output=JSON.parse(t.output_json||'{}')}catch{}
     return new Response(JSON.stringify({jsonrpc:'2.0',id,result:{id:t.task_id,status:{state:String(t.status).toLowerCase()},...(Object.keys(output).length?{artifacts:[{parts:[{kind:'data',data:output}]}]}:{})}}),{headers});
   }
