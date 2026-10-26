@@ -54,7 +54,7 @@ async function initializeTestDb(filename) {
   return db;
 }
 
-function messageRequest(method, rpcId, messageId = taskId, accessToken = '') {
+function messageRequest(method, rpcId, messageId = taskId, accessToken = '', paymentSignature = 'TEST_ONLY_MOCK_SETTLEMENT_NOT_A_REAL_SIGNATURE') {
   const params = method === 'tasks/get'
     ? { id: messageId, ...(accessToken ? { metadata: { atlas_result_access_token: accessToken } } : {}) }
     : { message: {
@@ -65,7 +65,7 @@ function messageRequest(method, rpcId, messageId = taskId, accessToken = '') {
             client_email: 'synthetic-agent@example.test',
             file_name: 'synthetic-quality-fixture.csv',
             file_base64: base64,
-            payment_signature: 'TEST_ONLY_MOCK_SETTLEMENT_NOT_A_REAL_SIGNATURE',
+            payment_signature: paymentSignature,
           },
           ...(accessToken ? { atlas_result_access_token: accessToken } : {}),
         },
@@ -156,7 +156,7 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     assert.equal(JSON.parse(savedTaskInput.input_json).result_access_token_hash.length, 64);
     assert.equal(JSON.parse(savedTaskInput.input_json).result_access_token_hash.includes(accessToken), false,
       'raw result access token must never be persisted');
-    const deniedGet = await handleA2A(messageRequest('tasks/get', 'rpc-unauthorized'));
+    const deniedGet = await handleA2A(messageRequest('tasks/get', 'rpc-unauthorized'), env);
     assert.equal(deniedGet.status, 403, 'task result must not be readable by task ID alone');
     assert.equal(firstResult.order_status, 'DELIVERED');
     assert.equal(firstResult.payment_status, 'PAID');
@@ -197,6 +197,8 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     db = makeD1(filename);
     env.DB = db;
 
+    const invalidReplay = await handleA2A(messageRequest('message/send', 'rpc-invalid-replay', taskId, '', 'wrong-payment-capability'), env);
+    assert.equal(invalidReplay.status, 403, 'a different payment proof must not recover another caller task result');
     const replayResponse = await handleA2A(messageRequest('message/send', 'rpc-replay'), env);
     assert.equal(replayResponse.status, 200);
     const replayBody = await replayResponse.json();
@@ -206,7 +208,7 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     assert.equal(delegatedCalls, 1, 'duplicate request must not re-enter mocked x402');
     assert.equal(actualPipelineCalls, 1, 'duplicate request must not process or settle twice');
 
-    const getResponse = await handleA2A(messageRequest('tasks/get', 'rpc-get'), env);
+    const getResponse = await handleA2A(messageRequest('tasks/get', 'rpc-get', taskId, accessToken), env);
     assert.equal(getResponse.status, 200);
     const getBody = await getResponse.json();
     assert.equal(getBody.result.status.state, 'completed');
