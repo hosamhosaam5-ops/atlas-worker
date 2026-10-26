@@ -219,7 +219,7 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     assert.deepEqual(getBody.result.artifacts[0].parts[0].data, firstResult);
     const cleanArtifact = getBody.result.artifacts.find(a => a.parts?.[0]?.data?.file_name?.startsWith('clean_'));
     assert.ok(cleanArtifact, 'authenticated tasks/get must return the stored clean CSV');
-    assert.equal(Buffer.from(cleanArtifact.parts[0].data.content_base64, 'base64').toString('utf8'), 'name,score\\nAlice,10\\nBob,20');
+    assert.equal(Buffer.from(cleanArtifact.parts[0].data.content_base64, 'base64').toString('utf8'), 'name,score\nAlice,10\nBob,20');
     const reportArtifact = getBody.result.artifacts.find(a => a.parts?.[0]?.data?.file_name?.startsWith('qa_'));
     assert.ok(reportArtifact, 'authenticated tasks/get must return the stored QA report');
 
