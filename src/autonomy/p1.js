@@ -7,6 +7,10 @@ async function hashTaskAccessToken(token){
   const digest=await crypto.subtle.digest('SHA-256',bytes);
   return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
 }
+async function deriveTaskAccessToken(taskId,paymentSignature){
+  if(!String(taskId||'')||!String(paymentSignature||''))return '';
+  return hashTaskAccessToken(String(taskId)+':'+String(paymentSignature));
+}
 async function taskAccessAllowed(task,token){
   if(!task||!String(token||''))return false;
   let input={};try{input=JSON.parse(task.input_json||'{}')}catch{return false}
@@ -44,7 +48,8 @@ export async function handleA2A(request,env){
     await ensureP1Schema(env.DB);
     // New work is accepted only while the paid offer is explicitly active.
     const prior=await env.DB.prepare('SELECT task_id,status,input_json,output_json FROM agent_tasks WHERE task_id=?').bind(taskId).first();
-    const suppliedAccessToken=String(message?.metadata?.atlas_result_access_token||'');
+    const replayPaymentSignature=String(message?.metadata?.atlas_x402?.payment_signature||'').trim();
+    const suppliedAccessToken=String(message?.metadata?.atlas_result_access_token||'') || await deriveTaskAccessToken(taskId,replayPaymentSignature);
     if(prior){
       if(!await taskAccessAllowed(prior,suppliedAccessToken))return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32003,message:'Task result access denied. A valid task result access token is required.'}}),{status:403,headers});
       let saved={};try{saved=JSON.parse(prior.output_json||'{}')}catch{}
@@ -62,7 +67,8 @@ export async function handleA2A(request,env){
     if(!/^\S+@\S+\.\S+$/.test(clientEmail)||!fileName||!/^.+\.(csv|xlsx)$/i.test(fileName)||!fileBase64||fileBase64.length>1900000||!paymentSignature){
       return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'Paid data-QA tasks require metadata.atlas_x402 with client_email, file_name (.csv/.xlsx), file_base64, and payment_signature. Payment is validated only by the canonical x402 resource.'}}),{status:400,headers});
     }
-    const resultAccessToken=crypto.randomUUID()+crypto.randomUUID();
+    const resultAccessToken=await deriveTaskAccessToken(taskId,paymentSignature);
+    if(!resultAccessToken)return new Response(JSON.stringify({jsonrpc:'2.0',id,error:{code:-32602,message:'A valid payment capability is required.'}}),{status:400,headers});
     const resultAccessTokenHash=await hashTaskAccessToken(resultAccessToken);
     const claimed=await env.DB.prepare("INSERT INTO agent_tasks(task_id,source,status,input_json,output_json) VALUES(?,?,'PROCESSING',?,'{}') ON CONFLICT(task_id) DO NOTHING")
       .bind(taskId,'a2a',JSON.stringify({product_id:'atlas_ai_data_qa_v1',file_name:fileName,result_access_token_hash:resultAccessTokenHash})).run();
