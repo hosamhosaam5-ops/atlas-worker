@@ -169,7 +169,7 @@ test('isolated A2A -> mocked x402 settlement -> real CSV QA pipeline persists an
     assert.equal(actualPipelineCalls, 1);
 
     const ledger = await db.prepare(
-      'SELECT order_id,status,payment_status,settlement_mode,rows_in,rows_out,qa_report FROM order_ledger WHERE order_id=?'
+      'SELECT order_id,status,payment_status,settlement_mode,delivery_channel,delivery_status,rows_in,rows_out,qa_report FROM order_ledger WHERE order_id=?'
     ).bind(orderId).first();
     assert.ok(ledger, 'real order ledger row must exist');
     assert.equal(ledger.status, 'DELIVERED');
