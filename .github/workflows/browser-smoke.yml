@@ -55,7 +55,7 @@ jobs:
             const status = response.status();
             const title = await page.title().catch(() => "");
             console.log(JSON.stringify({ target: url.origin + url.pathname, status, title }, null, 2));
-            if (status >= 500) throw new Error(`Target returned HTTP ${status}`);
+            if (status >= 400) throw new Error(`Target returned HTTP ${status}`);
           } finally {
             await browser.close();
           }
