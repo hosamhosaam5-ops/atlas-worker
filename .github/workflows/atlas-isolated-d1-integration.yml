@@ -65,10 +65,20 @@ jobs:
           EMAIL_MOCK_SCENARIO = "success"
           TELEGRAM_PROVIDER = "MOCK"
           FILE_STORAGE = "D1"
+
+          [observability]
+          enabled = true
+          head_sampling_rate = 1.0
+
+          [observability.logs]
+          enabled = true
+          invocation_logs = true
           EOF
 
+          TAIL_PID=""
           cleanup() {
             set +e
+            if [ -n "$TAIL_PID" ]; then kill "$TAIL_PID" >/dev/null 2>&1; wait "$TAIL_PID" >/dev/null 2>&1; fi
             curl --silent --show-error --max-time 20 -X DELETE \
               -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
               "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_NAME}" \
@@ -85,6 +95,9 @@ jobs:
           done
 
           npx --no-install wrangler deploy --config wrangler.integration.toml --var "TEST_TOKEN:${TEST_TOKEN}"
+          npx --no-install wrangler tail "$WORKER_NAME" --format pretty > worker-tail.log 2>&1 &
+          TAIL_PID=$!
+          sleep 3
           for attempt in $(seq 1 15); do
             if curl --fail --silent --show-error --max-time 10 "$WORKER_URL/health" -o health.json; then
               jq -e '.ok == true and .service == "atlas-isolated-d1-test-worker"' health.json
@@ -105,6 +118,10 @@ jobs:
           cat integration.json
           test "$status" = "200"
           jq -e '.ok == true and (.assertions | length >= 7) and all(.assertions[]; .passed == true)' integration.json
+          kill "$TAIL_PID" >/dev/null 2>&1 || true
+          wait "$TAIL_PID" >/dev/null 2>&1 || true
+          TAIL_PID=""
+          cat worker-tail.log
       - name: Upload isolated D1 evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -114,5 +131,6 @@ jobs:
             health.json
             integration.json
             worker-delete.json
+            worker-tail.log
             wrangler.integration.toml
           if-no-files-found: warn
