@@ -45,7 +45,7 @@ export async function handleBrowserControl(env, args) {
       "INSERT INTO browser_control_quota (day, launches, calls, updated_at) VALUES (?, 1, 0, datetime('now')) ON CONFLICT(day) DO UPDATE SET launches=launches+1, updated_at=datetime('now') WHERE launches < ?"
     ).bind(day, MAX_LAUNCHES_PER_DAY).run();
     if (Number(launchClaim.meta?.changes || 0) !== 1) throw new Error("BROWSER_DAILY_LAUNCH_LIMIT_REACHED");
-    const acquired = await acquire(env.BROWSER, { keep_alive: SESSION_IDLE_MS });
+    const acquired = await acquire(env.BROWSER, { keepAlive: SESSION_IDLE_MS });
     sessionId = String(acquired.sessionId || "");
     if (!sessionId) throw new Error("BROWSER_SESSION_ID_MISSING");
     await env.DB.prepare(
@@ -57,7 +57,11 @@ export async function handleBrowserControl(env, args) {
 
   let page;
   try {
-    page = await browser.newPage();
+    // Reuse a browser context across calls so cookies and local storage can survive
+    // while each invocation still closes its own tab.
+    const contexts = browser.contexts();
+    const context = contexts[0] || await browser.newContext();
+    page = await context.newPage();
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     await page.route("**/*", async route => {
