@@ -285,6 +285,93 @@ jobs:
           console.log('BASE_RPC_POSITIVE_GATE=PASS');
           NODE
 
+      - name: Real Base RPC positive receipt verification with an existing USDC transfer (read-only)
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { fetchReceipt, evaluatePaymentSafe, USDC_CONTRACT, BASE_NETWORK } from './src/orders/payment.js';
+          import { readFileSync } from 'node:fs';
+
+          const WALLET = readFileSync('wrangler.toml', 'utf8').match(/^ATLAS_WALLET_ADDRESS\s*=\s*"(0x[a-fA-F0-9]{40})"/m)?.[1];
+          if (!WALLET) throw new Error('ATLAS_WALLET_ADDRESS missing or invalid in wrangler.toml');
+
+          // Use a second public Base RPC endpoint to find a real, already-mined USDC transfer.
+          // This is a read-only parser/gate fixture; it never sends funds or mutates the order ledger.
+          const rpc = 'https://base-rpc.publicnode.com';
+          const call = async (method, params) => {
+            const res = await fetch(rpc, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(method + ' HTTP ' + res.status);
+            if (body.error) throw new Error(method + ' error: ' + JSON.stringify(body.error));
+            return body.result;
+          };
+
+          const latest = BigInt(await call('eth_blockNumber', []));
+          const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+          let found = null;
+          let chunk = 10n;
+          const floor = latest > 2000n ? latest - 2000n : 0n;
+          for (let end = latest; end >= floor && !found; ) {
+            const start = end >= chunk - 1n ? end - (chunk - 1n) : 0n;
+            const logs = await call('eth_getLogs', [{
+              address: USDC_CONTRACT,
+              fromBlock: '0x' + start.toString(16),
+              toBlock: '0x' + end.toString(16),
+              topics: [transferTopic]
+            }]);
+            if (Array.isArray(logs)) {
+              for (const log of logs) {
+                if (!log?.topics?.[2] || !/^0x[0-9a-fA-F]{64}$/.test(log.topics[2])) continue;
+                const raw = BigInt(log.data || '0x0');
+                if (raw > BigInt(Number.MAX_SAFE_INTEGER)) continue;
+                found = log;
+                break;
+              }
+            }
+            if (start === floor) break;
+            end = start - 1n;
+          }
+          if (!found) throw new Error('No suitable existing USDC transfer receipt found in the scanned recent Base window; positive real-receipt gate remains unproven.');
+
+          const recipient = '0x' + found.topics[2].slice(-40);
+          const receiptResponse = await fetchReceipt({ PAYMENT_PROVIDER: 'BASE_RPC', BASE_RPC_URL: rpc }, found.transactionHash);
+          const receipt = receiptResponse?.result;
+          if (!receipt || receipt.status !== '0x1') throw new Error('Existing USDC transfer receipt is not successful.');
+          const totalRaw = (receipt.logs || []).reduce((sum, log) => {
+            if (String(log.address || '').toLowerCase() !== USDC_CONTRACT.toLowerCase()) return sum;
+            if (String(log.topics?.[0] || '').toLowerCase() !== transferTopic) return sum;
+            if ('0x' + String(log.topics?.[2] || '').slice(-40).toLowerCase() !== recipient.toLowerCase()) return sum;
+            return sum + BigInt(log.data || '0x0');
+          }, 0n);
+          if (totalRaw <= 0n || totalRaw > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Selected receipt does not have a safely representable positive USDC amount for the recipient.');
+          const expectedAmount = Number(totalRaw) / 1e6;
+          const verdict = evaluatePaymentSafe(receiptResponse, {
+            wallet: recipient,
+            usdc_contract: USDC_CONTRACT,
+            expected_amount: expectedAmount,
+            network: BASE_NETWORK,
+            tx_hash: found.transactionHash
+          });
+          console.log(JSON.stringify({
+            positive_real_receipt_probe: 'PASS',
+            transaction_hash: found.transactionHash,
+            block_number: found.blockNumber,
+            recipient,
+            amount_usdc: expectedAmount,
+            receipt_status: receipt.status,
+            verdict,
+            note: recipient.toLowerCase() === WALLET.toLowerCase()
+              ? 'The existing transfer is to the ATLAS wallet; read-only verification only.'
+              : 'The ATLAS wallet had no provable inbound transfer in the earlier scan; this verifies the positive parser against a real Base USDC receipt to another recipient only. It does not prove an ATLAS customer payment.'
+          }, null, 2));
+          if (verdict.payment_status !== 'PAID') throw new Error('Real receipt positive gate expected PAID, got ' + verdict.payment_status);
+          console.log('BASE_RPC_POSITIVE_REAL_RECEIPT=PASS');
+          NODE
+
       - name: MCP remote probe (non-blocking)
         continue-on-error: true
         run: |
