@@ -1,8 +1,8 @@
 import { launch } from "@cloudflare/playwright";
 
-const MAX_ACTIONS = 10;
+const MAX_ACTIONS = 6;
 const MAX_TEXT = 12000;
-const NAVIGATION_TIMEOUT_MS = 15000;
+const NAVIGATION_TIMEOUT_MS = 10000;
 
 function validatePublicHttpsUrl(raw) {
   const u = new URL(String(raw || ""));
@@ -38,8 +38,12 @@ export async function handleBrowserControl(env, args) {
   const rawActions = Array.isArray(args?.actions) ? args.actions : [];
   if (rawActions.length > MAX_ACTIONS) throw new Error("BROWSER_ACTION_LIMIT_EXCEEDED");
   const actions = rawActions.map(validateAction);
-  // Browser Run has a documented free allowance, but usage can be billable on paid plans
-  // after the included allowance. Keep each operation short and never run unattended loops.
+  // Strict per-Worker quota: at most three browser launches per UTC day, each with short timeouts.
+  // Browser Run allowance is shared at account level, so this intentionally does not consume it aggressively.
+  const day = new Date().toISOString().slice(0, 10);
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS browser_control_quota (day TEXT PRIMARY KEY, launches INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run();
+  const quota = await env.DB.prepare("INSERT INTO browser_control_quota (day, launches, updated_at) VALUES (?, 1, datetime('now')) ON CONFLICT(day) DO UPDATE SET launches=launches+1, updated_at=datetime('now') WHERE launches < 3").bind(day).run();
+  if (Number(quota.meta?.changes || 0) !== 1) throw new Error("BROWSER_DAILY_LIMIT_REACHED");
   const browser = await launch(env.BROWSER);
   try {
     const page = await browser.newPage();
@@ -87,7 +91,7 @@ export async function handleBrowserControl(env, args) {
       text: (await page.locator("body").innerText().catch(() => "")).slice(0, MAX_TEXT),
       actions: results,
       browser: "Cloudflare Browser Run + Playwright",
-      limits: { max_actions: MAX_ACTIONS, max_navigation_timeout_ms: NAVIGATION_TIMEOUT_MS }
+      limits: { max_actions: MAX_ACTIONS, max_navigation_timeout_ms: NAVIGATION_TIMEOUT_MS, max_launches_per_utc_day: 3 }
     };
     return snapshot;
   } finally {
