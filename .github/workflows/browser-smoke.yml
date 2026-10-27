@@ -1,0 +1,62 @@
+name: ATLAS Browser Smoke (free fallback)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "HTTPS URL to smoke-test (defaults to the public ATLAS Worker)"
+        required: true
+        default: "https://atlas-worker.hosamhosaam5.workers.dev/health"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-browser-smoke
+  cancel-in-progress: true
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save --no-package-lock playwright
+          npx playwright install --with-deps chromium
+
+      - name: Validate target URL
+        env:
+          TARGET_URL: ${{ inputs.target_url }}
+        run: |
+          node --input-type=module -e 'const u = new URL(process.env.TARGET_URL); if (u.protocol !== "https:") throw new Error("Only HTTPS targets are allowed"); console.log("Target:", u.origin + u.pathname);'
+
+      - name: Open target and verify HTTP response
+        env:
+          TARGET_URL: ${{ inputs.target_url }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from "playwright";
+          const url = new URL(process.env.TARGET_URL);
+          if (url.protocol !== "https:") throw new Error("Only HTTPS targets are allowed");
+          const browser = await chromium.launch({ headless: true });
+          try {
+            const page = await browser.newPage();
+            const response = await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 30000 });
+            if (!response) throw new Error("Navigation returned no HTTP response");
+            const status = response.status();
+            const title = await page.title().catch(() => "");
+            console.log(JSON.stringify({ target: url.origin + url.pathname, status, title }, null, 2));
+            if (status >= 400) throw new Error(`Target returned HTTP ${status}`);
+          } finally {
+            await browser.close();
+          }
+          NODE
