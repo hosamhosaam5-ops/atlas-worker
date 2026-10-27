@@ -1,6 +1,9 @@
 name: ATLAS Browser Smoke (free fallback)
 
 on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/browser-smoke.yml"]
   workflow_dispatch:
     inputs:
       target_url:
@@ -35,7 +38,7 @@ jobs:
 
       - name: Validate target URL
         env:
-          TARGET_URL: ${{ inputs.target_url }}
+          TARGET_URL: ${{ inputs.target_url || 'https://atlas-worker.hosamhosaam5.workers.dev/health' }}
         run: |
           node --input-type=module -e 'const u = new URL(process.env.TARGET_URL); if (u.protocol !== "https:") throw new Error("Only HTTPS targets are allowed"); console.log("Target:", u.origin + u.pathname);'
 
