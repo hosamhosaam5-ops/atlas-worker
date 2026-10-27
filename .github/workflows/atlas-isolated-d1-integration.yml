@@ -46,7 +46,7 @@ jobs:
           WORKER_NAME="atlas-it-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           TEST_TOKEN="$(openssl rand -hex 32)"
           echo "::add-mask::$TEST_TOKEN"
-          WORKER_URL="https://${WORKER_NAME}.${CLOUDFLARE_ACCOUNT_ID}.workers.dev"
+          WORKER_URL="https://${WORKER_NAME}.hosamhosaam5.workers.dev"
           cat > wrangler.integration.toml <<EOF
           name = "${WORKER_NAME}"
           main = "test/d1-integration-worker.mjs"
