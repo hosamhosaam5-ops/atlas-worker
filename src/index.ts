@@ -51,8 +51,10 @@ import { ensureGrowthAssets, getGrowthAsset, runGrowthCycle, growthSnapshot, tra
 import { commerceManifest, trustSnapshot, createCommerceSession, advanceCommerceSession, commerceSnapshot } from './autonomy/p3.js';
 import OAuthProvider, { insufficientScope } from '@cloudflare/workers-oauth-provider';
 import { handleAccessRequest } from './mcp/access-handler.ts';
+// @ts-ignore — Cloudflare Browser Run control module
+import { handleBrowserControl } from './mcp/browser-control.js';
 // @ts-ignore
-import { assertFounderCanActivateProduct } from './mcp/authorization.js';
+import { assertFounderCanActivateProduct, assertFounderIdentity } from './mcp/authorization.js';
 // @ts-ignore
 import { isLocalX402TestMode } from './core/runtimeFlags.js';
 // @ts-ignore
@@ -63,6 +65,7 @@ import { normalizeActiveCommerceManifestRequest } from './core/commerceManifestG
 interface Env {
   DB: D1Database;
   AI: Ai;
+  BROWSER: Fetcher;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
   AI_PROVIDER?: string;
@@ -199,7 +202,8 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    {name:"advance_commerce_session",description:"Advance one bounded commerce lifecycle stage. This records state only and never sends funds.",securitySchemes:[{type:"oauth2",scopes:["mcp:write"]}],inputSchema:{type:"object",properties:{session_id:{type:"string"},stage:{type:"string"},quote_id:{type:["integer","null"]},payment_ref:{type:["string","null"]},order_id:{type:["string","null"]}},required:["session_id","stage"],additionalProperties:false}},
    {name:"run_commercial_integration",description:"Run a real D1-backed order/quote/payment-gate/QA/delivery/idempotency/recovery integration suite using only MOCK payment and email adapters. Defaults to the active commercial catalog product when product_id is omitted; an explicit product_id may target another ACTIVE product.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{product_id:{type:"string"}},additionalProperties:false}},
    {name:"replay_pending_events",description:"Explicitly replay one durably logged Telegram event stuck in PENDING. Atomic claim; no payment execution is performed by this tool itself.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{event_id:{type:"integer",minimum:1}},required:["event_id"],additionalProperties:false}},
-   {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},message_id:{type:"integer"}},required:["founder_message","message_id"],additionalProperties:false}}
+   {name:"execute_ceo",description:"Execute an ATLAS CEO request through the authenticated production bridge.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{founder_message:{type:"string",minLength:1,maxLength:20000},message_id:{type:"integer"}},required:["founder_message","message_id"],additionalProperties:false}},
+   {name:"browser_control",description:"Founder-only bounded browser control using Cloudflare Browser Run. Navigate, click, fill forms, press keys, select options, wait briefly, and inspect the current page. Three short launches per UTC day; HTTPS public sites only.",securitySchemes:[{type:"oauth2",scopes:["mcp:execute"]}],inputSchema:{type:"object",properties:{url:{type:"string",format:"uri"},actions:{type:"array",maxItems:6,items:{type:"object",properties:{type:{type:"string",enum:["navigate","click","fill","press","select","wait","inspect"]},url:{type:"string"},selector:{type:"string"},value:{type:"string"},key:{type:"string"},ms:{type:"integer",minimum:0,maximum:3000}},required:["type"],additionalProperties:false}}},required:["url"],additionalProperties:false}}
   ]}});
   if(msg.method!=="tools/call")return result({error:{code:-32601,message:"Method not found"}});
   const name=msg.params?.name,args=msg.params?.arguments||{};let out:any;
@@ -209,7 +213,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
     list_products:"mcp:read",list_financial_approvals:"mcp:read",
     write_state:"mcp:write",write_memory:"mcp:write",upsert_product:"mcp:write",create_quote:"mcp:write",
     request_financial_approval:"mcp:write",decide_financial_approval:"mcp:write",
-    run_commercial_integration:"mcp:execute",discover_agent_marketplaces:"mcp:execute",prepare_offer:"mcp:execute",negotiate_offer:"mcp:execute",product_intelligence:"mcp:read",create_agent_webhook:"mcp:write",list_agent_webhooks:"mcp:read",growth_snapshot:"mcp:read",run_growth_cycle:"mcp:execute",replay_pending_events:"mcp:execute",execute_ceo:"mcp:execute"
+    run_commercial_integration:"mcp:execute",discover_agent_marketplaces:"mcp:execute",prepare_offer:"mcp:execute",negotiate_offer:"mcp:execute",product_intelligence:"mcp:read",create_agent_webhook:"mcp:write",list_agent_webhooks:"mcp:read",growth_snapshot:"mcp:read",run_growth_cycle:"mcp:execute",replay_pending_events:"mcp:execute",execute_ceo:"mcp:execute",browser_control:"mcp:execute"
   };
   const requiredScope=requiredScopeByTool[name];
   if(!requiredScope)return result({error:{code:-32602,message:"Unknown tool"}});
@@ -265,6 +269,7 @@ async function handleAtlasMcp(request: Request, env: Env, ctx: ExecutionContext 
    else if(name==="run_commercial_integration"){out=await runCommercialIntegration(env.DB,env,{product_id:args.product_id || "atlas_ai_data_qa_v1"});}
    else if(name==="replay_pending_events"){out=await replayPendingTelegramEvent(env,Number(args.event_id));}
    else if(name==="execute_ceo"){const secret=env.CHATGPT_BRIDGE_SECRET;if(!secret)throw new Error("CHATGPT_BRIDGE_NOT_CONFIGURED");const r2=new Request(new URL("/bridge/chatgpt",request.url),{method:"POST",headers:{"content-type":"application/json","x-atlas-bridge-key":secret},body:JSON.stringify({operation:"execute_ceo",founder_message:args.founder_message,message_id:Number(args.message_id)})});const rr=await handleChatGptBridge(r2,env);const body=await rr.json();if(!rr.ok)throw new Error(String(body?.status||"EXECUTE_CEO_FAILED"));out=body;}
+   else if(name==="browser_control"){assertFounderIdentity(ctx,env);out=await handleBrowserControl(env,args);}
    else return result({error:{code:-32602,message:"Unknown tool"}});
   }catch(err:any){return result({result:{isError:true,content:[{type:"text",text:String(err?.message||err).slice(0,2000)}]}});}
   return result({result:{content:[{type:"text",text:JSON.stringify(out)}],structuredContent:out}});
