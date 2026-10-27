@@ -57,8 +57,29 @@ jobs:
             if (!response) throw new Error("Navigation returned no HTTP response");
             const status = response.status();
             const title = await page.title().catch(() => "");
-            console.log(JSON.stringify({ target: url.origin + url.pathname, status, title }, null, 2));
             if (status >= 400) throw new Error(`Target returned HTTP ${status}`);
+            const result = { target: url.origin + url.pathname, status, title };
+            if (url.pathname.replace(/\\/+$/, "").endsWith("/health")) {
+              let health;
+              try {
+                health = await response.json();
+              } catch {
+                throw new Error("Health endpoint did not return valid JSON");
+              }
+              result.health = {
+                ok: health?.ok,
+                service: health?.service,
+                phase: health?.phase,
+                git_sha: health?.git_sha,
+                db: health?.db,
+                telegram: health?.telegram,
+                email: health?.email,
+                payment: health?.payment
+              };
+              if (health?.ok !== true) throw new Error("Health endpoint did not report ok=true");
+              if (health?.service !== "atlas-worker") throw new Error("Unexpected health service identity");
+            }
+            console.log(JSON.stringify(result, null, 2));
           } finally {
             await browser.close();
           }
