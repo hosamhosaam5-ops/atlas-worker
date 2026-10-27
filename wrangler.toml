@@ -1,7 +1,11 @@
 name = "atlas-worker"
 main = "src/index.ts"
 compatibility_date = "2026-09-27"
-compatibility_flags = ["global_fetch_strictly_public"]
+compatibility_flags = ["global_fetch_strictly_public", "nodejs_compat"]
+
+# Browser Run uses Cloudflare-managed Chromium. Keep browser_control quota enabled in code.
+[browser]
+binding = "BROWSER"
 
 # M6A deployment configuration. A database ID is configured, but account ownership,
 # migrations, secrets, and deployment status must be verified separately.
