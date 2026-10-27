@@ -59,7 +59,7 @@ jobs:
             const title = await page.title().catch(() => "");
             if (status >= 400) throw new Error(`Target returned HTTP ${status}`);
             const result = { target: url.origin + url.pathname, status, title };
-            if (url.pathname.replace(/\\/+$/, "").endsWith("/health")) {
+            if (url.pathname.endsWith("/health")) {
               let health;
               try {
                 health = await response.json();
