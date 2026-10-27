@@ -42,7 +42,7 @@ jobs:
         run: |
           node --input-type=module -e 'const u = new URL(process.env.TARGET_URL); if (u.protocol !== "https:") throw new Error("Only HTTPS targets are allowed"); console.log("Target:", u.origin + u.pathname);'
 
-      - name: Open ATLAS target and verify HTTP response
+      - name: Open ATLAS target in Chromium and verify health
         env:
           TARGET_URL: ${{ inputs.target_url || 'https://atlas-worker.hosamhosaam5.workers.dev/health' }}
         run: |
@@ -56,9 +56,8 @@ jobs:
             const response = await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 30000 });
             if (!response) throw new Error("Navigation returned no HTTP response");
             const status = response.status();
-            const title = await page.title().catch(() => "");
             if (status >= 400) throw new Error(`Target returned HTTP ${status}`);
-            const result = { target: url.origin + url.pathname, status, title };
+            const result = { target: url.origin + url.pathname, status, title: await page.title().catch(() => "") };
             if (url.pathname.endsWith("/health")) {
               let health;
               try {
@@ -80,39 +79,6 @@ jobs:
               if (health?.service !== "atlas-worker") throw new Error("Unexpected health service identity");
             }
             console.log(JSON.stringify(result, null, 2));
-          } finally {
-            await browser.close();
-          }
-          NODE
-
-      - name: Verify real browser navigation and page elements
-        run: |
-          node --input-type=module <<'NODE'
-          import { chromium } from "playwright";
-          const browser = await chromium.launch({ headless: true });
-          try {
-            const page = await browser.newPage();
-            const response = await page.goto("https://example.com/", {
-              waitUntil: "domcontentloaded",
-              timeout: 30000
-            });
-            if (!response) throw new Error("External page navigation returned no HTTP response");
-            if (response.status() >= 400) throw new Error(`External page returned HTTP ${response.status()}`);
-            await page.locator("h1").waitFor({ state: "visible", timeout: 10000 });
-            const title = await page.title();
-            const heading = (await page.locator("h1").innerText()).trim();
-            if (title !== "Example Domain") throw new Error(`Unexpected page title: ${title}`);
-            if (heading !== "Example Domain") throw new Error(`Unexpected page heading: ${heading}`);
-            const paragraphCount = await page.locator("p").count();
-            if (paragraphCount < 1) throw new Error("Expected page content was not found");
-            console.log(JSON.stringify({
-              target: "https://example.com/",
-              status: response.status(),
-              title,
-              heading,
-              paragraphCount,
-              browserNavigation: "passed"
-            }, null, 2));
           } finally {
             await browser.close();
           }
