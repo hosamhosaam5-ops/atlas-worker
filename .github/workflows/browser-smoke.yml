@@ -44,7 +44,7 @@ jobs:
 
       - name: Open target and verify HTTP response
         env:
-          TARGET_URL: ${{ inputs.target_url }}
+          TARGET_URL: ${{ inputs.target_url || 'https://atlas-worker.hosamhosaam5.workers.dev/health' }}
         run: |
           node --input-type=module <<'NODE'
           import { chromium } from "playwright";
