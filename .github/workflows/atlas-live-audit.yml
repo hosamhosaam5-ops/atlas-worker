@@ -292,7 +292,7 @@ jobs:
           import { fetchReceipt, evaluatePaymentSafe, USDC_CONTRACT, BASE_NETWORK } from './src/orders/payment.js';
           import { readFileSync } from 'node:fs';
 
-          const WALLET = readFileSync('wrangler.toml', 'utf8').match(/^ATLAS_WALLET_ADDRESS\\s*=\\s*\\\"(0x[a-fA-F0-9]{40})\\\"/m)?.[1];
+          const WALLET = readFileSync('wrangler.toml', 'utf8').match(/^ATLAS_WALLET_ADDRESS\s*=\s*"(0x[a-fA-F0-9]{40})"/m)?.[1];
           if (!WALLET) throw new Error('ATLAS_WALLET_ADDRESS missing or invalid in wrangler.toml');
 
           // Use a second public Base RPC endpoint to find a real, already-mined USDC transfer.
