@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/atlas-live-audit.yml"
+      - ".github/workflows/atlas-isolated-d1-integration.yml"
+      - "test/d1-integration-worker.mjs"
       - "wrangler.toml"
       - "src/**"
       - "schema*.sql"
