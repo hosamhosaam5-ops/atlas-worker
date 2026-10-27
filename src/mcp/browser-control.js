@@ -55,8 +55,9 @@ export async function handleBrowserControl(env, args) {
     launched = true;
   }
 
+  let page;
   try {
-    const page = await browser.newPage();
+    page = await browser.newPage();
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     await page.route("**/*", async route => {
@@ -106,8 +107,9 @@ export async function handleBrowserControl(env, args) {
       limits: { max_actions: MAX_ACTIONS, max_navigation_timeout_ms: NAVIGATION_TIMEOUT_MS, max_calls_per_utc_day: MAX_CALLS_PER_DAY, max_new_sessions_per_utc_day: MAX_LAUNCHES_PER_DAY }
     };
   } finally {
-    // connect() creates a client connection. close() disconnects this client but leaves the
-    // Cloudflare-managed browser session alive for subsequent founder-authorized calls.
+    // Close only this page and client connection; keep the Cloudflare-managed session and
+    // its default-context cookies alive for subsequent founder-authorized calls.
+    if (page) await page.close().catch(() => {});
     await browser.close().catch(() => {});
   }
 }
