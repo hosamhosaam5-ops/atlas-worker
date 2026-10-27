@@ -110,7 +110,7 @@ jobs:
             sleep 2
           done
 
-          status="$(curl --silent --show-error --max-time 60 -o integration.json -w '%{http_code}' \
+          status="$(curl --silent --show-error --max-time 30 -o integration.json -w '%{http_code}' \
             -H "Authorization: Bearer ${TEST_TOKEN}" \
             -H 'content-type: application/json' \
             --data "{\"run_id\":${GITHUB_RUN_ID}}" "$WORKER_URL/run")"
