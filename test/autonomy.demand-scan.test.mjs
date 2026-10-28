@@ -107,7 +107,8 @@ test('scan reports empty/non-JSON response shape instead of silently hiding it',
   assert.equal(result.signals.length,0);
   assert.deepEqual(result.diagnostics[0],{
     source:'fixture_marketplace',status:'OK',http_status:200,content_type:'text/html',
-    listings_seen:0,offers_excluded:0,accepted:0,duplicates:0,rejected:0
+    listings_seen:0,offers_excluded:0,accepted:0,duplicates:0,rejected:0,
+    rejection_counts:{},rejection_samples:[],age_policy_days:30
   });
 });
 
@@ -117,6 +118,8 @@ test('OpenTask public agent tasks become signals while upfront-funding tasks are
     tasks:[
       {
         id:'opentask-csv-77',
+        createdAt:'2026-10-27T00:00:00Z',
+        status:'open',
         title:'Build a simple Python script to parse CSV files and generate JSON output',
         skillsTags:['python','csv','json'],
         budgetText:'100 USDC',

@@ -62,3 +62,41 @@ test('discovery registers every public capability with the registry key field', 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('demand scanner rejects expired, stale, inactive and upfront-registration tasks with distinct reasons', async () => {
+  const { demandRejectionReason, extractListings } = await import('../src/autonomy/engine.js');
+  const now = Date.parse('2026-10-28T00:00:00Z');
+  assert.equal(demandRejectionReason({status:'closed'}, 'agent_job_public_mcp', now), 'inactive_status');
+  assert.equal(demandRejectionReason({deadline:'2026-10-01T00:00:00Z'}, 'opentask_public_tasks', now), 'expired_deadline');
+  assert.equal(demandRejectionReason({created_at:'2026-09-01T00:00:00Z'}, 'opentask_public_tasks', now), 'stale');
+  assert.equal(demandRejectionReason({title:'Fund bounty',description:'',created_at:'2026-10-27T00:00:00Z'}, 'opentask_public_tasks', now), 'upfront_payment_required');
+  assert.equal(demandRejectionReason({title:'Register wallet for bounty',description:'',created_at:'2026-10-27T00:00:00Z'}, 'opentask_public_tasks', now), 'registration_or_wallet_required');
+  assert.equal(demandRejectionReason({title:'API documentation audit',description:'Review OpenAPI docs',created_at:'2026-10-27T00:00:00Z'}, 'agent_job_public_mcp', now), 'service_mismatch');
+  assert.equal(demandRejectionReason({title:'0.05 USDC: structured data and API delivery',description:'I handle public CSV validation and return tested artifacts.',created_at:'2026-10-27T00:00:00Z'}, 'agent_job_public_mcp', now), 'seller_offer');
+  assert.equal(demandRejectionReason({title:'CSV cleanup',description:''}, 'agent_job_public_mcp', now), 'unverified_age');
+  const rows = extractListings({tasks:[{id:'fresh-1',title:'CSV data cleanup',description:'Need QA',createdAt:'2026-10-27T00:00:00Z',deadline:'2026-11-01T00:00:00Z',status:'open'}]});
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].created_at, '2026-10-27T00:00:00Z');
+  assert.equal(demandRejectionReason(rows[0], 'opentask_public_tasks', now), null);
+});
+
+test('AgentJob public MCP adapter only calls initialize, initialized notification, and list_posts', async () => {
+  const { fetchAgentJobPosts } = await import('../src/autonomy/engine.js');
+  const calls = [];
+  const fetcher = async (url, init={}) => {
+    const body = init.body ? JSON.parse(init.body) : {};
+    calls.push({url,method:body.method,name:body.params?.name,headers:init.headers});
+    if(body.method === 'initialize') return {ok:true,status:200,text:JSON.stringify({jsonrpc:'2.0',id:1,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'AgentJob',version:'1'}}}),contentType:'application/json',headers:{'mcp-session-id':'public-session'}};
+    if(body.method === 'notifications/initialized') return {ok:true,status:202,text:'',contentType:'application/json',headers:{}};
+    if(body.method === 'tools/call') return {ok:true,status:200,text:JSON.stringify({jsonrpc:'2.0',id:2,result:{content:[{type:'text',text:JSON.stringify({posts:[{id:'p1',title:'CSV cleanup request',body:'Please validate a dataset',created_at:'2026-10-27T00:00:00Z',status:'open'}]})}]}}),contentType:'application/json',headers:{}};
+    throw new Error('Unexpected MCP method '+body.method);
+  };
+  const response = await fetchAgentJobPosts(fetcher);
+  assert.equal(response.ok, true);
+  const payload = JSON.parse(response.text);
+  assert.equal(payload.posts[0].id, 'p1');
+  assert.deepEqual(calls.map(x=>x.method), ['initialize','notifications/initialized','tools/call']);
+  assert.equal(calls[2].name, 'list_posts');
+  assert.ok(calls.every(x=>!['add_reply','create_post','submit_response','get_next_task'].includes(x.name)));
+  assert.equal(calls[2].headers['mcp-session-id'], 'public-session');
+});
