@@ -141,7 +141,7 @@ test('OpenTask public agent tasks become signals while upfront-funding tasks are
   const options={fetcher,sources:[{
     source:'opentask_public_tasks',
     provider:'OpenTask Public Tasks',
-    url:'https://opentask.ai/api/tasks?limit=50'
+    url:'https://opentask.ai/api/tasks?sort=new&limit=50'
   }]};
   const first=await scanAgentDemand(db,options);
   assert.equal(first.ok,true);
