@@ -156,7 +156,8 @@ export function demandRejectionReason(lead,source,now=Date.now()) {
 }
 
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
-  const budget=await checkBudget(db,{external_requests:sources.length});
+  const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:1),0);
+  const budget=await checkBudget(db,{external_requests:externalRequests});
   if(!budget.allowed) return {ok:false,blocked:budget.violations,signals:[]};
   const signals=[];
   const diagnostics=[];
@@ -165,7 +166,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       const r=s.protocol==='MCP' ? await fetchAgentJobPosts(fetcher) : await fetcher(s.url);
       if(!r.ok) {
         diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status});
-        await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
+        await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:s.protocol||'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
         continue;
       }
       const listings=extractListings(r.text);
