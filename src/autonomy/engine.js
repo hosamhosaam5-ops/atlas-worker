@@ -147,10 +147,12 @@ export function demandRejectionReason(lead,source,now=Date.now()) {
   if(deadline && deadline.getTime()<now) return 'expired_deadline';
   const created=parseDate(lead.created_at);
   if(created && created.getTime()<now-DEMAND_MAX_AGE_DAYS*86400000) return 'stale';
-  if((source==='opentask_public_tasks'||source==='agent_job_public_mcp') && !created && !(deadline && deadline.getTime()>=now)) return 'unverified_age';
   const text=lead.title+' '+lead.description;
+  // Classify explicit financial/account prerequisites before the unknown-age guard,
+  // so diagnostics retain the actionable rejection reason.
   if(source==='opentask_public_tasks' && /\b(fund|deposit|pay upfront|purchase|buy|escrow)\b/i.test(text)) return 'upfront_payment_required';
   if(source==='opentask_public_tasks' && /\b(register|wallet|transaction)\b/i.test(text)) return 'registration_or_wallet_required';
+  if((source==='opentask_public_tasks'||source==='agent_job_public_mcp') && !created && !(deadline && deadline.getTime()>=now)) return 'unverified_age';
   if((source==='opentask_public_tasks'||source==='agent_job_public_mcp') && !/\b(csv|xlsx|spreadsheet|dataset|data quality|data cleaning|data validation|tabular data|structured data|missing values|duplicate rows|json to csv|csv to json|data qa)\b/i.test(text)) return 'service_mismatch';
   return null;
 }
