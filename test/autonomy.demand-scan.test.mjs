@@ -114,7 +114,8 @@ test('scan reports empty/non-JSON response shape instead of silently hiding it',
 
 test('OpenTask public agent tasks become signals while upfront-funding tasks are rejected and duplicates deduplicated',async()=>{
   const db=new DemandDb();
-  const fetcher=async()=>({ok:true,status:200,contentType:'application/json',text:JSON.stringify({
+  const requestedUrls=[];
+  const fetcher=async(url)=>{requestedUrls.push(url);return {ok:true,status:200,contentType:'application/json',text:JSON.stringify({
     tasks:[
       {
         id:'opentask-csv-77',
@@ -136,7 +137,7 @@ test('OpenTask public agent tasks become signals while upfront-funding tasks are
       }
     ],
     nextCursor:null
-  })});
+  })};};
   const options={fetcher,sources:[{
     source:'opentask_public_tasks',
     provider:'OpenTask Public Tasks',
@@ -144,6 +145,7 @@ test('OpenTask public agent tasks become signals while upfront-funding tasks are
   }]};
   const first=await scanAgentDemand(db,options);
   assert.equal(first.ok,true);
+  assert.deepEqual(requestedUrls,['https://opentask.ai/api/tasks?sort=new&limit=50']);
   assert.equal(first.signals.length,1);
   assert.equal(db.signals.length,1);
   assert.match(db.signals[0].request_summary,/CSV files/);
