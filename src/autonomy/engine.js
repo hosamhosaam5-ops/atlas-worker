@@ -175,16 +175,40 @@ export function demandRejectionReason(lead,source,now=Date.now()) {
 // PayanAgent's unified discovery endpoint requires q and returns a distinct openRequests
 // array alongside seller offers. Only invoke it after a server-side failure on the
 // dedicated open-requests endpoint; both calls remain unauthenticated GET requests.
+const PAYANAGENT_FILTERED_REQUESTS_FALLBACK_URL='https://payanagent.com/api/v1/requests?status=open&q=csv&limit=50';
 const PAYANAGENT_DISCOVER_FALLBACK_URL='https://payanagent.com/api/v1/discover?q=csv&limit=50';
 
 async function fetchPayanAgentOpenRequests(fetcher,url) {
   const primary=await fetcher(url,{method:'GET'});
   if(primary.ok || !(primary.status>=500)) return {...primary,fallbackUsed:false,requestedEndpoint:url};
+
+  // The public requests route uses a different search query when q is set.
+  // Try this request-only path before unified discovery so seller offers cannot
+  // be mistaken for demand and a failing listOpen query can be bypassed.
+  const filtered=await fetcher(PAYANAGENT_FILTERED_REQUESTS_FALLBACK_URL,{method:'GET'});
+  if(filtered.ok) return {
+    ...filtered,
+    fallbackUsed:true,
+    fallbackStage:'filtered_requests',
+    primaryHttpStatus:primary.status,
+    requestedEndpoint:PAYANAGENT_FILTERED_REQUESTS_FALLBACK_URL
+  };
+  if(!(filtered.status>=500)) return {
+    ...filtered,
+    fallbackUsed:true,
+    fallbackStage:'filtered_requests',
+    primaryHttpStatus:primary.status,
+    intermediateHttpStatus:filtered.status,
+    requestedEndpoint:PAYANAGENT_FILTERED_REQUESTS_FALLBACK_URL
+  };
+
   const fallback=await fetcher(PAYANAGENT_DISCOVER_FALLBACK_URL,{method:'GET'});
   return {
     ...fallback,
     fallbackUsed:true,
+    fallbackStage:'discover',
     primaryHttpStatus:primary.status,
+    intermediateHttpStatus:filtered.status,
     requestedEndpoint:PAYANAGENT_DISCOVER_FALLBACK_URL
   };
 }
@@ -202,7 +226,7 @@ function extractPayanAgentFallbackPayload(payload) {
 
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
   // Reserve budget for the one additional GET that may be used by the PayanAgent fallback.
-  const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:(source.source==='payanagent_open_requests'?2:1)),0);
+  const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:(source.source==='payanagent_open_requests'?3:1)),0);
   const budget=await checkBudget(db,{external_requests:externalRequests});
   if(!budget.allowed) return {ok:false,blocked:budget.violations,signals:[]};
   const signals=[];
@@ -216,11 +240,17 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
           : await fetcher(s.url,{method:'GET'}));
       if(!r.ok) {
         diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status,
-          ...(r.fallbackUsed?{fallback_used:true,primary_http_status:r.primaryHttpStatus}: {})});
+          ...(r.fallbackUsed?{
+            fallback_used:true,
+            fallback_stage:r.fallbackStage||null,
+            primary_http_status:r.primaryHttpStatus,
+            ...(r.intermediateHttpStatus!==undefined?{intermediate_http_status:r.intermediateHttpStatus}: {}),
+            endpoint:r.requestedEndpoint
+          }: {})});
         await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:s.protocol||'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
         continue;
       }
-      const listings=(s.source==='payanagent_open_requests' && r.fallbackUsed)
+      const listings=(s.source==='payanagent_open_requests' && r.fallbackStage==='discover')
         ? extractListings(extractPayanAgentFallbackPayload(r.text))
         : extractListings(r.text);
       const offersExcluded=countExcludedSupplyOffers(r.text);
@@ -255,7 +285,13 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         accepted++;
       }
       diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected,rejection_counts,rejection_samples,age_policy_days:DEMAND_MAX_AGE_DAYS,
-        ...(r.fallbackUsed?{fallback_used:true,primary_http_status:r.primaryHttpStatus,endpoint:r.requestedEndpoint}: {})});
+        ...(r.fallbackUsed?{
+          fallback_used:true,
+          fallback_stage:r.fallbackStage||null,
+          primary_http_status:r.primaryHttpStatus,
+          ...(r.intermediateHttpStatus!==undefined?{intermediate_http_status:r.intermediateHttpStatus}: {}),
+          endpoint:r.requestedEndpoint
+        }: {})});
     } catch(e) {
       diagnostics.push({source:s.source,status:'ERROR',error:String(e?.message||e).slice(0,300)});
     }
