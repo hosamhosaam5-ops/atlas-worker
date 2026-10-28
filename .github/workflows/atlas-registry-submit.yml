@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Verify existing public Registry entry without duplicate submission
@@ -25,7 +25,7 @@ jobs:
           echo "ATLAS_PUBLIC_REGISTRY_VERIFIED=true"
       - name: Upload Registry evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: atlas-registry-verification-${{ github.run_id }}
           path: registry-search.json
