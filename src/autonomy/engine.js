@@ -285,7 +285,13 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         accepted++;
       }
       diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected,rejection_counts,rejection_samples,age_policy_days:DEMAND_MAX_AGE_DAYS,
-        ...(r.fallbackUsed?{fallback_used:true,primary_http_status:r.primaryHttpStatus,endpoint:r.requestedEndpoint}: {})});
+        ...(r.fallbackUsed?{
+          fallback_used:true,
+          fallback_stage:r.fallbackStage||null,
+          primary_http_status:r.primaryHttpStatus,
+          ...(r.intermediateHttpStatus!==undefined?{intermediate_http_status:r.intermediateHttpStatus}: {}),
+          endpoint:r.requestedEndpoint
+        }: {})});
     } catch(e) {
       diagnostics.push({source:s.source,status:'ERROR',error:String(e?.message||e).slice(0,300)});
     }
