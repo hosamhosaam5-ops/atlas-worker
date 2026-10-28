@@ -17,12 +17,20 @@ jobs:
       - name: Verify existing public Registry entry without duplicate submission
         env:
           AGENT_URL: https://atlas-worker.hosamhosaam5.workers.dev/.well-known/agent-card.json
+          A2A_REGISTRY_API_TOKEN: ${{ secrets.A2A_REGISTRY_API_TOKEN }}
         run: |
           set -euo pipefail
-          curl --fail-with-body --silent --show-error 'https://api.a2a-registry.org/public/agents?q=ATLAS' -o registry-search.json
-          cat registry-search.json
+          test -n "$A2A_REGISTRY_API_TOKEN" || { echo "::error::Missing repository secret A2A_REGISTRY_API_TOKEN."; exit 1; }
+          status="$(curl --silent --show-error --max-time 20 -H "Authorization: Bearer ${A2A_REGISTRY_API_TOKEN}" -H 'Accept: application/json' -o registry-search.json -w '%{http_code}' 'https://api.a2a-registry.org/public/agents?q=ATLAS')"
+          echo "Authenticated A2A Registry verification HTTP=$status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Authenticated Registry verification failed."
+            exit 1
+          fi
+          jq -e '.success == true and (.agents | type == "array")' registry-search.json >/dev/null
           grep -Fq "$AGENT_URL" registry-search.json
           echo "ATLAS_PUBLIC_REGISTRY_VERIFIED=true"
+
       - name: Upload Registry evidence
         if: always()
         uses: actions/upload-artifact@v7.0.2
