@@ -61,7 +61,7 @@ export function extractListings(payload){
     // Catalog listings are seller offers, not buyer demand. Never convert them to leads.
     if(x.object==='listing' || (x.pricing && x.seller && x.payment)) continue;
     const title=String(x.title??x.name??x.service??x.subject??'').trim().slice(0,500);
-    const description=String(x.description??x.descriptionText??x.summary??x.details??x.request??x.requirements??[...(Array.isArray(x.skillsTags)?x.skillsTags:[]),x.budgetText].filter(Boolean).join(' | ')).trim().slice(0,5000);
+    const description=String(x.description??x.descriptionText??x.summary??x.details??x.request??x.requirements??x.body??x.content??[...(Array.isArray(x.skillsTags)?x.skillsTags:[]),x.budgetText].filter(Boolean).join(' | ')).trim().slice(0,5000);
     const sourceUrl=String(x.url??x.href??x.listing_url??x.public_url??'').trim().slice(0,2000);
     if(!title && !description) continue;
     const providerId=x.id??x.listing_id??x.job_id??x.opportunity_id;
