@@ -6,6 +6,8 @@ import { registerCapability, listCapabilities, checkBudget } from './registry.js
 import { sanitizeExternalInput, validateMarketplaceLead, authorizeAction } from './policy.js';
 
 const TIMEOUT_MS = 8000;
+const DEMAND_MAX_AGE_DAYS = 30;
+const AGENTJOB_MCP_URL = 'https://agent-job.ai/api/mcp';
 
 const PUBLIC_SOURCES = [
   {id:'agent_souk',kind:'marketplace',provider:'Agent Souk',protocol:'API/MCP/A2A',endpoint:'https://api.agentsouk.dev/v1/listings',cost_class:'free',risk:'medium'},
@@ -21,7 +23,7 @@ async function fetchJson(url, init={}) {
   try {
     const res = await fetch(url,{...init,signal:ctrl.signal,headers:{accept:'application/json,text/plain,*/*',...(init.headers||{})}});
     const text = await res.text();
-    return {ok:res.ok,status:res.status,text:text.slice(0,100000),contentType:res.headers.get('content-type')||''};
+    return {ok:res.ok,status:res.status,text:text.slice(0,100000),contentType:res.headers.get('content-type')||'',headers:{'mcp-session-id':res.headers.get('mcp-session-id')||null}};
   } finally { clearTimeout(timer); }
 }
 
@@ -49,7 +51,8 @@ export function extractListings(payload){
   const candidates = Array.isArray(data) ? data : [
     data?.listings, data?.results, data?.items, data?.jobs, data?.tasks, data?.opportunities,
     data?.data, data?.data?.listings, data?.data?.results, data?.data?.items,
-    data?.data?.jobs, data?.data?.tasks, data?.data?.opportunities, data?.data?.agents
+    data?.data?.jobs, data?.data?.tasks, data?.data?.opportunities, data?.data?.agents,
+    data?.posts, data?.threads, data?.data?.posts, data?.data?.threads
   ].find(Array.isArray) || [];
   const seen=new Set();
   const out=[];
@@ -66,7 +69,7 @@ export function extractListings(payload){
     const id=String(providerId??('content:'+normalized));
     if(seen.has(id)) continue;
     seen.add(id);
-    out.push({id,title,description,source_url:sourceUrl});
+    out.push({id,title,description,source_url:sourceUrl,created_at:x.createdAt??x.created_at??x.created??x.published_at??x.publishedAt??null,deadline:x.deadline??x.due_at??x.dueAt??x.expires_at??x.expiresAt??null,status:x.status??x.state??x.task_status??null,updated_at:x.updatedAt??x.updated_at??null,budget:x.budget??x.reward??x.price??null});
   }
   return out;
 }
@@ -83,17 +86,79 @@ function countExcludedSupplyOffers(payload){
 // Keep it visible for diagnostics, but do not interpret those offers as requests.
 const DEFAULT_DEMAND_SOURCES=[
   {source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'},
-  {source:'opentask_public_tasks',url:'https://opentask.ai/api/tasks?limit=50',provider:'OpenTask Public Tasks'}
+  {source:'opentask_public_tasks',url:'https://opentask.ai/api/tasks?limit=50',provider:'OpenTask Public Tasks'},
+  {source:'agent_job_public_mcp',url:AGENTJOB_MCP_URL,provider:'AgentJob Task Square',protocol:'MCP'}
 ];
 
-export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES}={}) {
+function parseMcpBody(text, contentType='') {
+  const raw=String(text||'');
+  if(contentType.includes('text/event-stream') || /^event:|^data:/m.test(raw)) {
+    const data=raw.split(/\r?\n/).filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).filter(Boolean);
+    for(let i=data.length-1;i>=0;i--){try{return JSON.parse(data[i]);}catch{}}
+  }
+  try{return JSON.parse(raw);}catch{return {raw:raw.slice(0,2000)};}
+}
+
+function decodeAgentJobPosts(response) {
+  let payload=parseMcpBody(response.text,response.contentType||'');
+  for(let depth=0;depth<4;depth++){
+    if(Array.isArray(payload?.result?.content)){
+      const textPart=payload.result.content.find(x=>typeof x?.text==='string')?.text;
+      if(textPart){try{payload=JSON.parse(textPart);continue;}catch{}}
+    }
+    if(payload?.structuredContent && typeof payload.structuredContent==='object'){payload=payload.structuredContent;continue;}
+    if(payload?.result && !Array.isArray(payload.result.content)){payload=payload.result;continue;}
+    break;
+  }
+  return payload;
+}
+
+export async function fetchAgentJobPosts(fetcher=fetchJson) {
+  const headers={'content-type':'application/json','accept':'application/json, text/event-stream'};
+  const init=await fetcher(AGENTJOB_MCP_URL,{method:'POST',headers,body:JSON.stringify({
+    jsonrpc:'2.0',id:1,method:'initialize',
+    params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'atlas-demand-scanner',version:'1.0.0'}}
+  })});
+  if(!init.ok) return init;
+  const initPayload=parseMcpBody(init.text,init.contentType||'');
+  if(initPayload?.error) return {...init,ok:false,status:502,text:JSON.stringify({error:initPayload.error})};
+  const sessionId=init.headers?.['mcp-session-id']||null;
+  const callHeaders={...headers,'mcp-protocol-version':'2025-03-26',...(sessionId?{'mcp-session-id':sessionId}:{})};
+  await fetcher(AGENTJOB_MCP_URL,{method:'POST',headers:callHeaders,body:JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})});
+  const call=await fetcher(AGENTJOB_MCP_URL,{method:'POST',headers:callHeaders,body:JSON.stringify({
+    jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'list_posts',arguments:{sort:'recent',page:1,limit:50}}
+  })});
+  if(!call.ok) return call;
+  const payload=decodeAgentJobPosts(call);
+  if(payload?.error) return {...call,ok:false,status:502,text:JSON.stringify({error:payload.error})};
+  return {...call,text:JSON.stringify(payload)};
+}
+
+function parseDate(value) {
+  if(value===null||value===undefined||value==='') return null;
+  const n=typeof value==='number'?(value<1e12?value*1000:value):Date.parse(String(value));
+  return Number.isFinite(n)?new Date(n):null;
+}
+
+export function demandRejectionReason(lead,source,now=Date.now()) {
+  const status=String(lead.status||'').trim().toLowerCase();
+  if(/^(closed|complete|completed|cancelled|canceled|expired|fulfilled|archived|rejected|paid)$/.test(status)) return 'inactive_status';
+  const deadline=parseDate(lead.deadline);
+  if(deadline && deadline.getTime()<now) return 'expired_deadline';
+  const created=parseDate(lead.created_at);
+  if(created && created.getTime()<now-DEMAND_MAX_AGE_DAYS*86400000) return 'stale';
+  if(source==='opentask_public_tasks' && /\b(fund|deposit|pay upfront|purchase|buy|register|wallet|transaction|escrow)\b/i.test(lead.title+' '+lead.description)) return 'upfront_payment_or_registration';
+  return null;
+}
+
+export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
   const budget=await checkBudget(db,{external_requests:sources.length});
   if(!budget.allowed) return {ok:false,blocked:budget.violations,signals:[]};
   const signals=[];
   const diagnostics=[];
   for(const s of sources){
     try {
-      const r=await fetcher(s.url);
+      const r=s.protocol==='MCP' ? await fetchAgentJobPosts(fetcher) : await fetcher(s.url);
       if(!r.ok) {
         diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status});
         await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
@@ -102,20 +167,28 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       const listings=extractListings(r.text);
       const offersExcluded=countExcludedSupplyOffers(r.text);
       let accepted=0,duplicates=0,rejected=0;
+      const rejection_counts={};
+      const rejection_samples=[];
       for(const lead of listings){
-        // OpenTask is an agent-native task board, but some tasks require an upfront deposit,
-        // wallet action, account registration, or funding another task. Do not auto-qualify those.
-        if(s.source==='opentask_public_tasks' && /\b(fund|deposit|pay upfront|purchase|buy|register|wallet|transaction|escrow)\b/i.test(lead.title+' '+lead.description)){
+        const reason=demandRejectionReason(lead,s.source,now);
+        if(reason){
           rejected++;
+          rejection_counts[reason]=(rejection_counts[reason]||0)+1;
+          if(rejection_samples.length<10) rejection_samples.push({id:lead.id,title:lead.title,reason});
           continue;
         }
         const safe=sanitizeExternalInput(lead);
         const valid=validateMarketplaceLead(safe.data);
-        if(!valid.ok) { rejected++; continue; }
-        // The provider ID is preferred; content-derived IDs keep ID-less listings stable across scans.
+        if(!valid.ok){
+          rejected++;
+          const why=valid.reason==='HIGH_RISK_REQUEST'?'service_mismatch_or_high_risk':(valid.reason||'invalid_lead');
+          rejection_counts[why]=(rejection_counts[why]||0)+1;
+          if(rejection_samples.length<10) rejection_samples.push({id:lead.id,title:lead.title,reason:why});
+          continue;
+        }
         const key=s.source+'|'+lead.id;
         const exists=await db.prepare('SELECT id FROM demand_signals WHERE signal_key=?').bind(key).first();
-        if(exists) { duplicates++; continue; }
+        if(exists){duplicates++;continue;}
         const summary=String([lead.title,lead.description].filter(Boolean).join(' — ')).slice(0,3000);
         const score=Number((valid.score*0.7 + 0.3).toFixed(4));
         await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status) VALUES(?,?,?,?,?)')
@@ -123,7 +196,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
         accepted++;
       }
-      diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected});
+      diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected,rejection_counts,rejection_samples,age_policy_days:DEMAND_MAX_AGE_DAYS});
     } catch(e) {
       diagnostics.push({source:s.source,status:'ERROR',error:String(e?.message||e).slice(0,300)});
     }
