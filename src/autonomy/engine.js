@@ -86,7 +86,7 @@ function countExcludedSupplyOffers(payload){
 // Keep it visible for diagnostics, but do not interpret those offers as requests.
 const DEFAULT_DEMAND_SOURCES=[
   {source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'},
-  {source:'opentask_public_tasks',url:'https://opentask.ai/api/tasks?limit=50',provider:'OpenTask Public Tasks'},
+  {source:'opentask_public_tasks',url:'https://opentask.ai/api/tasks?sort=new&limit=50',provider:'OpenTask Public Tasks'},
   {source:'agent_job_public_mcp',url:AGENTJOB_MCP_URL,provider:'AgentJob Task Square',protocol:'MCP'}
 ];
 
