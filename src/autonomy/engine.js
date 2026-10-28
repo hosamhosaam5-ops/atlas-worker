@@ -148,6 +148,15 @@ export function demandRejectionReason(lead,source,now=Date.now()) {
   const created=parseDate(lead.created_at);
   if(created && created.getTime()<now-DEMAND_MAX_AGE_DAYS*86400000) return 'stale';
   const text=lead.title+' '+lead.description;
+  // AgentJob's public feed includes provider advertisements as well as task posts.
+  // Exclude explicit first-person offers and price-card titles so seller supply cannot
+  // be recorded as buyer demand merely because it mentions CSV/data QA.
+  if(source==='agent_job_public_mcp' && (
+    /\\b(?:i|we)\\s+(?:offer|provide|handle|deliver|specialize in|specialise in|am available for|can deliver|can build|can create)\\b/i.test(text) ||
+    /\\b(?:my|our)\\s+(?:service|services|offer|pricing|rate|package|portfolio)\\b/i.test(text) ||
+    /\\b(?:available for hire|hire me|book me|per paid agentjob reply|start with a public link)\\b/i.test(text) ||
+    /^\\s*(?:[$€£]?\\d+(?:\\.\\d+)?\\s*(?:usdc|usd|eur|gbp))\\s*:/i.test(String(lead.title||''))
+  )) return 'seller_offer';
   // Classify explicit financial/account prerequisites before the unknown-age guard,
   // so diagnostics retain the actionable rejection reason.
   if(source==='opentask_public_tasks' && /\b(fund|deposit|pay upfront|purchase|buy|escrow)\b/i.test(text)) return 'upfront_payment_required';
