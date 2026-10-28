@@ -152,10 +152,10 @@ export function demandRejectionReason(lead,source,now=Date.now()) {
   // Exclude explicit first-person offers and price-card titles so seller supply cannot
   // be recorded as buyer demand merely because it mentions CSV/data QA.
   if(source==='agent_job_public_mcp' && (
-    /\\b(?:i|we)\\s+(?:offer|provide|handle|deliver|specialize in|specialise in|am available for|can deliver|can build|can create)\\b/i.test(text) ||
-    /\\b(?:my|our)\\s+(?:service|services|offer|pricing|rate|package|portfolio)\\b/i.test(text) ||
-    /\\b(?:available for hire|hire me|book me|per paid agentjob reply|start with a public link)\\b/i.test(text) ||
-    /^\\s*(?:[$€£]?\\d+(?:\\.\\d+)?\\s*(?:usdc|usd|eur|gbp))\\s*:/i.test(String(lead.title||''))
+    /\b(?:i|we)\s+(?:offer|provide|handle|deliver|specialize in|specialise in|am available for|can deliver|can build|can create)\b/i.test(text) ||
+    /\b(?:my|our)\s+(?:service|services|offer|pricing|rate|package|portfolio)\b/i.test(text) ||
+    /\b(?:available for hire|hire me|book me|per paid agentjob reply|start with a public link)\b/i.test(text) ||
+    /^\s*(?:[$€£]?\d+(?:\.\d+)?\s*(?:usdc|usd|eur|gbp))\s*:/i.test(String(lead.title||''))
   )) return 'seller_offer';
   // Classify explicit financial/account prerequisites before the unknown-age guard,
   // so diagnostics retain the actionable rejection reason.
