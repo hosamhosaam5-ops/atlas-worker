@@ -51,8 +51,11 @@ export function extractListings(payload){
   try { data=typeof payload==='string'?JSON.parse(payload):payload; } catch { return []; }
   const candidates = Array.isArray(data) ? data : [
     data?.listings, data?.results, data?.items, data?.jobs, data?.tasks, data?.requests, data?.opportunities,
+    // Unified discovery contains mixed supply and demand. Prefer the explicit buyer-request
+    // collection so agents/offers are never mistaken for customer demand.
+    data?.openRequests, data?.data?.openRequests, data?.data?.requests,
     data?.data, data?.data?.listings, data?.data?.results, data?.data?.items,
-    data?.data?.jobs, data?.data?.tasks, data?.data?.requests, data?.data?.opportunities, data?.data?.agents,
+    data?.data?.jobs, data?.data?.tasks, data?.data?.opportunities, data?.agents, data?.data?.agents,
     data?.posts, data?.threads, data?.data?.posts, data?.data?.threads
   ].find(Array.isArray) || [];
   const seen=new Set();
@@ -71,7 +74,7 @@ export function extractListings(payload){
     const id=String(providerId??('content:'+normalized));
     if(seen.has(id)) continue;
     seen.add(id);
-    out.push({id,title,description,source_url:sourceUrl,created_at:x.createdAt??x.created_at??x.created??x.published_at??x.publishedAt??null,deadline:x.deadline??x.due_at??x.dueAt??x.expires_at??x.expiresAt??null,status:x.status??x.state??x.task_status??null,updated_at:x.updatedAt??x.updated_at??null,budget:x.budget??x.reward??x.price??null});
+    out.push({id,title,description,source_url:sourceUrl,created_at:x._creationTime??x.createdAt??x.created_at??x.created??x.published_at??x.publishedAt??null,deadline:x.deadline??x.due_at??x.dueAt??x.expires_at??x.expiresAt??null,status:x.status??x.state??x.task_status??null,updated_at:x.updatedAt??x.updated_at??null,budget:x.budget??x.reward??x.price??null});
   }
   return out;
 }
@@ -169,21 +172,57 @@ export function demandRejectionReason(lead,source,now=Date.now()) {
   return null;
 }
 
+// PayanAgent's unified discovery endpoint requires q and returns a distinct openRequests
+// array alongside seller offers. Only invoke it after a server-side failure on the
+// dedicated open-requests endpoint; both calls remain unauthenticated GET requests.
+const PAYANAGENT_DISCOVER_FALLBACK_URL='https://payanagent.com/api/v1/discover?q=csv&limit=50';
+
+async function fetchPayanAgentOpenRequests(fetcher,url) {
+  const primary=await fetcher(url,{method:'GET'});
+  if(primary.ok || !(primary.status>=500)) return {...primary,fallbackUsed:false,requestedEndpoint:url};
+  const fallback=await fetcher(PAYANAGENT_DISCOVER_FALLBACK_URL,{method:'GET'});
+  return {
+    ...fallback,
+    fallbackUsed:true,
+    primaryHttpStatus:primary.status,
+    requestedEndpoint:PAYANAGENT_DISCOVER_FALLBACK_URL
+  };
+}
+
+function extractPayanAgentFallbackPayload(payload) {
+  try {
+    const data=typeof payload==='string'?JSON.parse(payload):payload;
+    // Do not feed the unified payload directly to generic parsers: only buyer requests
+    // are demand. Agents and offers in the same response are intentionally ignored.
+    const requests=Array.isArray(data?.openRequests)?data.openRequests:
+      (Array.isArray(data?.data?.openRequests)?data.data.openRequests:[]);
+    return {requests};
+  } catch { return {requests:[]}; }
+}
+
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
-  const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:1),0);
+  // Reserve budget for the one additional GET that may be used by the PayanAgent fallback.
+  const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:(source.source==='payanagent_open_requests'?2:1)),0);
   const budget=await checkBudget(db,{external_requests:externalRequests});
   if(!budget.allowed) return {ok:false,blocked:budget.violations,signals:[]};
   const signals=[];
   const diagnostics=[];
   for(const s of sources){
     try {
-      const r=s.protocol==='MCP' ? await fetchAgentJobPosts(fetcher) : await fetcher(s.url);
+      const r=s.protocol==='MCP'
+        ? await fetchAgentJobPosts(fetcher)
+        : (s.source==='payanagent_open_requests'
+          ? await fetchPayanAgentOpenRequests(fetcher,s.url)
+          : await fetcher(s.url,{method:'GET'}));
       if(!r.ok) {
-        diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status});
+        diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status,
+          ...(r.fallbackUsed?{fallback_used:true,primary_http_status:r.primaryHttpStatus}: {})});
         await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:s.protocol||'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
         continue;
       }
-      const listings=extractListings(r.text);
+      const listings=(s.source==='payanagent_open_requests' && r.fallbackUsed)
+        ? extractListings(extractPayanAgentFallbackPayload(r.text))
+        : extractListings(r.text);
       const offersExcluded=countExcludedSupplyOffers(r.text);
       let accepted=0,duplicates=0,rejected=0;
       const rejection_counts={};
@@ -215,7 +254,8 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
         accepted++;
       }
-      diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected,rejection_counts,rejection_samples,age_policy_days:DEMAND_MAX_AGE_DAYS});
+      diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected,rejection_counts,rejection_samples,age_policy_days:DEMAND_MAX_AGE_DAYS,
+        ...(r.fallbackUsed?{fallback_used:true,primary_http_status:r.primaryHttpStatus,endpoint:r.requestedEndpoint}: {})});
     } catch(e) {
       diagnostics.push({source:s.source,status:'ERROR',error:String(e?.message||e).slice(0,300)});
     }
