@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   live-a2a-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Verify live health and active Agent Card contract
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload read-only protocol evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: atlas-read-only-a2a-protocol-evidence
           path: evidence/
