@@ -69,8 +69,8 @@ test('demand scanner rejects expired, stale, inactive and upfront-registration t
   assert.equal(demandRejectionReason({status:'closed'}, 'agent_job_public_mcp', now), 'inactive_status');
   assert.equal(demandRejectionReason({deadline:'2026-10-01T00:00:00Z'}, 'opentask_public_tasks', now), 'expired_deadline');
   assert.equal(demandRejectionReason({created_at:'2026-09-01T00:00:00Z'}, 'opentask_public_tasks', now), 'stale');
-  assert.equal(demandRejectionReason({title:'Fund bounty',description:''}, 'opentask_public_tasks', now), 'upfront_payment_required');
-  assert.equal(demandRejectionReason({title:'Register wallet for bounty',description:''}, 'opentask_public_tasks', now), 'registration_or_wallet_required');
+  assert.equal(demandRejectionReason({title:'Fund bounty',description:'',created_at:'2026-10-27T00:00:00Z}, 'opentask_public_tasks', now), 'upfront_payment_required');
+  assert.equal(demandRejectionReason({title:'Register wallet for bounty',description:'',created_at:'2026-10-27T00:00:00Z}, 'opentask_public_tasks', now), 'registration_or_wallet_required');
   assert.equal(demandRejectionReason({title:'API documentation audit',description:'Review OpenAPI docs',created_at:'2026-10-27T00:00:00Z'}, 'agent_job_public_mcp', now), 'service_mismatch');
   assert.equal(demandRejectionReason({title:'CSV cleanup',description:''}, 'agent_job_public_mcp', now), 'unverified_age');
   const rows = extractListings({tasks:[{id:'fresh-1',title:'CSV data cleanup',description:'Need QA',createdAt:'2026-10-27T00:00:00Z',deadline:'2026-11-01T00:00:00Z',status:'open'}]});
