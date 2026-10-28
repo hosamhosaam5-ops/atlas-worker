@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   live-agent-card-contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
       - name: Check live discovery card matches founder-approved active-offer contract
