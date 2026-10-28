@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -30,9 +30,9 @@ jobs:
       TEST_DATABASE_ID: 7aadb3d6-0404-48ef-aadb-6526874b8ddd
     steps:
       - name: Checkout main commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -124,7 +124,7 @@ jobs:
           cat worker-tail.log
       - name: Upload isolated D1 evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: atlas-isolated-d1-integration-${{ github.run_id }}
           path: |

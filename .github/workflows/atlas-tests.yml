@@ -15,13 +15,13 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
       - name: Install dependencies
@@ -33,15 +33,15 @@ jobs:
     # Never submit or mutate the external Registry from pull-request validation.
     # Keep this integration limited to the canonical main branch.
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - name: Set up Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
       - name: Check existing public Registry entry before any submit
@@ -130,7 +130,7 @@ jobs:
       # CI pushes must not wait for production to match main while deployments are intentionally manual.
       - name: Upload registry evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: atlas-registry-evidence-${{ github.run_id }}
           path: |
@@ -142,7 +142,7 @@ jobs:
     # Live A2A probes are opt-in and never run on routine pushes or PRs.
     if: github.event_name == 'workflow_dispatch' && vars.ATLAS_RUN_PRODUCTION_A2A_PROBE == 'true' && github.ref == 'refs/heads/main'
     needs: [test, registry_submit]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Verify production A2A rejects work while paid offer is paused
@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload production safety evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: atlas-paused-offer-production-evidence
           path: |
