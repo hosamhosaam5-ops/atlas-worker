@@ -189,6 +189,17 @@ async function fetchPayanAgentOpenRequests(fetcher,url) {
   };
 }
 
+function extractPayanAgentFallbackPayload(payload) {
+  try {
+    const data=typeof payload==='string'?JSON.parse(payload):payload;
+    // Do not feed the unified payload directly to generic parsers: only buyer requests
+    // are demand. Agents and offers in the same response are intentionally ignored.
+    const requests=Array.isArray(data?.openRequests)?data.openRequests:
+      (Array.isArray(data?.data?.openRequests)?data.data.openRequests:[]);
+    return {requests};
+  } catch { return {requests:[]}; }
+}
+
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
   // Reserve budget for the one additional GET that may be used by the PayanAgent fallback.
   const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:(source.source==='payanagent_open_requests'?2:1)),0);
@@ -209,7 +220,9 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:s.protocol||'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
         continue;
       }
-      const listings=extractListings(r.text);
+      const listings=(s.source==='payanagent_open_requests' && r.fallbackUsed)
+        ? extractListings(extractPayanAgentFallbackPayload(r.text))
+        : extractListings(r.text);
       const offersExcluded=countExcludedSupplyOffers(r.text);
       let accepted=0,duplicates=0,rejected=0;
       const rejection_counts={};
