@@ -179,16 +179,18 @@ test('PayanAgent public open requests are normalized, age-checked, and kept read
 });
 
 
-test('PayanAgent falls back to unified discover on 5xx and consumes only openRequests via GET',async()=>{
+test('PayanAgent uses filtered open-requests fallback before unified discovery',async()=>{
   const db=new DemandDb();
   const calls=[];
-  const fallbackUrl='https://payanagent.com/api/v1/discover?q=csv&limit=50';
+  const primaryUrl='https://payanagent.com/api/v1/requests?status=open&limit=50';
+  const filteredUrl='https://payanagent.com/api/v1/requests?status=open&q=csv&limit=50';
+  const discoverUrl='https://payanagent.com/api/v1/discover?q=csv&limit=50';
   const fetcher=async(url,init={})=>{
     calls.push({url,method:init.method||'GET'});
-    if(url==='https://payanagent.com/api/v1/requests?status=open&limit=50'){
+    if(url===primaryUrl || url===filteredUrl){
       return {ok:false,status:500,contentType:'application/json',text:JSON.stringify({error:'temporary backend error'})};
     }
-    if(url===fallbackUrl){
+    if(url===discoverUrl){
       return {ok:true,status:200,contentType:'application/json',text:JSON.stringify({
         agents:[{_id:'agent-supply-1',name:'CSV data cleaning provider'}],
         offers:[{_id:'offer-supply-1',title:'CSV cleanup API',description:'We sell CSV cleaning service.'}],
@@ -208,13 +210,14 @@ test('PayanAgent falls back to unified discover on 5xx and consumes only openReq
   };
   const result=await scanAgentDemand(db,{
     fetcher,
-    sources:[{source:'payanagent_open_requests',provider:'PayanAgent Open Requests',url:'https://payanagent.com/api/v1/requests?status=open&limit=50'}],
+    sources:[{source:'payanagent_open_requests',provider:'PayanAgent Open Requests',url:primaryUrl}],
     now:Date.parse('2026-10-29T00:00:00Z')
   });
   assert.equal(result.ok,true);
   assert.deepEqual(calls,[
-    {url:'https://payanagent.com/api/v1/requests?status=open&limit=50',method:'GET'},
-    {url:fallbackUrl,method:'GET'}
+    {url:primaryUrl,method:'GET'},
+    {url:filteredUrl,method:'GET'},
+    {url:discoverUrl,method:'GET'}
   ]);
   assert.equal(result.signals.length,1);
   assert.equal(result.signals[0].id,'payan-request-93');
@@ -222,11 +225,50 @@ test('PayanAgent falls back to unified discover on 5xx and consumes only openReq
   assert.match(db.signals[0].request_summary,/45.00 USD/);
   assert.equal(result.diagnostics[0].http_status,200);
   assert.equal(result.diagnostics[0].fallback_used,true);
+  assert.equal(result.diagnostics[0].fallback_stage,'discover');
   assert.equal(result.diagnostics[0].primary_http_status,500);
   assert.equal(result.diagnostics[0].accepted,1);
 });
 
-test('PayanAgent does not accept signals when both the primary and fallback endpoints fail',async()=>{
+test('PayanAgent accepts filtered open requests before hitting unified discovery',async()=>{
+  const db=new DemandDb();
+  const calls=[];
+  const primaryUrl='https://payanagent.com/api/v1/requests?status=open&limit=50';
+  const filteredUrl='https://payanagent.com/api/v1/requests?status=open&q=csv&limit=50';
+  const fetcher=async(url,init={})=>{
+    calls.push({url,method:init.method||'GET'});
+    if(url===primaryUrl) return {ok:false,status:500,contentType:'application/json',text:'{"error":"listOpen unavailable"}'};
+    if(url===filteredUrl) return {ok:true,status:200,contentType:'application/json',text:JSON.stringify({
+      requests:[{
+        _id:'payan-filtered-94',
+        _creationTime:Date.parse('2026-10-28T12:00:00Z'),
+        status:'open',
+        title:'Clean and validate a CSV dataset',
+        description:'Need duplicate-row removal, schema validation, and normalized CSV output.',
+        budgetMaxCents:5000,
+        currency:'USD',
+        escrow:false
+      }]
+    })};
+    throw new Error('Unexpected URL: '+url);
+  };
+  const result=await scanAgentDemand(db,{
+    fetcher,
+    sources:[{source:'payanagent_open_requests',provider:'PayanAgent Open Requests',url:primaryUrl}],
+    now:Date.parse('2026-10-29T00:00:00Z')
+  });
+  assert.equal(result.signals.length,1);
+  assert.equal(result.signals[0].id,'payan-filtered-94');
+  assert.deepEqual(calls,[
+    {url:primaryUrl,method:'GET'},
+    {url:filteredUrl,method:'GET'}
+  ]);
+  assert.equal(result.diagnostics[0].fallback_stage,'filtered_requests');
+  assert.equal(result.diagnostics[0].primary_http_status,500);
+  assert.equal(result.diagnostics[0].accepted,1);
+});
+
+test('PayanAgent records final endpoint diagnostics and creates no signal when all three reads fail',async()=>{
   const db=new DemandDb();
   const calls=[];
   const result=await scanAgentDemand(db,{
@@ -239,10 +281,13 @@ test('PayanAgent does not accept signals when both the primary and fallback endp
   assert.equal(result.ok,true);
   assert.equal(result.signals.length,0);
   assert.equal(db.signals.length,0);
-  assert.equal(calls.length,2);
+  assert.equal(calls.length,3);
   assert.ok(calls.every(call=>call.method==='GET'));
   assert.equal(result.diagnostics[0].status,'HTTP_ERROR');
   assert.equal(result.diagnostics[0].http_status,500);
   assert.equal(result.diagnostics[0].fallback_used,true);
+  assert.equal(result.diagnostics[0].fallback_stage,'discover');
   assert.equal(result.diagnostics[0].primary_http_status,500);
+  assert.equal(result.diagnostics[0].intermediate_http_status,500);
+  assert.equal(result.diagnostics[0].endpoint,'https://payanagent.com/api/v1/discover?q=csv&limit=50');
 });
