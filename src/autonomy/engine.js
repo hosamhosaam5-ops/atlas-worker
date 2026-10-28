@@ -11,6 +11,7 @@ const AGENTJOB_MCP_URL = 'https://agent-job.ai/api/mcp';
 
 const PUBLIC_SOURCES = [
   {id:'agent_souk',kind:'marketplace',provider:'Agent Souk',protocol:'API/MCP/A2A',endpoint:'https://api.agentsouk.dev/v1/listings',cost_class:'free',risk:'medium'},
+  {id:'payanagent_open_requests',kind:'marketplace',provider:'PayanAgent Open Requests',protocol:'API',endpoint:'https://payanagent.com/api/v1/requests?status=open&limit=50',cost_class:'free',risk:'medium'},
   {id:'agentgigs',kind:'marketplace',provider:'AgentGigs',protocol:'API',endpoint:'https://www.agentgigs.io/docs/api',cost_class:'free',risk:'medium'},
   {id:'ecc',kind:'engineering',provider:'ECC',protocol:'GitHub/CLI',endpoint:'https://github.com/affaan-m/ECC',cost_class:'free_open_source',risk:'high'},
   {id:'okara_ai_cmo',kind:'growth',provider:'Okara AI CMO',protocol:'web',endpoint:'https://okara.ai/',cost_class:'free_or_trial',risk:'medium'},
@@ -49,9 +50,9 @@ export function extractListings(payload){
   let data;
   try { data=typeof payload==='string'?JSON.parse(payload):payload; } catch { return []; }
   const candidates = Array.isArray(data) ? data : [
-    data?.listings, data?.results, data?.items, data?.jobs, data?.tasks, data?.opportunities,
+    data?.listings, data?.results, data?.items, data?.jobs, data?.tasks, data?.requests, data?.opportunities,
     data?.data, data?.data?.listings, data?.data?.results, data?.data?.items,
-    data?.data?.jobs, data?.data?.tasks, data?.data?.opportunities, data?.data?.agents,
+    data?.data?.jobs, data?.data?.tasks, data?.data?.requests, data?.data?.opportunities, data?.data?.agents,
     data?.posts, data?.threads, data?.data?.posts, data?.data?.threads
   ].find(Array.isArray) || [];
   const seen=new Set();
@@ -61,10 +62,11 @@ export function extractListings(payload){
     // Catalog listings are seller offers, not buyer demand. Never convert them to leads.
     if(x.object==='listing' || (x.pricing && x.seller && x.payment)) continue;
     const title=String(x.title??x.name??x.service??x.subject??'').trim().slice(0,500);
-    const description=String(x.description??x.descriptionText??x.summary??x.details??x.request??x.requirements??x.body??x.content??[...(Array.isArray(x.skillsTags)?x.skillsTags:[]),x.budgetText].filter(Boolean).join(' | ')).trim().slice(0,5000);
+    const budgetHint=x.budgetMaxCents!==undefined&&x.budgetMaxCents!==null&&Number.isFinite(Number(x.budgetMaxCents)) ? ('Budget max: '+(Number(x.budgetMaxCents)/100).toFixed(2)+' '+String(x.currency??'USD')) : '';
+    const description=String([x.description??x.descriptionText??x.summary??x.details??x.request??x.requirements??x.body??x.content??[...(Array.isArray(x.skillsTags)?x.skillsTags:[]),x.budgetText].filter(Boolean).join(' | '),budgetHint].filter(Boolean).join(' | ')).trim().slice(0,5000);
     const sourceUrl=String(x.url??x.href??x.listing_url??x.public_url??'').trim().slice(0,2000);
     if(!title && !description) continue;
-    const providerId=x.id??x.listing_id??x.job_id??x.opportunity_id;
+    const providerId=x.id??x._id??x.requestId??x.listing_id??x.job_id??x.opportunity_id;
     const normalized=[title,description,sourceUrl].map(v=>v.toLowerCase().replace(/\s+/g,' ').trim()).join('|');
     const id=String(providerId??('content:'+normalized));
     if(seen.has(id)) continue;
@@ -86,6 +88,7 @@ function countExcludedSupplyOffers(payload){
 // Keep it visible for diagnostics, but do not interpret those offers as requests.
 const DEFAULT_DEMAND_SOURCES=[
   {source:'agent_souk',url:'https://api.agentsouk.dev/v1/listings',provider:'Agent Souk'},
+  {source:'payanagent_open_requests',url:'https://payanagent.com/api/v1/requests?status=open&limit=50',provider:'PayanAgent Open Requests'},
   {source:'opentask_public_tasks',url:'https://opentask.ai/api/tasks?sort=new&limit=50',provider:'OpenTask Public Tasks'},
   {source:'agent_job_public_mcp',url:AGENTJOB_MCP_URL,provider:'AgentJob Task Square',protocol:'MCP'}
 ];
@@ -161,8 +164,8 @@ export function demandRejectionReason(lead,source,now=Date.now()) {
   // so diagnostics retain the actionable rejection reason.
   if(source==='opentask_public_tasks' && /\b(fund|deposit|pay upfront|purchase|buy|escrow)\b/i.test(text)) return 'upfront_payment_required';
   if(source==='opentask_public_tasks' && /\b(register|wallet|transaction)\b/i.test(text)) return 'registration_or_wallet_required';
-  if((source==='opentask_public_tasks'||source==='agent_job_public_mcp') && !created && !(deadline && deadline.getTime()>=now)) return 'unverified_age';
-  if((source==='opentask_public_tasks'||source==='agent_job_public_mcp') && !/\b(csv|xlsx|spreadsheet|dataset|data quality|data cleaning|data validation|tabular data|structured data|missing values|duplicate rows|json to csv|csv to json|data qa)\b/i.test(text)) return 'service_mismatch';
+  if((source==='opentask_public_tasks'||source==='agent_job_public_mcp'||source==='payanagent_open_requests') && !created && !(deadline && deadline.getTime()>=now)) return 'unverified_age';
+  if((source==='opentask_public_tasks'||source==='agent_job_public_mcp'||source==='payanagent_open_requests') && !/\b(csv|xlsx|spreadsheet|dataset|data quality|data cleaning|data validation|tabular data|structured data|missing values|duplicate rows|json to csv|csv to json|data qa)\b/i.test(text)) return 'service_mismatch';
   return null;
 }
 

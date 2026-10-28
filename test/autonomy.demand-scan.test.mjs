@@ -157,3 +157,23 @@ test('OpenTask public agent tasks become signals while upfront-funding tasks are
   assert.equal(second.diagnostics[0].duplicates,1);
   assert.equal(db.signals.length,1);
 });
+test('PayanAgent public open requests are normalized, age-checked, and kept read-only',async()=>{
+  const db=new DemandDb();
+  const requestedUrls=[];
+  const fetcher=async(url)=>{requestedUrls.push(url);return {ok:true,status:200,contentType:'application/json',text:JSON.stringify({
+    requests:[
+      {_id:'payanagent-csv-91',createdAt:'2026-10-28T12:00:00Z',status:'open',title:'Clean and validate a CSV dataset',description:'Need duplicate-row removal and schema validation, return a normalized CSV.',budgetMaxCents:4500,currency:'USD',escrow:false},
+      {_id:'payanagent-old-92',createdAt:'2026-08-01T12:00:00Z',status:'open',title:'Clean an old CSV dataset',description:'Need data cleaning and validation.',budgetMaxCents:2500}
+    ]
+  })};};
+  const options={fetcher,sources:[{source:'payanagent_open_requests',provider:'PayanAgent Open Requests',url:'https://payanagent.com/api/v1/requests?status=open&limit=50'}],now:Date.parse('2026-10-29T00:00:00Z')};
+  const result=await scanAgentDemand(db,options);
+  assert.equal(result.ok,true);
+  assert.deepEqual(requestedUrls,['https://payanagent.com/api/v1/requests?status=open&limit=50']);
+  assert.equal(result.signals.length,1);
+  assert.equal(result.signals[0].id,'payanagent-csv-91');
+  assert.match(db.signals[0].request_summary,/45.00 USD/);
+  assert.equal(result.diagnostics[0].accepted,1);
+  assert.equal(result.diagnostics[0].rejected,1);
+  assert.equal(result.diagnostics[0].rejection_counts.stale,1);
+});
