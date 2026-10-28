@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   unauthenticated-discovery:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
       - name: Probe public MCP authorization discovery (read-only)
