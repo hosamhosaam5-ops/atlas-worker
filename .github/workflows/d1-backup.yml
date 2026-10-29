@@ -96,9 +96,9 @@ jobs:
           if not lines or lines[-1].rstrip(";").strip().upper() not in {"COMMIT", "END TRANSACTION"} or not lines[-1].endswith(";"):
               raise SystemExit("FAIL: final SQL line is not a complete COMMIT/END TRANSACTION statement")
 
-          ident = r'(?:"([^"]+)"|`([^`]+)`|\\[([^\\]]+)\\]|([A-Za-z_][A-Za-z0-9_]*))'
-          create_re = re.compile(r"^\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?"+ident, re.I | re.M)
-          insert_re = re.compile(r"^\\s*INSERT\\s+INTO\\s+"+ident, re.I | re.M)
+          ident = r'(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))'
+          create_re = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"+ident, re.I | re.M)
+          insert_re = re.compile(r"^\s*INSERT\s+INTO\s+"+ident, re.I | re.M)
 
           def name(m):
               return next(g for g in m.groups() if g is not None)
@@ -130,15 +130,15 @@ jobs:
           for table in main_tables:
               print(f"INSERT {table}: {insert_counts.get(table, 0)}")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
-              out.write("## Encrypted D1 backup validation\\n")
-              out.write(f"- Raw bytes: **{len(raw)}**\\n")
-              out.write(f"- CREATE TABLE statements: **{len(creates)}**\\n")
-              out.write(f"- INSERT statements total: **{len(inserts)}**\\n")
-              out.write(f"- demand_signals INSERT statements: **{insert_counts.get('demand_signals', 0)} / 23**\\n")
-              out.write("- Final SQL terminator: **verified**\\n")
-              out.write("- Per-table INSERT counts:\\n")
+              out.write("## Encrypted D1 backup validation\n")
+              out.write(f"- Raw bytes: **{len(raw)}**\n")
+              out.write(f"- CREATE TABLE statements: **{len(creates)}**\n")
+              out.write(f"- INSERT statements total: **{len(inserts)}**\n")
+              out.write(f"- demand_signals INSERT statements: **{insert_counts.get('demand_signals', 0)} / 23**\n")
+              out.write("- Final SQL terminator: **verified**\n")
+              out.write("- Per-table INSERT counts:\n")
               for table in main_tables:
-                  out.write(f"  - `{table}`: **{insert_counts.get(table, 0)}**\\n")
+                  out.write(f"  - `{table}`: **{insert_counts.get(table, 0)}**\n")
           PY
 
           RAW_SHA="$(sha256sum backup.sql | cut -d ' ' -f1)"
