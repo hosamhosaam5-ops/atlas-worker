@@ -384,8 +384,13 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         if(exists){duplicates++;continue;}
         const summary=String([lead.title,lead.description].filter(Boolean).join(' — ')).slice(0,3000);
         const score=Number((valid.score*0.7 + 0.3).toFixed(4));
-        await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status) VALUES(?,?,?,?,?)')
-          .bind(s.source,key,summary,score,'NEW').run();
+        // Preserve the provider's original creation time for the phase-4 age gate.
+        // If age cannot be proven, keep source_url NULL so the signal cannot be counted.
+        const sourceCreatedAt=parseDate(lead.created_at);
+        const sourceUrl=sourceCreatedAt&&lead.source_url?lead.source_url:null;
+        const storedCreatedAt=sourceCreatedAt?sourceCreatedAt.toISOString():new Date(now).toISOString();
+        await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status,source_url,created_at) VALUES(?,?,?,?,?,?,?)')
+          .bind(s.source,key,summary,score,'NEW',sourceUrl,storedCreatedAt).run();
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
         accepted++;
       }
