@@ -24,9 +24,9 @@ class DemandDb {
           return {meta:{changes:1}};
         }
         if(sql.includes('INSERT INTO demand_signals')){
-          const [source,signal_key,request_summary,score,status]=values;
+          const [source,signal_key,request_summary,score,status,source_url,created_at]=values;
           if(db.signals.some(s=>s.signal_key===signal_key)) throw new Error('UNIQUE constraint failed: demand_signals.signal_key');
-          db.signals.push({id:db.nextId++,source,signal_key,request_summary,score,status});
+          db.signals.push({id:db.nextId++,source,signal_key,request_summary,score,status,source_url,created_at});
           return {meta:{changes:1}};
         }
         return {meta:{changes:0}};
