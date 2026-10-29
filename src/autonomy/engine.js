@@ -342,7 +342,11 @@ export async function recordSourceOutcome(db, sourceId, {
   } else if((httpStatus!==null&&httpStatus>=500)||timeout) {
     failures=Math.min(100,Number(previous?.consecutive_failures||0)+1);
     lastErrorCode=timeout?'TIMEOUT':(error==='PRIMARY_HTTP_ERROR'?'PRIMARY_HTTP_ERROR':'HTTP_'+httpStatus);
-    if(failures>=SOURCE_FAILURE_THRESHOLD) {
+    // PayanAgent's observed HTTP 5xx means the primary demand endpoint is degraded.
+    // Open its per-source circuit immediately, even if a read-only fallback was available;
+    // other sources retain the existing three-failure threshold.
+    const openOnPayan5xx=sourceId==='payanagent_open_requests'&&httpStatus!==null&&httpStatus>=500;
+    if(failures>=SOURCE_FAILURE_THRESHOLD||openOnPayan5xx) {
       state='OPEN';
       const priorCooldown=Math.max(SOURCE_COOLDOWN_INITIAL_MS,Number(previous?.cooldown_ms||SOURCE_COOLDOWN_INITIAL_MS));
       cooldownMs=previous?.state==='HALF_OPEN'
