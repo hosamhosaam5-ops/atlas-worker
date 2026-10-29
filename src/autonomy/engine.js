@@ -630,9 +630,9 @@ export async function prepareGrowthActions(db,{now=Date.now(),linkFetcher=fetch}
     if(!created||created.getTime()>now){skip('unverified_age');continue;}
     if(created.getTime()<now-DEMAND_MAX_AGE_DAYS*86400000){skip('stale');continue;}
     if(!r.source_url){skip('missing_source_url');continue;}
+    if(financialPrerequisitePattern.test(summary)){skip('financial_prerequisite');continue;}
     const sourceReason=demandRejectionReason({title:summary,description:'',created_at:r.created_at,status:'open'},r.source,now);
     if(sourceReason){skip(sourceReason);continue;}
-    if(financialPrerequisitePattern.test(summary)){skip('financial_prerequisite');continue;}
     if(!capabilityPattern.test(summary)){skip('service_mismatch');continue;}
 
     const canonical=await db.prepare('SELECT MIN(id) AS canonical_id,COUNT(*) AS duplicate_count FROM demand_signals WHERE signal_key=?').bind(r.signal_key).first();
