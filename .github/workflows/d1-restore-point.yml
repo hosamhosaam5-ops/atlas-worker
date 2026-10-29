@@ -90,6 +90,7 @@ jobs:
             fs.appendFileSync(summary, '## D1 restore-point capture: FAILED\n\n- ' + label + ': **FAILED**\n\n```text\n' + message + '\n```\n');
             process.exit(31);
           };
+          const timestamp = new Date().toISOString();
           let bookmarkOutput;
           try {
             bookmarkOutput = run(['d1', 'time-travel', 'info', 'atlas_db', '--json']);
@@ -104,9 +105,8 @@ jobs:
             };
             visit(data);
           } catch {}
-          if (!bookmark) bookmark = bookmarkOutput.match(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{32}/i)?.[0] || '';
+          if (!bookmark) bookmark = bookmarkOutput.match(/[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{8}-[0-9a-f]{32}/i)?.[0] || '';
           if (!bookmark) fail('Time Travel bookmark', 'Wrangler succeeded but no bookmark value could be parsed.');
-          const timestamp = new Date().toISOString();
           const mainTables = [
             'event_log','order_quotes','order_ledger','execution_state','ceo_memory',
             'bridge_audit','zatca_experiment_requests','acquisition_assets','channel_watch',
