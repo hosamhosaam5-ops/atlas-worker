@@ -2,7 +2,7 @@
 
 ## 0006 — demand observability
 
-<badge>APPLIED AND VERIFIED</badge>
+**Status: APPLIED AND VERIFIED**
 
 - **Migration file:** `migrations/0006_demand_observability.sql`
 - **File SHA-256:** `f21ae747825004f663f32f9535186f0f0c3905f5649f5d4cdedcd52772ae80ef`
