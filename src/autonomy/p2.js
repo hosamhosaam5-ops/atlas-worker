@@ -132,7 +132,7 @@ export async function growthSnapshot(db){
   await ensureP2Schema(db);
   const [runs,actions,signals,partners,refs]=await Promise.all([
     (async()=>await db.prepare("SELECT run_id,status,signals_found,actions_ready,partner_signals,started_at,finished_at FROM growth_runs ORDER BY started_at DESC LIMIT 20").all())(),
-    (async()=>await db.prepare("SELECT action_type,status,risk,COUNT(*) count FROM growth_actions GROUP BY action_type,status,risk ORDER BY count DESC").all())(),
+    (async()=>await db.prepare("SELECT ga.action_type,ga.status,ga.risk,COUNT(*) count FROM growth_actions ga WHERE ga.action_type!='QUALIFIED_LEAD' OR EXISTS (SELECT 1 FROM demand_signals ds WHERE CAST(ds.id AS TEXT)=ga.target_id AND ds.status='QUALIFIED') GROUP BY ga.action_type,ga.status,ga.risk ORDER BY count DESC").all())(),
     (async()=>await db.prepare("SELECT source,status,COUNT(*) count,AVG(score) avg_score FROM demand_signals GROUP BY source,status ORDER BY count DESC").all())(),
     (async()=>await db.prepare("SELECT source,status,COUNT(*) count FROM growth_partners GROUP BY source,status").all())(),
     (async()=>await db.prepare("SELECT code,COUNT(*) count,MAX(created_at) last_seen FROM growth_referrals GROUP BY code ORDER BY count DESC LIMIT 20").all())()
