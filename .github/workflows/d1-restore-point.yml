@@ -1,0 +1,169 @@
+name: ATLAS D1 restore point
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/triggers/restore-point.trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-d1-restore-point
+  cancel-in-progress: false
+
+jobs:
+  restore-point:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact trigger commit
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked Wrangler dependency
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify Cloudflare D1 token and database backend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { spawnSync } = require('node:child_process');
+          const fs = require('node:fs');
+          const summary = process.env.GITHUB_STEP_SUMMARY;
+          const result = spawnSync('npx', ['--no-install', 'wrangler', 'd1', 'info', 'atlas_db', '--json'], {
+            encoding: 'utf8',
+            env: process.env,
+            maxBuffer: 8 * 1024 * 1024,
+          });
+          if (result.status !== 0) {
+            const exact = String(result.stderr || result.stdout || result.error?.message || 'wrangler d1 info failed').trim();
+            fs.appendFileSync(summary, '## D1 credential verification: FAILED\n\n```text\n' + exact + '\n```\n');
+            process.exit(21);
+          }
+          const raw = String(result.stdout || '').trim();
+          let parsed;
+          try { parsed = JSON.parse(raw); } catch {
+            fs.appendFileSync(summary, '## D1 credential verification: FAILED\n\nWrangler returned non-JSON output for --json; no production operation was attempted.\n');
+            process.exit(22);
+          }
+          const serialized = JSON.stringify(parsed);
+          const version = serialized.match(/"version"\s*:\s*"([^"]+)"/i)?.[1] || '';
+          if (version !== 'production') {
+            fs.appendFileSync(summary, '## D1 backend verification: FAILED\n\nExpected D1 version=production; observed version=' + (version || 'unknown') + '. Time Travel support is not proven.\n');
+            process.exit(23);
+          }
+          fs.appendFileSync(summary, '## D1 credential and backend verification\n\n- Wrangler D1 info: **PASS**\n- D1 backend version: **production**\n');
+          NODE
+
+      - name: Capture Time Travel bookmark and read-only baseline counts
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { spawnSync } = require('node:child_process');
+          const fs = require('node:fs');
+          const summary = process.env.GITHUB_STEP_SUMMARY;
+          const env = process.env;
+          const run = (args) => {
+            const r = spawnSync('npx', ['--no-install', 'wrangler', ...args], {
+              encoding: 'utf8', env, maxBuffer: 8 * 1024 * 1024,
+            });
+            if (r.status !== 0) throw new Error(String(r.stderr || r.stdout || r.error?.message || 'Wrangler command failed').trim());
+            return String(r.stdout || '').trim();
+          };
+          const fail = (label, message) => {
+            fs.appendFileSync(summary, '## D1 restore-point capture: FAILED\n\n- ' + label + ': **FAILED**\n\n```text\n' + message + '\n```\n');
+            process.exit(31);
+          };
+          let bookmarkOutput;
+          try {
+            bookmarkOutput = run(['d1', 'time-travel', 'info', 'atlas_db', '--json']);
+          } catch (e) { fail('Time Travel bookmark', String(e.message || e)); }
+          let bookmark = '';
+          try {
+            const data = JSON.parse(bookmarkOutput);
+            const visit = (v) => {
+              if (!v || typeof v !== 'object') return;
+              if (typeof v.bookmark === 'string') bookmark = v.bookmark;
+              for (const x of Object.values(v)) visit(x);
+            };
+            visit(data);
+          } catch {}
+          if (!bookmark) bookmark = bookmarkOutput.match(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{32}/i)?.[0] || '';
+          if (!bookmark) fail('Time Travel bookmark', 'Wrangler succeeded but no bookmark value could be parsed.');
+          const timestamp = new Date().toISOString();
+          const mainTables = [
+            'event_log','order_quotes','order_ledger','execution_state','ceo_memory',
+            'bridge_audit','zatca_experiment_requests','acquisition_assets','channel_watch',
+            'publications','bountybook_auth_nonces','order_files','delivery_outbox',
+            'demand_signals','demand_scan_source_runs','demand_source_health'
+          ];
+          const rowsFrom = (value, arrays = []) => {
+            if (Array.isArray(value)) {
+              if (value.length && value.every(x => x && typeof x === 'object' && !Array.isArray(x) && !('results' in x))) arrays.push(value);
+              for (const x of value) rowsFrom(x, arrays);
+            } else if (value && typeof value === 'object') {
+              for (const x of Object.values(value)) rowsFrom(x, arrays);
+            }
+            return arrays;
+          };
+          const queryRows = (sql) => {
+            const raw = run(['d1','execute','atlas_db','--remote','--command',sql,'--json']);
+            const parsed = JSON.parse(raw);
+            const arrays = rowsFrom(parsed);
+            return arrays.sort((a,b) => b.length-a.length)[0] || [];
+          };
+          let columns;
+          try { columns = queryRows('PRAGMA table_info(demand_signals)').length; }
+          catch (e) { fail('demand_signals schema inspection', String(e.message || e)); }
+          let demandCount;
+          try {
+            const rows = queryRows('SELECT COUNT(*) AS row_count FROM demand_signals');
+            demandCount = Number(rows[0]?.row_count);
+          } catch (e) { fail('demand_signals count', String(e.message || e)); }
+          if (!Number.isFinite(demandCount)) fail('demand_signals count', 'Wrangler returned no numeric row_count.');
+          const counts = [];
+          for (const table of mainTables) {
+            try {
+              const rows = queryRows('SELECT COUNT(*) AS row_count FROM "' + table + '"');
+              const count = Number(rows[0]?.row_count);
+              counts.push([table, Number.isFinite(count) ? String(count) : 'UNREADABLE']);
+            } catch {
+              counts.push([table, 'MISSING_OR_UNREADABLE']);
+            }
+          }
+          if (columns !== 8) fail('demand_signals column count', 'Expected 8 columns; observed ' + columns + '.');
+          if (demandCount !== 23) fail('demand_signals row count', 'Expected 23 rows; observed ' + demandCount + '.');
+          const lines = [
+            '## D1 Time Travel restore point',
+            '',
+            '- Database: **atlas_db**',
+            '- D1 backend: **production**',
+            '- Captured at (UTC): **' + timestamp + '**',
+            '- Bookmark: `' + bookmark + '`',
+            '- demand_signals columns: **' + columns + ' / 8**',
+            '- demand_signals rows: **' + demandCount + ' / 23**',
+            '',
+            '### Main-table row counts',
+            ...counts.map(([name,count]) => '- ' + name + ': **' + count + '**'),
+            '',
+            '- Restore operation performed: **NO**',
+            '- Database writes performed: **NO**',
+          ];
+          fs.appendFileSync(summary, lines.join('\n') + '\n');
+          NODE
