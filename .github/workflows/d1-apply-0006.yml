@@ -31,7 +31,10 @@ jobs:
       - name: Install locked Wrangler dependency
         run: npm ci --no-audit --no-fund
 
-      - name: Validate guarded D1 helper syntax\n        run: node --check ops/scripts/d1-apply-0006.mjs\n\n      - name: Capture pre-write D1 Time Travel bookmark
+      - name: Validate guarded D1 helper syntax
+        run: node --check ops/scripts/d1-apply-0006.mjs
+
+      - name: Capture pre-write D1 Time Travel bookmark
         id: restore_point
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
