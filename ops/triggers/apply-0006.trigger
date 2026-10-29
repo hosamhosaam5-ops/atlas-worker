@@ -1,0 +1,1 @@
+Apply only migrations/0006_demand_observability.sql through the guarded D1 workflow. Preflight must confirm demand_signals has 8 columns and 23 rows, and both new tables are absent. Capture a fresh same-run Time Travel bookmark younger than two hours before any write. No migrations apply, no d1_migrations changes, no delete, no restore.
