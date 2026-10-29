@@ -107,10 +107,13 @@ A read-only D1 query after deployment found four per-source scan metric rows. Th
 
 ### Seven-day qualification observation window
 
-- **Start:** 2026-10-29 23:31:22 UTC (2026-10-30 02:31:22 Asia/Riyadh), when the production health endpoint confirmed the exact deployed SHA.
-- **End:** 2026-11-05 23:31:22 UTC (2026-11-06 02:31:22 Asia/Riyadh).
-- **Required outcome:** at least 3 unique verified qualified opportunities from at least 2 existing sources, each with a reachable original source link and age within the unchanged 30-day rule.
-- **Initial state:** 0 qualified opportunities; 23 stale/unverified records; first post-deploy scan accepted 0 items.
-- A daily read-only monitoring automation was created for eight daily audits (2026-10-30 through 2026-11-06, target morning Asia/Riyadh). It must not trigger scans or write D1. The seven-day window is not considered successful until the required unique qualified opportunities are evidenced.
+**Status: NOT STARTED — the previously recorded deployment-time start is superseded**
+
+- PR #177 recorded 2026-10-29 23:31:22 UTC as the start, based on deployment health verification. That timestamp is **not an authorized observation-window start** under the founder's subsequent explicit gate and must not be counted.
+- The required gate is: at least two complete growth cycles after deployed SHA `6cabe6d97f233abecb644dfb710625ec1f5ec7a8`; non-empty `demand_scan_source_runs` and `demand_source_health` with source metrics from those cycles; and read-only confirmation of the PayanAgent breaker and persisted AgentJob polling gate.
+- Independent production D1 read at **2026-10-30 02:36:27 Asia/Riyadh** found 4 rows in each measurement table but only **1 distinct scan_id**. That scan ran from 2026-10-29 23:32:48.835 UTC through 23:33:02.183 UTC. The latest recorded `growth_runs` row at that read was 23:30:40–23:30:47 UTC, before the production deployment was verified. Two complete post-deploy growth cycles were not proven.
+- At that same read, PayanAgent had `HTTP_500`, `consecutive_failures=1`, `state=CLOSED`, and `next_probe_at=NULL`. The deployed logic opens the circuit at three consecutive failures; this does not meet the founder's expected OPEN/cooldown condition and remains unresolved.
+- Automation `6ae3d78f03388191a23a1cfe70d4dea5` is pre-window monitoring only. Any summaries before the gate is met are **PRE-WINDOW — NOT COUNTED** and cannot contribute to the seven-day outcome.
+- **Start timestamp: not set. End timestamp: not set.** Record both only through a reviewed PR after the full gate above is evidenced. The seven-day outcome remains at 0 qualified opportunities at the last verified baseline; no source or qualification rule is changed here.
 
 No Time Travel restore was performed.
