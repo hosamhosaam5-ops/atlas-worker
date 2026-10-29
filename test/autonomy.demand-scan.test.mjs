@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { extractListings, scanAgentDemand } from '../src/autonomy/engine.js';
 
 class DemandDb {
-  constructor(){ this.signals=[]; this.runs=[]; this.nextId=1; this.failMetrics=false; }
+  constructor(){ this.signals=[]; this.runs=[]; this.health=new Map(); this.nextId=1; this.failMetrics=false; }
   prepare(sql){
     const db=this;
     let values=[];
@@ -14,6 +14,32 @@ class DemandDb {
         const key=values[0];
         if(sql.includes('autonomy_policies')) return {policy_id:'default',max_external_requests:30,max_tool_calls:20,max_retries:3,max_execution_seconds:120,max_build_iterations:5,outbound_spend_allowed:0};
         if(sql.includes('SELECT id FROM demand_signals')) return db.signals.find(s=>s.signal_key===key)||null;
+        if(sql.includes('SELECT * FROM demand_source_health')) return db.health.get(key)||null;
+        if(sql.includes('INSERT INTO demand_source_health')&&sql.includes('RETURNING last_attempt_at')){
+          const [source,lastAttemptAt,updatedAt,intervalSeconds]=values;
+          const previous=db.health.get(source);
+          if(!previous||!previous.last_attempt_at||(Date.parse(lastAttemptAt)-Date.parse(previous.last_attempt_at))>=Number(intervalSeconds)*1000){
+            const row={...previous,source,state:previous?.state||'CLOSED',consecutive_failures:previous?.consecutive_failures||0,cooldown_ms:previous?.cooldown_ms||900000,last_attempt_at:lastAttemptAt,updated_at:updatedAt};
+            db.health.set(source,row);
+            return {last_attempt_at:lastAttemptAt};
+          }
+          return null;
+        }
+        if(sql.includes('UPDATE demand_source_health')&&sql.includes('RETURNING source')){
+          const [updatedAt,source,nowIso]=values;
+          const row=db.health.get(source);
+          if(row&&row.state==='OPEN'&&row.next_probe_at&&Date.parse(row.next_probe_at)<=Date.parse(nowIso)){
+            row.state='HALF_OPEN';row.updated_at=updatedAt;return {source};
+          }
+          return null;
+        }
+        if(sql.includes('INSERT INTO demand_source_health')&&sql.includes('RETURNING *')){
+          const [source,state,failures,openedAt,nextProbeAt,cooldownMs,lastStatus,lastErrorCode,lastSuccessAt,lastHttpStatus,lastResponseMs,updatedAt]=values;
+          const previous=db.health.get(source);
+          const row={source,state,consecutive_failures:failures,opened_at:openedAt,next_probe_at:nextProbeAt,cooldown_ms:cooldownMs,last_status:lastStatus,last_error_code:lastErrorCode,last_success_at:lastSuccessAt??previous?.last_success_at??null,last_attempt_at:previous?.last_attempt_at??null,last_http_status:lastHttpStatus,last_response_ms:lastResponseMs,updated_at:updatedAt};
+          db.health.set(source,row);
+          return row;
+        }
         return null;
       },
       async run(){
@@ -385,4 +411,29 @@ test('failure to persist observability metrics never stops a demand scan',async(
   assert.equal(result.signals.length,1);
   assert.equal(db.signals.length,1);
   assert.equal(db.runs.length,0);
+});
+
+
+test('AgentJob persistent 60-second gate blocks repeated manual scans before MCP initialization',async()=>{
+  const db=new DemandDb();
+  const now=Date.parse('2026-10-29T10:00:00.000Z');
+  const calls=[];
+  const fetcher=async(url,init)=>{
+    const payload=JSON.parse(init.body);
+    calls.push(payload.method);
+    if(payload.method==='initialize') return {ok:true,status:200,contentType:'application/json',headers:{'mcp-session-id':'test-session'},text:JSON.stringify({jsonrpc:'2.0',id:1,result:{protocolVersion:'2025-03-26',capabilities:{},serverInfo:{name:'fixture',version:'1'}}})};
+    if(payload.method==='notifications/initialized') return {ok:true,status:202,contentType:'application/json',headers:{'mcp-session-id':'test-session'},text:'{}'};
+    return {ok:true,status:200,contentType:'application/json',headers:{'mcp-session-id':'test-session'},text:JSON.stringify({jsonrpc:'2.0',id:2,result:{content:[{type:'text',text:'{"posts":[]}'}]}})};
+  };
+  const sources=[{source:'agent_job_public_mcp',provider:'AgentJob',protocol:'MCP'}];
+  const first=await scanAgentDemand(db,{sources,fetcher,now});
+  assert.equal(first.ok,true);
+  assert.deepEqual(calls,['initialize','notifications/initialized','tools/call']);
+  const second=await scanAgentDemand(db,{sources,fetcher,now:now+59000});
+  assert.equal(second.diagnostics[0].status,'POLL_GATE');
+  assert.equal(calls.length,3);
+  const third=await scanAgentDemand(db,{sources,fetcher,now:now+61000});
+  assert.equal(third.ok,true);
+  assert.equal(calls.length,6);
+  assert.deepEqual(calls.slice(3),['initialize','notifications/initialized','tools/call']);
 });
