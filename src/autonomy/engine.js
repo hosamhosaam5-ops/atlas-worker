@@ -299,6 +299,8 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
   const diagnostics=[];
   for(const s of sources){
     const startedAtMs=Date.now();
+    let requestStartedAtMs=0;
+    let requestCompleted=false;
     const metrics={
       scan_id:scanId,source:s.source,raw_count:0,raw_recent_count:0,accepted_count:0,
       rejected_count:0,rejection_counts_json:'{}',duplicate_count:0,response_ms:0,
@@ -306,7 +308,6 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       started_at:new Date(startedAtMs).toISOString(),finished_at:null
     };
     const flushMetrics=async()=>{
-      metrics.response_ms=Math.max(0,Date.now()-startedAtMs);
       metrics.finished_at=new Date().toISOString();
       await recordDemandScanSourceRun(db,metrics);
     };
@@ -320,11 +321,14 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       continue;
     }
     try {
+      requestStartedAtMs=Date.now();
       const r=s.protocol==='MCP'
         ? await fetchAgentJobPosts(fetcher)
         : (s.source==='payanagent_open_requests'
           ? await fetchPayanAgentOpenRequests(fetcher,s.url)
           : await fetcher(s.url,{method:'GET'}));
+      requestCompleted=true;
+      metrics.response_ms=Math.max(0,Date.now()-requestStartedAtMs);
       metrics.http_status=Number.isFinite(Number(r.status))?Number(r.status):null;
       if(!r.ok) {
         metrics.source_status='HTTP_ERROR';
@@ -403,6 +407,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       await flushMetrics();
     } catch(e) {
       const message=String(e?.message||e);
+      if(!requestCompleted && requestStartedAtMs) metrics.response_ms=Math.max(0,Date.now()-requestStartedAtMs);
       const timeout=e?.name==='AbortError'||e?.name==='TimeoutError'||/timed?\s*out|timeout|aborted/i.test(message);
       metrics.source_status=timeout?'TIMEOUT':'ERROR';
       metrics.error_code=timeout?'TIMEOUT':'NETWORK_ERROR';
