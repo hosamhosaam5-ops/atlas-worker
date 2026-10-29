@@ -51,3 +51,33 @@ test('prepareOffer refuses new and missing qualification states', async () => {
     assert.equal(db.offerWrites, 0);
   }
 });
+
+
+import { negotiateOffer } from '../src/autonomy/p1.js';
+
+class StaleNegotiationDb {
+  constructor() { this.offerWrites = 0; }
+  prepare(sql) {
+    const db = this;
+    return {
+      bind() { return this; },
+      async run() { db.offerWrites++; return { meta: { changes: 1 } }; },
+      async first() {
+        if (sql.includes('FROM growth_actions WHERE action_key=?')) {
+          return { action_type: 'QUALIFIED_LEAD', target_id: '23', payload_json: JSON.stringify({ price_usdc: 50 }) };
+        }
+        if (sql.includes('SELECT status FROM demand_signals WHERE id=?')) return { status: 'STALE_UNVERIFIED' };
+        return null;
+      }
+    };
+  }
+}
+
+test('negotiateOffer rechecks live demand status and refuses stale qualified-lead actions', async () => {
+  const db = new StaleNegotiationDb();
+  await assert.rejects(
+    negotiateOffer(db, { action_key: 'qualify|stale-fixture', counter_price_usdc: 40 }),
+    /DEMAND_SIGNAL_NOT_QUALIFIED/
+  );
+  assert.equal(db.offerWrites, 0);
+});
