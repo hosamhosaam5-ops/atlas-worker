@@ -164,8 +164,6 @@ jobs:
             exit 1
           fi
 
-          echo "Encrypted backup bytes: $(wc -c < backup.sql.gpg | tr -d ' ')"
-          echo "Restore demand_signals rows: $RESTORE_COUNT"
           {
             echo "## Encrypted D1 backup and restore proof"
             echo "- Raw SHA-256: **$RAW_SHA**"
