@@ -24,7 +24,7 @@ async function fetchJson(url, init={}) {
   try {
     const res = await fetch(url,{...init,signal:ctrl.signal,headers:{accept:'application/json,text/plain,*/*',...(init.headers||{})}});
     const text = await res.text();
-    return {ok:res.ok,status:res.status,text:text.slice(0,100000),contentType:res.headers.get('content-type')||'',headers:{'mcp-session-id':res.headers.get('mcp-session-id')||null}};
+    return {ok:res.ok,status:res.status,text:text.slice(0,100000),contentType:res.headers.get('content-type')||'',headers:{'mcp-session-id':res.headers.get('mcp-session-id')||null,'retry-after':res.headers.get('retry-after')||null}};
   } finally { clearTimeout(timer); }
 }
 
@@ -218,6 +218,7 @@ async function fetchPayanAgentOpenRequests(fetcher,url) {
     fallbackUsed:true,
     fallbackStage:'filtered_requests',
     primaryHttpStatus:primary.status,
+    primaryRetryAfter:primary.headers?.['retry-after']||null,
     intermediateHttpStatus:filtered.status,
     requestedEndpoint:PAYANAGENT_FILTERED_REQUESTS_FALLBACK_URL
   };
@@ -244,48 +245,159 @@ function extractPayanAgentFallbackPayload(payload) {
   } catch { return {requests:[]}; }
 }
 
-const SOURCE_COOLDOWN_MS = 15 * 60 * 1000;
+const SOURCE_COOLDOWN_INITIAL_MS = 15 * 60 * 1000;
+const SOURCE_COOLDOWN_MAX_MS = 6 * 60 * 60 * 1000;
+const SOURCE_FAILURE_THRESHOLD = 3;
+const AGENTJOB_LIST_POSTS_INTERVAL_MS = 60 * 1000;
 
-async function readSourceHealth(db, sourceId) {
-  return await db.prepare('SELECT * FROM source_health WHERE source_id=?').bind(sourceId).first();
+function parseRetryAfter(value, now=Date.now()) {
+  const raw=String(value??'').trim();
+  if(!raw) return null;
+  if(/^\d+(?:\.\d+)?$/.test(raw)) return now+Math.max(0,Number(raw))*1000;
+  const parsed=Date.parse(raw);
+  return Number.isFinite(parsed)?Math.max(now,parsed):null;
 }
 
-export async function recordSourceOutcome(db, sourceId, {ok, status=null, error=null, now=Date.now()}) {
-  const previous = await readSourceHealth(db, sourceId);
-  const failures = ok ? 0 : Math.min(100, Number(previous?.consecutive_failures || 0) + 1);
-  const cooldownUntil = ok ? null : new Date(now + SOURCE_COOLDOWN_MS).toISOString();
-  const state = ok ? 'HEALTHY' : 'COOLDOWN';
-  await db.prepare(`INSERT INTO source_health(source_id,consecutive_failures,state,last_status,last_error,last_tested_at,cooldown_until,updated_at)
-    VALUES(?,?,?,?,?,?,?,datetime('now'))
-    ON CONFLICT(source_id) DO UPDATE SET consecutive_failures=excluded.consecutive_failures,
-    state=excluded.state,last_status=excluded.last_status,last_error=excluded.last_error,
-    last_tested_at=excluded.last_tested_at,cooldown_until=excluded.cooldown_until,updated_at=datetime('now')`)
-    .bind(sourceId, failures, state, status===null?null:String(status), error?String(error).slice(0,300):null,
-      new Date(now).toISOString(), cooldownUntil).run();
-  return {source:sourceId,state,consecutive_failures:failures,cooldown_until:cooldownUntil};
+async function readSourceHealth(db, sourceId) {
+  return await db.prepare('SELECT * FROM demand_source_health WHERE source=?').bind(sourceId).first();
 }
 
 export async function sourceCircuitState(db, sourceId, now=Date.now()) {
-  const row = await readSourceHealth(db, sourceId);
-  const until = row?.cooldown_until ? Date.parse(row.cooldown_until) : NaN;
-  if (row?.state === 'COOLDOWN' && Number.isFinite(until) && until > now) {
-    return {blocked:true,state:'COOLDOWN',cooldown_until:row.cooldown_until};
+  try {
+    const row=await readSourceHealth(db,sourceId);
+    if(!row) return {blocked:false,state:'CLOSED',probe_due:false};
+    if(row.state==='HALF_OPEN') return {blocked:true,state:'HALF_OPEN',probe_due:false,reason:'probe_already_claimed'};
+    if(row.state==='OPEN') {
+      const next=Date.parse(row.next_probe_at||'');
+      if(!Number.isFinite(next)||next>now) return {blocked:true,state:'OPEN',probe_due:false,next_probe_at:row.next_probe_at||null};
+      return {blocked:false,state:'OPEN',probe_due:true,next_probe_at:row.next_probe_at};
+    }
+    return {blocked:false,state:'CLOSED',probe_due:false,last_error_code:row.last_error_code||null};
+  } catch {
+    return {blocked:true,state:'UNAVAILABLE',probe_due:false,error_code:'D1_HEALTH_READ_FAILED'};
   }
-  // Cooldown expiry permits exactly a fresh read-only probe; it does not restore trust
-  // until that probe returns successfully.
-  return {blocked:false,state:row?.state || 'HEALTHY',probe_due:row?.state === 'COOLDOWN'};
 }
 
-// A successful fallback response must not erase a server-side failure on PayanAgent's primary route.
+export async function claimHalfOpenProbe(db, sourceId, now=Date.now()) {
+  const iso=new Date(now).toISOString();
+  try {
+    const row=await db.prepare(`UPDATE demand_source_health
+      SET state='HALF_OPEN',updated_at=?
+      WHERE source=? AND state='OPEN' AND next_probe_at IS NOT NULL
+        AND julianday(next_probe_at)<=julianday(?)
+      RETURNING source`).bind(iso,sourceId,iso).first();
+    return !!row;
+  } catch {
+    return false;
+  }
+}
+
+export async function claimAgentJobListPostsGate(db, sourceId='agent_job_public_mcp', now=Date.now()) {
+  const iso=new Date(now).toISOString();
+  try {
+    const row=await db.prepare(`INSERT INTO demand_source_health(
+        source,state,consecutive_failures,cooldown_ms,last_attempt_at,updated_at
+      ) VALUES(?,'CLOSED',0,900000,?,?)
+      ON CONFLICT(source) DO UPDATE SET
+        last_attempt_at=excluded.last_attempt_at,
+        updated_at=excluded.updated_at
+      WHERE demand_source_health.last_attempt_at IS NULL
+        OR (julianday(excluded.last_attempt_at)-julianday(demand_source_health.last_attempt_at))*86400 >= ?
+      RETURNING last_attempt_at`).bind(sourceId,iso,iso,AGENTJOB_LIST_POSTS_INTERVAL_MS/1000).first();
+    return {allowed:!!row,last_attempt_at:row?.last_attempt_at||null};
+  } catch {
+    return {allowed:false,last_attempt_at:null,reason:'D1_POLL_GATE_UNAVAILABLE'};
+  }
+}
+
+export async function recordSourceOutcome(db, sourceId, {
+  ok,status=null,error=null,retryAfter=null,responseMs=null,now=Date.now()
+}) {
+  const previous=await readSourceHealth(db,sourceId);
+  const numericStatus=Number(status);
+  const httpStatus=Number.isFinite(numericStatus)?numericStatus:null;
+  const timeout=String(status||'').toUpperCase()==='TIMEOUT'||String(error||'').toUpperCase()==='TIMEOUT';
+  const rateLimited=httpStatus===429;
+  const authRequired=httpStatus===401||httpStatus===403;
+  let state='CLOSED';
+  let failures=0;
+  let cooldownMs=SOURCE_COOLDOWN_INITIAL_MS;
+  let openedAt=null;
+  let nextProbeAt=null;
+  let lastErrorCode=null;
+  let lastSuccessAt=null;
+
+  if(ok===true) {
+    lastSuccessAt=new Date(now).toISOString();
+  } else if(rateLimited) {
+    state='OPEN';
+    failures=Math.min(100,Number(previous?.consecutive_failures||0));
+    cooldownMs=Math.min(SOURCE_COOLDOWN_MAX_MS,Math.max(SOURCE_COOLDOWN_INITIAL_MS,Number(previous?.cooldown_ms||SOURCE_COOLDOWN_INITIAL_MS)));
+    const retryAt=parseRetryAfter(retryAfter,now);
+    nextProbeAt=new Date(retryAt??(now+cooldownMs)).toISOString();
+    openedAt=new Date(now).toISOString();
+    lastErrorCode='RATE_LIMITED';
+  } else if(authRequired) {
+    lastErrorCode='AUTH_REQUIRED';
+  } else if((httpStatus!==null&&httpStatus>=500)||timeout) {
+    failures=Math.min(100,Number(previous?.consecutive_failures||0)+1);
+    lastErrorCode=timeout?'TIMEOUT':(error==='PRIMARY_HTTP_ERROR'?'PRIMARY_HTTP_ERROR':'HTTP_'+httpStatus);
+    if(failures>=SOURCE_FAILURE_THRESHOLD) {
+      state='OPEN';
+      const priorCooldown=Math.max(SOURCE_COOLDOWN_INITIAL_MS,Number(previous?.cooldown_ms||SOURCE_COOLDOWN_INITIAL_MS));
+      cooldownMs=previous?.state==='HALF_OPEN'
+        ? Math.min(SOURCE_COOLDOWN_MAX_MS,priorCooldown*2)
+        : Math.min(SOURCE_COOLDOWN_MAX_MS,priorCooldown);
+      openedAt=new Date(now).toISOString();
+      nextProbeAt=new Date(now+cooldownMs).toISOString();
+    } else {
+      cooldownMs=Math.min(SOURCE_COOLDOWN_MAX_MS,Math.max(SOURCE_COOLDOWN_INITIAL_MS,Number(previous?.cooldown_ms||SOURCE_COOLDOWN_INITIAL_MS)));
+    }
+  } else {
+    lastErrorCode=error?String(error).slice(0,120):(httpStatus!==null?'HTTP_'+httpStatus:null);
+  }
+
+  const iso=new Date(now).toISOString();
+  const row=await db.prepare(`INSERT INTO demand_source_health(
+      source,state,consecutive_failures,opened_at,next_probe_at,cooldown_ms,
+      last_status,last_error_code,last_success_at,last_http_status,last_response_ms,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(source) DO UPDATE SET
+      state=excluded.state,
+      consecutive_failures=excluded.consecutive_failures,
+      opened_at=excluded.opened_at,
+      next_probe_at=excluded.next_probe_at,
+      cooldown_ms=excluded.cooldown_ms,
+      last_status=excluded.last_status,
+      last_error_code=excluded.last_error_code,
+      last_success_at=COALESCE(excluded.last_success_at,demand_source_health.last_success_at),
+      last_http_status=excluded.last_http_status,
+      last_response_ms=excluded.last_response_ms,
+      updated_at=excluded.updated_at
+    RETURNING *`).bind(
+      sourceId,state,failures,openedAt,nextProbeAt,cooldownMs,httpStatus,lastErrorCode,lastSuccessAt,
+      httpStatus,Number.isFinite(Number(responseMs))?Math.max(0,Number(responseMs)):null,iso
+    ).first();
+  return {
+    source:sourceId,state:row?.state||state,
+    consecutive_failures:Number(row?.consecutive_failures??failures),
+    cooldown_ms:Number(row?.cooldown_ms??cooldownMs),
+    next_probe_at:row?.next_probe_at||null,
+    last_error_code:row?.last_error_code||null
+  };
+}
+
 export async function recordPayanAgentOutcome(db, sourceId, response, now=Date.now()) {
-  const primaryFailed = sourceId === 'payanagent_open_requests' && Number(response?.primaryHttpStatus) >= 500;
-  const outcome = await recordSourceOutcome(db, sourceId, {
-    ok: response?.ok === true && !primaryFailed,
-    status: primaryFailed ? response.primaryHttpStatus : response?.status,
-    error: primaryFailed ? 'PRIMARY_HTTP_ERROR' : (response?.ok === true ? null : 'HTTP_ERROR'),
+  const primaryFailed=sourceId==='payanagent_open_requests'&&Number(response?.primaryHttpStatus)>=500;
+  const outcome=await recordSourceOutcome(db,sourceId,{
+    ok:response?.ok===true&&!primaryFailed,
+    status:primaryFailed?response.primaryHttpStatus:response?.status,
+    error:primaryFailed?'PRIMARY_HTTP_ERROR':(response?.ok===true?null:'HTTP_ERROR'),
+    retryAfter:response?.primaryRetryAfter||response?.headers?.['retry-after']||null,
+    responseMs:response?.responseMs??null,
     now
   });
-  return {...outcome, primary_degraded:primaryFailed};
+  return {...outcome,primary_degraded:primaryFailed};
 }
 
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
@@ -313,12 +425,32 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
     };
     const circuit = await sourceCircuitState(db, s.source, now);
     if (circuit.blocked) {
-      metrics.source_status='CIRCUIT_OPEN';
-      metrics.error_code='CIRCUIT_OPEN';
+      metrics.source_status=circuit.state==='UNAVAILABLE'?'HEALTH_STORE_UNAVAILABLE':'CIRCUIT_OPEN';
+      metrics.error_code=circuit.error_code||'CIRCUIT_OPEN';
       await flushMetrics();
-      diagnostics.push({source:s.source,status:'CIRCUIT_OPEN',cooldown_until:circuit.cooldown_until,
-        reason:'temporary_cooldown_after_failure'});
+      diagnostics.push({source:s.source,status:metrics.source_status,state:circuit.state,
+        next_probe_at:circuit.next_probe_at||null,reason:circuit.reason||'source_circuit_blocked'});
       continue;
+    }
+    if(s.source==='agent_job_public_mcp') {
+      const gate=await claimAgentJobListPostsGate(db,s.source,now);
+      if(!gate.allowed) {
+        metrics.source_status=gate.reason?'POLL_GATE_UNAVAILABLE':'POLL_GATE';
+        metrics.error_code=gate.reason||'POLL_INTERVAL_NOT_ELAPSED';
+        await flushMetrics();
+        diagnostics.push({source:s.source,status:metrics.source_status,reason:metrics.error_code});
+        continue;
+      }
+    }
+    if(circuit.probe_due) {
+      const claimed=await claimHalfOpenProbe(db,s.source,now);
+      if(!claimed) {
+        metrics.source_status='CIRCUIT_OPEN';
+        metrics.error_code='HALF_OPEN_PROBE_ALREADY_CLAIMED';
+        await flushMetrics();
+        diagnostics.push({source:s.source,status:'CIRCUIT_OPEN',reason:'half_open_probe_already_claimed'});
+        continue;
+      }
     }
     try {
       requestStartedAtMs=Date.now();
@@ -333,7 +465,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       if(!r.ok) {
         metrics.source_status='HTTP_ERROR';
         metrics.error_code=metrics.http_status===null?'HTTP_ERROR':'HTTP_'+metrics.http_status;
-        await recordSourceOutcome(db, s.source, {ok:false,status:r.status,error:'HTTP_ERROR',now});
+        await recordSourceOutcome(db, s.source, {ok:false,status:r.status,error:'HTTP_ERROR',retryAfter:r.headers?.['retry-after']||null,responseMs:metrics.response_ms,now});
         diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status,
           ...(r.fallbackUsed?{
             fallback_used:true,
@@ -347,8 +479,8 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         continue;
       }
       const sourceOutcome = s.source==='payanagent_open_requests'
-        ? await recordPayanAgentOutcome(db, s.source, r, now)
-        : await recordSourceOutcome(db, s.source, {ok:true,status:r.status,now});
+        ? await recordPayanAgentOutcome(db, s.source, {...r,responseMs:metrics.response_ms}, now)
+        : await recordSourceOutcome(db, s.source, {ok:true,status:r.status,responseMs:metrics.response_ms,now});
       const listings=(s.source==='payanagent_open_requests' && r.fallbackStage==='discover')
         ? extractListings(extractPayanAgentFallbackPayload(r.text))
         : extractListings(r.text);
@@ -416,7 +548,9 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       const timeout=e?.name==='AbortError'||e?.name==='TimeoutError'||/timed?\s*out|timeout|aborted/i.test(message);
       metrics.source_status=timeout?'TIMEOUT':'ERROR';
       metrics.error_code=timeout?'TIMEOUT':'NETWORK_ERROR';
-      await recordSourceOutcome(db, s.source, {ok:false,status:timeout?'TIMEOUT':'NETWORK_ERROR',error:message,now});
+      try {
+        await recordSourceOutcome(db, s.source, {ok:false,status:timeout?'TIMEOUT':'NETWORK_ERROR',error:timeout?'TIMEOUT':'NETWORK_ERROR',responseMs:metrics.response_ms,now});
+      } catch { /* D1 health-store failures must not abort scans for other sources. */ }
       diagnostics.push({source:s.source,status:'ERROR',error:message.slice(0,300)});
       await flushMetrics();
     }
