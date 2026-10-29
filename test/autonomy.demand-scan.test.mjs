@@ -307,20 +307,21 @@ test('scan persists per-source raw, recent, accepted, rejected and rejection met
     sources:[{source:'fixture_metrics',provider:'Fixture Metrics',url:'https://market.example/api/listings'}],
     fetcher:async()=>({ok:true,status:200,contentType:'application/json',text:JSON.stringify({listings:[
       {id:'fresh-1',createdAt:'2026-10-28T00:00:00Z',title:'CSV data quality review',description:'Need a CSV dataset validated, normalized, and returned as a clean spreadsheet.',url:'https://market.example/jobs/fresh-1'},
-      {id:'mismatch-1',createdAt:'2026-09-01T00:00:00Z',title:'Design a logo',description:'Need a new visual identity for a website.',url:'https://market.example/jobs/mismatch-1'}
+      {id:'mismatch-1',createdAt:'2026-10-27T00:00:00Z',title:'Design a logo',description:'Need a new visual identity for a website.',url:'https://market.example/jobs/mismatch-1'},
+      {id:'stale-1',createdAt:'2026-09-01T00:00:00Z',title:'Old CSV data quality review',description:'Need a CSV dataset validated and normalized.',url:'https://market.example/jobs/stale-1'}
     ]})})
   });
   assert.equal(result.ok,true);
   assert.equal(db.runs.length,1);
   const run=db.runs[0];
-  assert.equal(run.raw_count,2);
-  assert.equal(run.raw_recent_count,1);
+  assert.equal(run.raw_count,3);
+  assert.equal(run.raw_recent_count,2);
   assert.equal(run.accepted_count,1);
-  assert.equal(run.rejected_count,1);
+  assert.equal(run.rejected_count,2);
   assert.equal(run.duplicate_count,0);
   assert.equal(run.http_status,200);
   assert.equal(run.source_status,'OK');
-  assert.deepEqual(JSON.parse(run.rejection_counts_json),{service_mismatch:1});
+  assert.deepEqual(JSON.parse(run.rejection_counts_json),{service_mismatch:1,stale:1});
   assert.ok(run.response_ms>=0);
   assert.ok(run.scan_id);
 });
