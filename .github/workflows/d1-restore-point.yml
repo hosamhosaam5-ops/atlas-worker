@@ -73,14 +73,14 @@ jobs:
             const details = await api('/accounts/' + account + '/d1/database/' + db.uuid + '?fields=uuid,name,version');
             version = details?.version || '';
           } catch (e) {
-            fs.appendFileSync(summary, '## D1 backend verification: FAILED\\n\\n' + String(e.message || e) + '\\n');
+            fs.appendFileSync(summary, '## D1 backend verification: FAILED\n\n' + String(e.message || e) + '\n');
             process.exit(23);
           }
           if (version !== 'production') {
-            fs.appendFileSync(summary, '## D1 backend verification: FAILED\\n\\nExpected D1 version=production; observed version=' + (version || 'unknown') + '. Time Travel support is not proven.\\n');
+            fs.appendFileSync(summary, '## D1 backend verification: FAILED\n\nExpected D1 version=production; observed version=' + (version || 'unknown') + '. Time Travel support is not proven.\n');
             process.exit(23);
           }
-          fs.appendFileSync(summary, '## D1 credential and backend verification\\n\\n- Wrangler D1 info: **PASS**\\n- Cloudflare D1 API backend version: **production**\\n');
+          fs.appendFileSync(summary, '## D1 credential and backend verification\n\n- Wrangler D1 info: **PASS**\n- Cloudflare D1 API backend version: **production**\n');
           NODE
 
       - name: Capture Time Travel bookmark and read-only baseline counts
