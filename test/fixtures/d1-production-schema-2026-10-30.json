@@ -1,0 +1,331 @@
+{
+  "source": "Cloudflare D1 production sqlite_master read-only export",
+  "exported_at": "2026-10-30",
+  "database": "atlas_db",
+  "objects": [
+    {
+      "type": "table",
+      "name": "acquisition_assets",
+      "table": "acquisition_assets",
+      "sql": "CREATE TABLE acquisition_assets (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  asset TEXT,\n  status TEXT,\n  created_at TEXT\n)"
+    },
+    {
+      "type": "table",
+      "name": "agent_identity",
+      "table": "agent_identity",
+      "sql": "CREATE TABLE agent_identity (\n    identity_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, protocol TEXT,\n    status TEXT NOT NULL DEFAULT 'ACTIVE', reputation_score REAL NOT NULL DEFAULT 0,\n    successful_orders INTEGER NOT NULL DEFAULT 0, disputed_orders INTEGER NOT NULL DEFAULT 0,\n    metadata_json TEXT DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT\n  )"
+    },
+    {
+      "type": "table",
+      "name": "agent_tasks",
+      "table": "agent_tasks",
+      "sql": "CREATE TABLE agent_tasks (task_id TEXT PRIMARY KEY, source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'SUBMITTED', input_json TEXT NOT NULL DEFAULT '{}', output_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)"
+    },
+    {
+      "type": "table",
+      "name": "agent_webhooks",
+      "table": "agent_webhooks",
+      "sql": "CREATE TABLE agent_webhooks (webhook_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, url TEXT NOT NULL, events_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'ACTIVE', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT)"
+    },
+    {
+      "type": "table",
+      "name": "autonomy_policies",
+      "table": "autonomy_policies",
+      "sql": "CREATE TABLE autonomy_policies (\n    policy_id TEXT PRIMARY KEY, max_tool_calls INTEGER NOT NULL DEFAULT 20,\n    max_retries INTEGER NOT NULL DEFAULT 3, max_execution_seconds INTEGER NOT NULL DEFAULT 120,\n    max_external_requests INTEGER NOT NULL DEFAULT 30, max_build_iterations INTEGER NOT NULL DEFAULT 5,\n    outbound_spend_allowed INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n  )"
+    },
+    {
+      "type": "table",
+      "name": "bountybook_auth_nonces",
+      "table": "bountybook_auth_nonces",
+      "sql": "CREATE TABLE bountybook_auth_nonces (\n  nonce TEXT PRIMARY KEY,\n  wallet TEXT NOT NULL,\n  expires_at TEXT NOT NULL,\n  used_at TEXT\n)"
+    },
+    {
+      "type": "table",
+      "name": "bridge_audit",
+      "table": "bridge_audit",
+      "sql": "CREATE TABLE bridge_audit (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  request_id TEXT,\n  operation TEXT,\n  status TEXT,\n  auth_result TEXT,\n  timestamp TEXT,\n  error_summary TEXT\n, caller_ip TEXT, user_agent TEXT, chat_id TEXT)"
+    },
+    {
+      "type": "table",
+      "name": "capabilities",
+      "table": "capabilities",
+      "sql": "CREATE TABLE capabilities (\n    capability_id TEXT PRIMARY KEY, kind TEXT NOT NULL, provider TEXT NOT NULL, protocol TEXT,\n    endpoint TEXT, cost_class TEXT NOT NULL, risk TEXT NOT NULL, status TEXT NOT NULL,\n    score REAL DEFAULT 0, metadata_json TEXT DEFAULT '{}', last_tested_at TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT\n  )"
+    },
+    {
+      "type": "table",
+      "name": "ceo_memory",
+      "table": "ceo_memory",
+      "sql": "CREATE TABLE ceo_memory (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  category TEXT NOT NULL DEFAULT 'fact',\n  content TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT (datetime('now'))\n)"
+    },
+    {
+      "type": "table",
+      "name": "channel_watch",
+      "table": "channel_watch",
+      "sql": "CREATE TABLE channel_watch (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  channel TEXT,\n  verdict TEXT,\n  status TEXT,\n  check_date TEXT\n)"
+    },
+    {
+      "type": "table",
+      "name": "commerce_sessions",
+      "table": "commerce_sessions",
+      "sql": "CREATE TABLE commerce_sessions (session_id TEXT PRIMARY KEY,agent_id TEXT,product_id TEXT NOT NULL,stage TEXT NOT NULL,quote_id INTEGER,payment_ref TEXT,order_id TEXT,metadata_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL DEFAULT (datetime('now')),updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    },
+    {
+      "type": "table",
+      "name": "customer_events",
+      "table": "customer_events",
+      "sql": "CREATE TABLE customer_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, entity_id TEXT, payload_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    },
+    {
+      "type": "table",
+      "name": "d1_migrations",
+      "table": "d1_migrations",
+      "sql": "CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "delivery_outbox",
+      "table": "delivery_outbox",
+      "sql": "CREATE TABLE delivery_outbox (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  dedupe_key TEXT NOT NULL UNIQUE,      -- e.g. 'order|ORD-1|email' | 'tg|<requestId>|chunk_0' | 'cron|<key>'\n  order_id TEXT,                        -- order id when channel-bound to an order; dedupe_key otherwise\n  channel TEXT NOT NULL,                -- 'email' | 'telegram'\n  recipient TEXT NOT NULL,\n  subject TEXT,\n  body TEXT,\n  attachment_names TEXT,                -- 'kind:file_name,...' (bytes resolved from storage at send time)\n  status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING | SENDING | SENT | FAILED\n  attempts INTEGER NOT NULL DEFAULT 0,\n  last_error TEXT,\n  provider_message_id TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  updated_at TEXT\n)"
+    },
+    {
+      "type": "table",
+      "name": "demand_signals",
+      "table": "demand_signals",
+      "sql": "CREATE TABLE demand_signals (\n    id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, signal_key TEXT NOT NULL,\n    request_summary TEXT, score REAL DEFAULT 0, status TEXT DEFAULT 'NEW',\n    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT\n  )"
+    },
+    {
+      "type": "table",
+      "name": "engineering_jobs",
+      "table": "engineering_jobs",
+      "sql": "CREATE TABLE engineering_jobs (\n    job_id TEXT PRIMARY KEY, source TEXT, request_summary TEXT, status TEXT NOT NULL DEFAULT 'QUEUED',\n    risk TEXT NOT NULL DEFAULT 'high', sandbox TEXT, result_json TEXT DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT\n  )"
+    },
+    {
+      "type": "table",
+      "name": "event_log",
+      "table": "event_log",
+      "sql": "CREATE TABLE event_log (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  source TEXT NOT NULL,               -- 'telegram', future: 'form', 'cron', ...\n  external_id TEXT NOT NULL,          -- telegram: update_id (as TEXT)\n  payload_json TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'PROCESSED',\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  UNIQUE(source, external_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "execution_state",
+      "table": "execution_state",
+      "sql": "CREATE TABLE execution_state (\n  idempotency_key TEXT PRIMARY KEY,\n  record_kind TEXT,                -- 'ceo_state' | 'action_result' | 'request_result' | 'delivery'\n  correlation_id TEXT,\n  request_id TEXT,\n  entity_type TEXT,                -- goal|task|decision|followup|learning|plan|approval\n  entity_id TEXT,\n  action_id TEXT,\n  tool TEXT,\n  status TEXT,\n  progress REAL,\n  payload_json TEXT,               -- entity payload OR {\"final_reply\": ...} for request_result\n  error_code TEXT,\n  attempt_count INTEGER DEFAULT 0,\n  delivery_state TEXT,\n  message_key TEXT,\n  chunk_index INTEGER,\n  expires_at TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  updated_at TEXT\n)"
+    },
+    {
+      "type": "table",
+      "name": "financial_approvals",
+      "table": "financial_approvals",
+      "sql": "CREATE TABLE financial_approvals (\n    approval_id TEXT PRIMARY KEY,\n    order_id TEXT,\n    quote_id INTEGER,\n    action TEXT NOT NULL,\n    amount_usdc REAL,\n    status TEXT NOT NULL DEFAULT 'PENDING',\n    requested_by TEXT NOT NULL,\n    approved_by TEXT,\n    reason TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    decided_at TEXT\n  )"
+    },
+    {
+      "type": "table",
+      "name": "growth_actions",
+      "table": "growth_actions",
+      "sql": "CREATE TABLE growth_actions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT, action_key TEXT UNIQUE NOT NULL, action_type TEXT NOT NULL,\n    target_id TEXT, payload_json TEXT DEFAULT '{}', status TEXT NOT NULL DEFAULT 'READY',\n    risk TEXT NOT NULL DEFAULT 'medium', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT\n  )"
+    },
+    {
+      "type": "table",
+      "name": "growth_assets",
+      "table": "growth_assets",
+      "sql": "CREATE TABLE growth_assets (asset_id TEXT PRIMARY KEY,asset_type TEXT NOT NULL,slug TEXT UNIQUE NOT NULL,title TEXT NOT NULL,content TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PUBLISHED',updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    },
+    {
+      "type": "table",
+      "name": "growth_partners",
+      "table": "growth_partners",
+      "sql": "CREATE TABLE growth_partners (partner_key TEXT PRIMARY KEY,name TEXT,endpoint TEXT,source TEXT,status TEXT NOT NULL DEFAULT 'DISCOVERED',metadata_json TEXT DEFAULT '{}',updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    },
+    {
+      "type": "table",
+      "name": "growth_referrals",
+      "table": "growth_referrals",
+      "sql": "CREATE TABLE growth_referrals (id INTEGER PRIMARY KEY AUTOINCREMENT,code TEXT NOT NULL,path TEXT,user_agent TEXT,source TEXT,created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    },
+    {
+      "type": "table",
+      "name": "growth_runs",
+      "table": "growth_runs",
+      "sql": "CREATE TABLE growth_runs (run_id TEXT PRIMARY KEY,status TEXT NOT NULL,signals_found INTEGER NOT NULL DEFAULT 0,actions_ready INTEGER NOT NULL DEFAULT 0,partner_signals INTEGER NOT NULL DEFAULT 0,started_at TEXT NOT NULL DEFAULT (datetime('now')),finished_at TEXT,detail_json TEXT DEFAULT '{}')"
+    },
+    {
+      "type": "table",
+      "name": "order_files",
+      "table": "order_files",
+      "sql": "CREATE TABLE order_files (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  order_id TEXT NOT NULL,\n  file_kind TEXT NOT NULL,                 -- clean_csv | qa_report\n  file_name TEXT NOT NULL,\n  content_base64 TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  UNIQUE(order_id, file_kind)\n)"
+    },
+    {
+      "type": "table",
+      "name": "order_ledger",
+      "table": "order_ledger",
+      "sql": "CREATE TABLE order_ledger (\n  order_id TEXT PRIMARY KEY,\n  client_email TEXT,\n  tx_hash TEXT,\n  quote_ref INTEGER,\n  status TEXT NOT NULL,\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  updated_at TEXT\n, \"qa_status\" TEXT, \"qa_report\" TEXT, \"payment_status\" TEXT, \"amount_paid\" REAL, \"price_source\" TEXT, \"expected_amount\" REAL, \"file_name\" TEXT, \"file_ext\" TEXT, \"rows_in\" INTEGER, \"rows_out\" INTEGER, \"delivery_channel\" TEXT, \"delivery_status\" TEXT, product_id TEXT, settlement_mode TEXT NOT NULL DEFAULT 'MOCK' CHECK (settlement_mode IN ('REAL','TESTNET','SIMULATION','MOCK')), chain_id TEXT, settlement_integrity INTEGER AS (CASE WHEN ((settlement_mode IN ('REAL','TESTNET') AND tx_hash IS NOT NULL AND tx_hash!='' AND chain_id IS NOT NULL AND chain_id!='') OR (settlement_mode IN ('SIMULATION','MOCK') AND (chain_id IS NULL OR chain_id=''))) THEN 1 ELSE NULL END) VIRTUAL NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "order_quotes",
+      "table": "order_quotes",
+      "sql": "CREATE TABLE order_quotes (\n  quote_id INTEGER PRIMARY KEY AUTOINCREMENT,\n  client_email TEXT NOT NULL,         -- normalized lower-case; NOT a PK\n  agreed_amount REAL NOT NULL,\n  status TEXT NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE | USED | CANCELLED\n  note TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now'))\n, product_id TEXT)"
+    },
+    {
+      "type": "table",
+      "name": "pricing_rules",
+      "table": "pricing_rules",
+      "sql": "CREATE TABLE pricing_rules (\n    rule_id TEXT PRIMARY KEY, min_usdc REAL NOT NULL, max_usdc REAL NOT NULL,\n    multiplier REAL NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'ACTIVE', updated_at TEXT\n  )"
+    },
+    {
+      "type": "table",
+      "name": "products",
+      "table": "products",
+      "sql": "CREATE TABLE products (\n    product_id TEXT PRIMARY KEY,\n    name TEXT NOT NULL,\n    description TEXT NOT NULL,\n    unit TEXT NOT NULL DEFAULT 'order',\n    price_usdc REAL,\n    pricing_mode TEXT NOT NULL DEFAULT 'FOUNDER_QUOTE',\n    status TEXT NOT NULL DEFAULT 'DRAFT',\n    version INTEGER NOT NULL DEFAULT 1,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n  )"
+    },
+    {
+      "type": "table",
+      "name": "publications",
+      "table": "publications",
+      "sql": "CREATE TABLE publications (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  channel TEXT,\n  asset TEXT,\n  status TEXT,\n  publication_time TEXT\n)"
+    },
+    {
+      "type": "table",
+      "name": "reputation_events",
+      "table": "reputation_events",
+      "sql": "CREATE TABLE reputation_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT, identity_id TEXT NOT NULL, event_type TEXT NOT NULL,\n    order_id TEXT, score_delta REAL NOT NULL DEFAULT 0, evidence_json TEXT DEFAULT '{}',\n    created_at TEXT NOT NULL DEFAULT (datetime('now'))\n  )"
+    },
+    {
+      "type": "table",
+      "name": "source_health",
+      "table": "source_health",
+      "sql": "CREATE TABLE source_health (\n    source_id TEXT PRIMARY KEY, consecutive_failures INTEGER NOT NULL DEFAULT 0,\n    state TEXT NOT NULL DEFAULT 'HEALTHY', last_status TEXT, last_error TEXT,\n    last_tested_at TEXT, cooldown_until TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n  )"
+    },
+    {
+      "type": "table",
+      "name": "zatca_experiment_requests",
+      "table": "zatca_experiment_requests",
+      "sql": "CREATE TABLE zatca_experiment_requests (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  request_key TEXT UNIQUE,\n  business_type TEXT,\n  revenue_band TEXT,\n  qualified TEXT,\n  submitted_at TEXT,\n  attr_source TEXT,\n  attr_campaign TEXT,\n  attr_content TEXT\n)"
+    },
+    {
+      "type": "index",
+      "name": "idx_agent_tasks_status",
+      "table": "agent_tasks",
+      "sql": "CREATE INDEX idx_agent_tasks_status ON agent_tasks(status,created_at)"
+    },
+    {
+      "type": "index",
+      "name": "idx_agent_webhooks_agent",
+      "table": "agent_webhooks",
+      "sql": "CREATE INDEX idx_agent_webhooks_agent ON agent_webhooks(agent_id,status)"
+    },
+    {
+      "type": "index",
+      "name": "idx_bridge_audit_ts",
+      "table": "bridge_audit",
+      "sql": "CREATE INDEX idx_bridge_audit_ts ON bridge_audit(timestamp)"
+    },
+    {
+      "type": "index",
+      "name": "idx_commerce_sessions_agent",
+      "table": "commerce_sessions",
+      "sql": "CREATE INDEX idx_commerce_sessions_agent ON commerce_sessions(agent_id,updated_at)"
+    },
+    {
+      "type": "index",
+      "name": "idx_commerce_sessions_stage",
+      "table": "commerce_sessions",
+      "sql": "CREATE INDEX idx_commerce_sessions_stage ON commerce_sessions(stage,updated_at)"
+    },
+    {
+      "type": "index",
+      "name": "idx_event_log_source",
+      "table": "event_log",
+      "sql": "CREATE INDEX idx_event_log_source ON event_log(source, created_at)"
+    },
+    {
+      "type": "index",
+      "name": "idx_event_log_status_created",
+      "table": "event_log",
+      "sql": "CREATE INDEX idx_event_log_status_created ON event_log(status,created_at)"
+    },
+    {
+      "type": "index",
+      "name": "idx_exec_state_entity",
+      "table": "execution_state",
+      "sql": "CREATE INDEX idx_exec_state_entity ON execution_state(entity_type, entity_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_exec_state_request",
+      "table": "execution_state",
+      "sql": "CREATE INDEX idx_exec_state_request ON execution_state(request_id, record_kind)"
+    },
+    {
+      "type": "index",
+      "name": "idx_execution_state_kind_status",
+      "table": "execution_state",
+      "sql": "CREATE INDEX idx_execution_state_kind_status ON execution_state(record_kind,status)"
+    },
+    {
+      "type": "index",
+      "name": "idx_financial_approvals_status",
+      "table": "financial_approvals",
+      "sql": "CREATE INDEX idx_financial_approvals_status ON financial_approvals(status, created_at)"
+    },
+    {
+      "type": "index",
+      "name": "idx_growth_referrals_code",
+      "table": "growth_referrals",
+      "sql": "CREATE INDEX idx_growth_referrals_code ON growth_referrals(code,created_at)"
+    },
+    {
+      "type": "index",
+      "name": "idx_growth_runs_started",
+      "table": "growth_runs",
+      "sql": "CREATE INDEX idx_growth_runs_started ON growth_runs(started_at DESC)"
+    },
+    {
+      "type": "index",
+      "name": "idx_order_ledger_tx_hash",
+      "table": "order_ledger",
+      "sql": "CREATE UNIQUE INDEX idx_order_ledger_tx_hash ON order_ledger(tx_hash) WHERE tx_hash IS NOT NULL AND tx_hash != ''"
+    },
+    {
+      "type": "index",
+      "name": "idx_order_quotes_email",
+      "table": "order_quotes",
+      "sql": "CREATE INDEX idx_order_quotes_email ON order_quotes(client_email, status)"
+    },
+    {
+      "type": "index",
+      "name": "idx_order_quotes_product",
+      "table": "order_quotes",
+      "sql": "CREATE INDEX idx_order_quotes_product ON order_quotes(product_id, status)"
+    },
+    {
+      "type": "index",
+      "name": "idx_outbox_order",
+      "table": "delivery_outbox",
+      "sql": "CREATE INDEX idx_outbox_order ON delivery_outbox(order_id, channel)"
+    },
+    {
+      "type": "index",
+      "name": "idx_outbox_status",
+      "table": "delivery_outbox",
+      "sql": "CREATE INDEX idx_outbox_status ON delivery_outbox(status)"
+    },
+    {
+      "type": "index",
+      "name": "idx_products_status",
+      "table": "products",
+      "sql": "CREATE INDEX idx_products_status ON products(status)"
+    },
+    {
+      "type": "index",
+      "name": "idx_zatca_req_time",
+      "table": "zatca_experiment_requests",
+      "sql": "CREATE INDEX idx_zatca_req_time ON zatca_experiment_requests(submitted_at)"
+    },
+    {
+      "type": "index",
+      "name": "idx_zatca_source_campaign",
+      "table": "zatca_experiment_requests",
+      "sql": "CREATE INDEX idx_zatca_source_campaign ON zatca_experiment_requests(attr_source,attr_campaign)"
+    }
+  ]
+}
