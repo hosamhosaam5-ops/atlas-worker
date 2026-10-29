@@ -1,6 +1,7 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+
 (async () => {
-const { spawnSync } = require('node:child_process');
-const fs = require('node:fs');
 const summary = process.env.GITHUB_STEP_SUMMARY;
 const result = spawnSync('npx', ['--no-install', 'wrangler', 'd1', 'info', 'atlas_db'], {
   encoding: 'utf8',

@@ -1,6 +1,7 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+
 (async () => {
-const { spawnSync } = require('node:child_process');
-const fs = require('node:fs');
 const summary = process.env.GITHUB_STEP_SUMMARY;
 const env = process.env;
 const run = (args) => {
@@ -88,13 +89,13 @@ for (const table of mainTables) {
     counts.push([table, 'MISSING_OR_UNREADABLE']);
   }
 }
-if (columns !== 8) fail('demand_signals column count', 'Expected 8 columns; observed ' + columns + '.');
+if (columns !== 10) fail('demand_signals column count', 'Expected 10 columns after migration 0006; observed ' + columns + '.');
 if (demandCount !== 23) fail('demand_signals row count', 'Expected 23 rows; observed ' + demandCount + '.');
 const lines = [
   '## D1 Time Travel restore point',
   '',
   '- Bookmark: `' + bookmark + '`',
-  '- demand_signals columns: **' + columns + ' / 8**',
+  '- demand_signals columns: **' + columns + ' / 10**',
   '- demand_signals rows: **' + demandCount + ' / 23**',
   '',
   '### Main-table row counts',
