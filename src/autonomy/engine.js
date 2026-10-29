@@ -512,15 +512,22 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
           continue;
         }
         const key=s.source+'|'+lead.id;
-        const exists=await db.prepare('SELECT id FROM demand_signals WHERE signal_key=?').bind(key).first();
-        if(exists){duplicates++;continue;}
+        const exists=await db.prepare('SELECT id,source_url FROM demand_signals WHERE signal_key=?').bind(key).first();
+        const sourceCreatedAt=parseDate(lead.created_at);
+        const sourceUrl=sourceCreatedAt&&lead.source_url?lead.source_url:null;
+        const storedCreatedAt=sourceCreatedAt?sourceCreatedAt.toISOString():new Date(now).toISOString();
+        if(exists){
+          duplicates++;
+          if(!exists.source_url&&sourceUrl){
+            await db.prepare("UPDATE demand_signals SET source_url=?,created_at=? WHERE id=? AND status='NEW' AND source_url IS NULL")
+              .bind(sourceUrl,storedCreatedAt,exists.id).run();
+          }
+          continue;
+        }
         const summary=String([lead.title,lead.description].filter(Boolean).join(' — ')).slice(0,3000);
         const score=Number((valid.score*0.7 + 0.3).toFixed(4));
         // Preserve the provider's original creation time for the phase-4 age gate.
         // If age cannot be proven, keep source_url NULL so the signal cannot be counted.
-        const sourceCreatedAt=parseDate(lead.created_at);
-        const sourceUrl=sourceCreatedAt&&lead.source_url?lead.source_url:null;
-        const storedCreatedAt=sourceCreatedAt?sourceCreatedAt.toISOString():new Date(now).toISOString();
         await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status,source_url,created_at) VALUES(?,?,?,?,?,?,?)')
           .bind(s.source,key,summary,score,'NEW',sourceUrl,storedCreatedAt).run();
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
@@ -570,23 +577,95 @@ function buildAutonomousDecision(db,action,context={}) {
 }
 
 
-export async function prepareGrowthActions(db) {
-  const rows = await db.prepare("SELECT id,source,signal_key,request_summary,score FROM demand_signals WHERE status='NEW' ORDER BY score DESC,created_at DESC LIMIT 20").all();
+function isPrivateSourceHost(hostname) {
+  const host=String(hostname||'').toLowerCase().replace(/^\[|\]$/g,'');
+  if(!host||host==='localhost'||host==='::1'||host==='::'||host.endsWith('.localhost')||host.endsWith('.local')||host.endsWith('.internal')) return true;
+  const octets=host.split('.').map(Number);
+  if(octets.length===4&&octets.every(n=>Number.isInteger(n)&&n>=0&&n<=255)){
+    const [a,b]=octets;
+    if(a===0||a===10||a===127||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&b===168)) return true;
+  }
+  if(/^(?:fc|fd|fe80:)/i.test(host)||host.startsWith('::ffff:127.')||host.startsWith('::ffff:10.')) return true;
+  return false;
+}
+
+export async function verifyOriginalSourceLink(sourceUrl, fetcher=fetch) {
+  let url;
+  try {
+    url=new URL(String(sourceUrl||''));
+  } catch {
+    return {ok:false,reason:'INVALID_SOURCE_URL'};
+  }
+  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||isPrivateSourceHost(url.hostname)) {
+    return {ok:false,reason:'UNSAFE_SOURCE_URL'};
+  }
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),8000);
+  try {
+    let response=await fetcher(url.toString(),{method:'HEAD',redirect:'follow',signal:controller.signal});
+    if(response.status===405||response.status===501) {
+      response=await fetcher(url.toString(),{method:'GET',headers:{Range:'bytes=0-0'},redirect:'follow',signal:controller.signal});
+    }
+    const ok=response.ok===true&&Number(response.status)>=200&&Number(response.status)<300;
+    try { await response.body?.cancel?.(); } catch {}
+    return {ok,status:Number(response.status)||null,reason:ok?null:'SOURCE_LINK_NOT_OPEN'};
+  } catch(error) {
+    const timeout=error?.name==='AbortError'||error?.name==='TimeoutError';
+    return {ok:false,status:null,reason:timeout?'SOURCE_LINK_TIMEOUT':'SOURCE_LINK_UNREACHABLE'};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function prepareGrowthActions(db,{now=Date.now(),linkFetcher=fetch}={}) {
+  const rows=await db.prepare("SELECT id,source,signal_key,request_summary,score,source_url,created_at,status FROM demand_signals WHERE status='NEW' ORDER BY score DESC,created_at DESC LIMIT 20").all();
   const actions=[];
+  const skipped={};
+  const skip=reason=>{skipped[reason]=(skipped[reason]||0)+1;};
+  const capabilityPattern=/\b(csv|xlsx|spreadsheet|dataset|data quality|data cleaning|data validation|tabular data|structured data|missing values|duplicate rows|json to csv|csv to json|data qa)\b/i;
+  const financialPrerequisitePattern=/\b(?:pay\s+upfront|upfront\s+payment|deposit\s+required|pay\s+a\s+deposit|funding\s+required|purchase\s+required|buy\s+now|escrow\s+required|paid\s+registration|registration\s+fee|paid\s+membership|wallet\s+required|transaction\s+required)\b/i;
   for(const r of (rows.results||[])){
+    const summary=String(r.request_summary||'');
+    const created=parseDate(r.created_at);
+    if(!created||created.getTime()>now){skip('unverified_age');continue;}
+    if(created.getTime()<now-DEMAND_MAX_AGE_DAYS*86400000){skip('stale');continue;}
+    if(!r.source_url){skip('missing_source_url');continue;}
+    const sourceReason=demandRejectionReason({title:summary,description:'',created_at:r.created_at,status:'open'},r.source,now);
+    if(sourceReason){skip(sourceReason);continue;}
+    if(financialPrerequisitePattern.test(summary)){skip('financial_prerequisite');continue;}
+    if(!capabilityPattern.test(summary)){skip('service_mismatch');continue;}
+
+    const canonical=await db.prepare('SELECT MIN(id) AS canonical_id,COUNT(*) AS duplicate_count FROM demand_signals WHERE signal_key=?').bind(r.signal_key).first();
+    if(Number(canonical?.duplicate_count||0)>1&&Number(canonical?.canonical_id)!==Number(r.id)){skip('duplicate_signal');continue;}
+
     const key='qualify|'+r.signal_key;
     const exists=await db.prepare('SELECT id FROM growth_actions WHERE action_key=?').bind(key).first();
-    if(exists) continue;
-    const summary=String(r.request_summary||'');
+    if(exists){skip('action_already_exists');continue;}
+
+    const link=await verifyOriginalSourceLink(r.source_url,linkFetcher);
+    if(!link.ok){skip(link.reason||'source_link_unavailable');continue;}
+
     const safe=validateMarketplaceLead(sanitizeExternalInput({description:summary}).data);
-    if(!safe.ok) continue;
-    const price=Math.max(15,Math.min(5000,Number((15 + Math.min(100,Number(r.score||0)*100)).toFixed(2))));
-    await db.prepare("INSERT INTO growth_actions(action_key,action_type,target_id,payload_json,status,risk) VALUES(?,?,?,?,?,?)")
-      .bind(key,'QUALIFIED_LEAD',String(r.id),JSON.stringify({source:r.source,signal_key:r.signal_key,summary,score:r.score,price_usdc:price,pricing_mode:'BOUNDED_AUTONOMOUS'}),'READY','medium').run();
-    await db.prepare("UPDATE demand_signals SET status='QUALIFIED',updated_at=datetime('now') WHERE id=?").bind(r.id).run();
-    actions.push({id:r.id,price_usdc:price,status:'READY'});
+    if(!safe.ok){skip(safe.reason||'invalid_lead');continue;}
+    const price=Math.max(15,Math.min(5000,Number((15+Math.min(100,Number(r.score||0)*100)).toFixed(2))));
+    const verifiedAt=new Date(now).toISOString();
+    const payload=JSON.stringify({
+      source:r.source,signal_key:r.signal_key,summary,score:r.score,price_usdc:price,
+      pricing_mode:'BOUNDED_AUTONOMOUS',source_url:r.source_url,last_verified_at:verifiedAt
+    });
+    const insert=db.prepare("INSERT INTO growth_actions(action_key,action_type,target_id,payload_json,status,risk) VALUES(?,?,?,?,?,?)")
+      .bind(key,'QUALIFIED_LEAD',String(r.id),payload,'READY','medium');
+    const update=db.prepare("UPDATE demand_signals SET status='QUALIFIED',last_verified_at=?,updated_at=datetime('now') WHERE id=? AND status='NEW' AND source_url=?")
+      .bind(verifiedAt,r.id,r.source_url);
+    if(typeof db.batch==='function') {
+      await db.batch([insert,update]);
+    } else {
+      await insert.run();
+      await update.run();
+    }
+    actions.push({id:r.id,price_usdc:price,status:'READY',last_verified_at:verifiedAt});
   }
-  return {ok:true,actions};
+  return {ok:true,actions,skipped};
 }
 
 async function queueEngineeringJob(db,{source='customer_request',request_summary,risk='high'}={}) {
