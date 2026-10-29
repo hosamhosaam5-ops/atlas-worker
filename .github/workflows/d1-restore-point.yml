@@ -31,13 +31,20 @@ jobs:
       - name: Install locked Wrangler dependency
         run: npm ci --no-audit --no-fund
 
+      - name: Validate restore-point Node scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check ops/scripts/d1-restore-point-verify.mjs
+          node --check ops/scripts/d1-restore-point-capture.mjs
+
       - name: Verify Cloudflare D1 token and database backend
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          node ops/scripts/d1-restore-point-capture.mjs
+          node ops/scripts/d1-restore-point-verify.mjs
 
       - name: Capture Time Travel bookmark and read-only baseline counts
         env:
@@ -45,9 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node ops/scripts/d1-restore-point-verify.mjs
-          node --check ops/scripts/d1-restore-point-verify.mjs
-          node --check ops/scripts/d1-restore-point-capture.mjs
+          node ops/scripts/d1-restore-point-capture.mjs
           awk '
             /^- Bookmark: / { print; next }
             /^- demand_signals columns: / { print; next }
