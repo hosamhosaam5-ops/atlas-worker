@@ -53,7 +53,7 @@ test('scan turns a valid public marketplace listing into one NEW signal and dedu
   const db=new DemandDb();
   let calls=0;
   const fetcher=async()=>{calls++;return {ok:true,status:200,contentType:'application/json',text:JSON.stringify({listings:[
-    {id:'job-42',title:'CSV data quality review',description:'Need a specialist to validate columns, normalize values, and return a cleaned CSV.',url:'https://market.example/jobs/42'}
+    {id:'job-42',createdAt:'2026-10-27T00:00:00Z',title:'CSV data quality review',description:'Need a specialist to validate columns, normalize values, and return a cleaned CSV.',url:'https://market.example/jobs/42'}
   ]})};};
   const options={fetcher,sources:[{source:'fixture_marketplace',provider:'Fixture Marketplace',url:'https://market.example/api/listings'}]};
   const first=await scanAgentDemand(db,options);
@@ -61,6 +61,8 @@ test('scan turns a valid public marketplace listing into one NEW signal and dedu
   assert.equal(first.signals.length,1);
   assert.equal(db.signals.length,1);
   assert.equal(db.signals[0].status,'NEW');
+  assert.equal(db.signals[0].source_url,'https://market.example/jobs/42');
+  assert.equal(db.signals[0].created_at,'2026-10-27T00:00:00.000Z');
   assert.equal(first.diagnostics[0].accepted,1);
 
   const second=await scanAgentDemand(db,options);
