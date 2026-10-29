@@ -1,5 +1,5 @@
 {
-  "backup_type": "read-only D1 export",
+  "backup_type": "direct D1 SELECT * export",
   "database": "atlas_db",
   "table": "demand_signals",
   "exported_at": "2026-10-30",
