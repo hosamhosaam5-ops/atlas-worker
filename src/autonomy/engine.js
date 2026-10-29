@@ -583,10 +583,34 @@ function isPrivateSourceHost(hostname) {
   const octets=host.split('.').map(Number);
   if(octets.length===4&&octets.every(n=>Number.isInteger(n)&&n>=0&&n<=255)){
     const [a,b]=octets;
-    if(a===0||a===10||a===127||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&b===168)) return true;
+    if(a===0||a===10||a===127||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||(a===100&&b>=64&&b<=127)) return true;
   }
-  if(/^(?:fc|fd|fe80:)/i.test(host)||host.startsWith('::ffff:127.')||host.startsWith('::ffff:10.')) return true;
+  if(/^(?:fc|fd|fe80:)/i.test(host)||host.startsWith('::ffff:127.')||host.startsWith('::ffff:10.')||host.startsWith('::ffff:169.254.')||host.startsWith('::ffff:192.168.')) return true;
   return false;
+}
+
+function isSafePublicSourceUrl(url) {
+  return ['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&!isPrivateSourceHost(url.hostname);
+}
+
+async function requestPublicSourceUrl(startUrl, method, headers, fetcher, signal) {
+  let current=new URL(startUrl);
+  for(let redirects=0;redirects<=5;redirects++){
+    if(!isSafePublicSourceUrl(current)) return {response:null,finalUrl:current.toString(),reason:'UNSAFE_REDIRECT_TARGET'};
+    const response=await fetcher(current.toString(),{method,headers,redirect:'manual',signal});
+    if(response.status>=300&&response.status<400){
+      const location=response.headers?.get?.('location')||response.headers?.location||null;
+      if(!location) return {response:null,finalUrl:current.toString(),reason:'REDIRECT_LOCATION_MISSING'};
+      let next;
+      try { next=new URL(location,current); } catch { return {response:null,finalUrl:current.toString(),reason:'INVALID_REDIRECT_TARGET'}; }
+      if(!isSafePublicSourceUrl(next)) return {response:null,finalUrl:current.toString(),reason:'UNSAFE_REDIRECT_TARGET'};
+      try { await response.body?.cancel?.(); } catch {}
+      current=next;
+      continue;
+    }
+    return {response,finalUrl:current.toString(),reason:null};
+  }
+  return {response:null,finalUrl:current.toString(),reason:'TOO_MANY_REDIRECTS'};
 }
 
 export async function verifyOriginalSourceLink(sourceUrl, fetcher=fetch) {
@@ -596,16 +620,17 @@ export async function verifyOriginalSourceLink(sourceUrl, fetcher=fetch) {
   } catch {
     return {ok:false,reason:'INVALID_SOURCE_URL'};
   }
-  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||isPrivateSourceHost(url.hostname)) {
-    return {ok:false,reason:'UNSAFE_SOURCE_URL'};
-  }
+  if(!isSafePublicSourceUrl(url)) return {ok:false,reason:'UNSAFE_SOURCE_URL'};
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),8000);
   try {
-    let response=await fetcher(url.toString(),{method:'HEAD',redirect:'follow',signal:controller.signal});
-    if(response.status===405||response.status===501) {
-      response=await fetcher(url.toString(),{method:'GET',headers:{Range:'bytes=0-0'},redirect:'follow',signal:controller.signal});
+    let checked=await requestPublicSourceUrl(url.toString(),'HEAD',undefined,fetcher,controller.signal);
+    if(checked.reason) return {ok:false,status:null,reason:checked.reason};
+    if(checked.response.status===405||checked.response.status===501) {
+      checked=await requestPublicSourceUrl(checked.finalUrl,'GET',{Range:'bytes=0-0'},fetcher,controller.signal);
     }
+    if(checked.reason) return {ok:false,status:null,reason:checked.reason};
+    const response=checked.response;
     const ok=response.ok===true&&Number(response.status)>=200&&Number(response.status)<300;
     try { await response.body?.cancel?.(); } catch {}
     return {ok,status:Number(response.status)||null,reason:ok?null:'SOURCE_LINK_NOT_OPEN'};
