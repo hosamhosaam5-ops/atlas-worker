@@ -1,0 +1,129 @@
+name: ATLAS D1 full backup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-d1-full-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Export complete remote D1 database
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN"
+            exit 1
+          fi
+          npx wrangler d1 export atlas_db --remote --output=backup.sql
+
+      - name: Validate backup structure and record SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s backup.sql
+          python3 <<'PY'
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          path = Path("backup.sql")
+          raw = path.read_bytes()
+          if not raw:
+              raise SystemExit("FAIL: backup.sql is empty")
+          try:
+              sql = raw.decode("utf-8")
+          except UnicodeDecodeError as exc:
+              raise SystemExit(f"FAIL: backup.sql is not valid UTF-8: {exc}")
+
+          nonempty = [line.strip() for line in sql.splitlines() if line.strip()]
+          if not nonempty:
+              raise SystemExit("FAIL: backup.sql has no SQL statements")
+          if nonempty[-1].rstrip(";").strip().upper() not in {"COMMIT", "END TRANSACTION"}:
+              raise SystemExit("FAIL: final non-empty SQL line is not COMMIT/END TRANSACTION; export may be truncated")
+          if not nonempty[-1].endswith(";"):
+              raise SystemExit("FAIL: final SQL terminator is missing")
+
+          ident = r'(?:"([^"]+)"|`([^`]+)`|\\[([^\\]]+)\\]|([A-Za-z_][A-Za-z0-9_]*))'
+          create_re = re.compile(r"^\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?"+ident, re.I | re.M)
+          insert_re = re.compile(r"^\\s*INSERT\\s+INTO\\s+"+ident, re.I | re.M)
+
+          def table_name(match):
+              return next(group for group in match.groups() if group is not None)
+
+          created = [table_name(m) for m in create_re.finditer(sql)]
+          inserted = [table_name(m) for m in insert_re.finditer(sql)]
+          create_counts = {}
+          insert_counts = {}
+          for name in created:
+              create_counts[name] = create_counts.get(name, 0) + 1
+          for name in inserted:
+              insert_counts[name] = insert_counts.get(name, 0) + 1
+
+          if "demand_signals" not in create_counts:
+              raise SystemExit("FAIL: CREATE TABLE for demand_signals is missing")
+          demand_inserts = insert_counts.get("demand_signals", 0)
+          if demand_inserts != 23:
+              raise SystemExit(f"FAIL: expected 23 INSERT statements for demand_signals; found {demand_inserts}")
+
+          main_tables = [
+              "event_log", "order_quotes", "order_ledger", "execution_state",
+              "ceo_memory", "bridge_audit", "zatca_experiment_requests",
+              "acquisition_assets", "channel_watch", "publications",
+              "bountybook_auth_nonces", "order_files", "delivery_outbox",
+              "demand_signals", "demand_scan_source_runs", "demand_source_health"
+          ]
+          size = len(raw)
+          print("Backup validation passed.")
+          print(f"File bytes: {size}")
+          print(f"CREATE TABLE statements: {len(created)}")
+          print(f"INSERT statements total: {len(inserted)}")
+          print(f"demand_signals INSERT statements: {demand_inserts}")
+          for name in main_tables:
+              print(f"INSERT {name}: {insert_counts.get(name, 0)}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## ATLAS D1 backup validation\\n")
+              summary.write(f"- File size: **{size} bytes**\\n")
+              summary.write(f"- CREATE TABLE statements: **{len(created)}**\\n")
+              summary.write(f"- INSERT statements total: **{len(inserted)}**\\n")
+              summary.write(f"- demand_signals INSERT statements: **{demand_inserts} / 23**\\n")
+              summary.write("- Final SQL terminator: **COMMIT; verified**\\n")
+              summary.write("- Per-table INSERT counts:\\n")
+              for name in main_tables:
+                  summary.write(f"  - `{name}`: **{insert_counts.get(name, 0)}**\\n")
+          PY
+          sha256sum backup.sql | tee backup.sha256
+          HASH="$(cut -d ' ' -f1 backup.sha256)"
+          echo "SHA-256: ${HASH}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload private backup artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: atlas-db-full-backup-${{ github.run_id }}
+          path: backup.sql
+          if-no-files-found: error
+          retention-days: 30
