@@ -2,6 +2,10 @@ name: ATLAS Production Deploy
 
 # Production deployments require an explicit founder-triggered workflow run.
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/triggers/deploy-current-main.trigger'
   workflow_dispatch:
 
 permissions:
