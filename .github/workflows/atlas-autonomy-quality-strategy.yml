@@ -1,0 +1,135 @@
+name: atlas-autonomy-quality-strategy
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 10 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "test/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/atlas-autonomy-quality-strategy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-autonomy-quality-strategy
+  cancel-in-progress: false
+
+jobs:
+  quality-and-strategy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run full automated test suite
+        id: tests
+        run: npm test
+
+      - name: Probe live ATLAS health
+        id: atlas_health
+        shell: bash
+        run: |
+          set -uo pipefail
+          body="$(mktemp)"
+          status="$(curl --silent --show-error --max-time 15 -o "$body" -w '%{http_code}' https://atlas-worker.hosamhosaam5.workers.dev/health || true)"
+          echo "http_status=$status" >> "$GITHUB_OUTPUT"
+          cat "$body"
+          if [ "$status" != "200" ]; then
+            echo "::error::ATLAS public health endpoint returned HTTP $status"
+            exit 1
+          fi
+          node --input-type=module - "$body" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const body = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (body.ok !== true || body.db !== 'ok') throw new Error('ATLAS health/db is not healthy');
+          console.log('ATLAS_HEALTH=PASS');
+          NODE
+
+      - name: Probe free public demand sources
+        id: demand
+        shell: bash
+        run: |
+          set -uo pipefail
+          probe() {
+            local key="$1" url="$2" out status
+            out="$(mktemp)"
+            status="$(curl --silent --show-error --max-time 12 -A 'ATLAS-autonomy-quality/1.0' -H 'accept: application/json' -o "$out" -w '%{http_code}' "$url" || true)"
+            echo "${key}_status=$status" >> "$GITHUB_OUTPUT"
+            echo "$key HTTP=$status"
+            # External marketplace outages are recorded as degraded inputs, not confused with a failed local test.
+          }
+          probe payanagent "https://payanagent.com/api/v1/requests?status=open&limit=50"
+          probe opentask "https://opentask.ai/api/tasks?sort=new&limit=50"
+          probe agentjob "https://agent-job.ai/api-docs"
+
+      - name: Select bounded operating strategy and publish evidence
+        if: always()
+        env:
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          ATLAS_HEALTH_OUTCOME: ${{ steps.atlas_health.outcome }}
+          ATLAS_HEALTH_HTTP: ${{ steps.atlas_health.outputs.http_status }}
+          PAYANAGENT_HTTP: ${{ steps.demand.outputs.payanagent_status }}
+          OPENTASK_HTTP: ${{ steps.demand.outputs.opentask_status }}
+          AGENTJOB_HTTP: ${{ steps.demand.outputs.agentjob_status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE' | tee -a "$GITHUB_STEP_SUMMARY"
+          const tests = process.env.TESTS_OUTCOME || 'unknown';
+          const health = process.env.ATLAS_HEALTH_OUTCOME || 'unknown';
+          const payan = Number(process.env.PAYANAGENT_HTTP || 0);
+          const opentask = Number(process.env.OPENTASK_HTTP || 0);
+          const agentjob = Number(process.env.AGENTJOB_HTTP || 0);
+          const alternatives = [opentask, agentjob].filter(s => s >= 200 && s < 300).length;
+          const payanDegraded = payan >= 500 || payan === 0;
+          const localFailed = tests !== 'success' || health !== 'success';
+          const strategy = localFailed
+            ? 'QUALITY_HOLD: stop release decisions; prioritize test/health recovery; do not deploy automatically.'
+            : payanDegraded
+              ? (alternatives > 0
+                  ? 'FALLBACK_DISCOVERY: deprioritize PayanAgent for this run; continue read-only discovery on healthy free sources; accept no stale, paid-upfront, wallet-gated, or mismatched tasks.'
+                  : 'DEMAND_DISCOVERY_HOLD: PayanAgent is degraded and no alternative probe succeeded; preserve state and retry on next scheduled run.')
+              : 'NORMAL_BOUNDED_DISCOVERY: use only verified fresh demand; reuse the active product before considering new builds.';
+          console.log('## ATLAS automated quality & strategy report');
+          console.log('');
+          console.log('| Check | Result |');
+          console.log('|---|---|');
+          console.log(`| Test suite | ${tests} |`);
+          console.log(`| ATLAS health | ${health} (HTTP ${process.env.ATLAS_HEALTH_HTTP || 'unknown'}) |`);
+          console.log(`| PayanAgent | HTTP ${payan || 'unknown'} |`);
+          console.log(`| OpenTask | HTTP ${opentask || 'unknown'} |`);
+          console.log(`| AgentJob docs | HTTP ${agentjob || 'unknown'} |`);
+          console.log('');
+          console.log('**Selected bounded strategy:** ' + strategy);
+          console.log('');
+          console.log('**Guardrails:** spend = 0 USDC; no outbound messages/applications/orders; no production deployment from this workflow; external data is untrusted; only read-only discovery is performed.');
+          console.log('');
+          console.log('This decision is an evidence-based run recommendation. It does not rewrite the production autonomy policy or claim to persist a provider circuit-breaker in D1.');
+          NODE
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: atlas-autonomy-quality-strategy-${{ github.run_id }}
+          path: |
+            package.json
+            package-lock.json
+          if-no-files-found: ignore
+          retention-days: 7
