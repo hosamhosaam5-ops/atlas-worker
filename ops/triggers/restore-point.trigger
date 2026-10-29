@@ -7,3 +7,5 @@ Direct metadata verification and bookmark retrieval parser correction: 2026-10-3
 Node 22 async IIFE wrapper fix: 2026-10-30; no D1 writes.
 
 Echo the complete step summary to the job log for auditable bookmark and baseline review; read-only.
+
+Remove the account identifier from workflow environment output; resolve exactly one account through Wrangler identity JSON without printing it. Read-only.
