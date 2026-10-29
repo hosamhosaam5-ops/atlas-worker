@@ -1,0 +1,107 @@
+name: ATLAS D1 apply migration 0006
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/triggers/apply-0006.trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-d1-apply-0006
+  cancel-in-progress: false
+
+jobs:
+  apply-0006:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact trigger commit
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked Wrangler dependency
+        run: npm ci --no-audit --no-fund
+
+      - name: Capture pre-write D1 Time Travel bookmark
+        id: restore_point
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-apply-0006.mjs capture
+
+      - name: Require a fresh bookmark captured in this run
+        env:
+          D1_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
+          D1_BOOKMARK_CAPTURED_AT_MS: ${{ steps.restore_point.outputs.captured_at_ms }}
+          D1_BOOKMARK_RUN_ID: ${{ steps.restore_point.outputs.captured_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-apply-0006.mjs guard
+
+      - name: Read-only preflight for the allowlisted migration
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-apply-0006.mjs preflight
+
+      - name: Re-check same-run bookmark age immediately before write
+        env:
+          D1_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
+          D1_BOOKMARK_CAPTURED_AT_MS: ${{ steps.restore_point.outputs.captured_at_ms }}
+          D1_BOOKMARK_RUN_ID: ${{ steps.restore_point.outputs.captured_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-apply-0006.mjs guard
+
+      - name: Execute only the allowlisted SQL file
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SQL_FILE='migrations/0006_demand_observability.sql'
+          ALLOWED_SQL_FILE='migrations/0006_demand_observability.sql'
+          if [ "$SQL_FILE" != "$ALLOWED_SQL_FILE" ]; then
+            echo "::error::SQL file is not on the explicit allowlist."
+            exit 1
+          fi
+          test -s "$SQL_FILE"
+          SQL_SHA256="$(sha256sum "$SQL_FILE" | cut -d ' ' -f1)"
+          echo "Allowlisted migration SHA-256: $SQL_SHA256"
+          npx --no-install wrangler d1 execute atlas_db --remote --file="$SQL_FILE"
+          echo "Executed only $SQL_FILE"
+
+      - name: Verify additive schema and unchanged demand rows
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-apply-0006.mjs verify
+
+      - name: Verify production health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATUS="$(curl --silent --show-error --output /tmp/atlas-health.json --write-out '%{http_code}' --max-time 15 https://atlas-worker.hosamhosaam5.workers.dev/health)"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Production /health returned HTTP $STATUS; migration postflight is not accepted."
+            exit 1
+          fi
+          echo "- Production /health: **HTTP 200**" >> "$GITHUB_STEP_SUMMARY"
+          echo "Production /health: HTTP 200"
