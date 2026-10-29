@@ -42,7 +42,7 @@ jobs:
           const { spawnSync } = require('node:child_process');
           const fs = require('node:fs');
           const summary = process.env.GITHUB_STEP_SUMMARY;
-          const result = spawnSync('npx', ['--no-install', 'wrangler', 'd1', 'info', 'atlas_db', '--json'], {
+          const result = spawnSync('npx', ['--no-install', 'wrangler', 'd1', 'info', 'atlas_db'], {
             encoding: 'utf8',
             env: process.env,
             maxBuffer: 8 * 1024 * 1024,
@@ -53,15 +53,11 @@ jobs:
             process.exit(21);
           }
           const raw = String(result.stdout || '').trim();
-          let parsed;
-          try { parsed = JSON.parse(raw); } catch {
-            fs.appendFileSync(summary, '## D1 credential verification: FAILED\n\nWrangler returned non-JSON output for --json; no production operation was attempted.\n');
-            process.exit(22);
-          }
-          const serialized = JSON.stringify(parsed);
-          const version = serialized.match(/"version"\s*:\s*"([^"]+)"/i)?.[1] || '';
+          const version = raw.match(/(?:^|\n)\s*[│|]?\s*version\s*[│|:]\s*(production|alpha)\b/im)?.[1]
+            || raw.match(/\bversion\s*[:=]\s*(production|alpha)\b/i)?.[1]
+            || '';
           if (version !== 'production') {
-            fs.appendFileSync(summary, '## D1 backend verification: FAILED\n\nExpected D1 version=production; observed version=' + (version || 'unknown') + '. Time Travel support is not proven.\n');
+            fs.appendFileSync(summary, '## D1 backend verification: FAILED\n\nExpected D1 version=production; observed version=' + (version || 'not exposed by Wrangler info output') + '. Time Travel support is not proven. No bookmark or table query was attempted.\n');
             process.exit(23);
           }
           fs.appendFileSync(summary, '## D1 credential and backend verification\n\n- Wrangler D1 info: **PASS**\n- D1 backend version: **production**\n');
