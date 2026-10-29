@@ -1,0 +1,187 @@
+name: ATLAS D1 full backup
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ops/triggers/encrypted-backup.trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-d1-full-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+    steps:
+      - name: Fail closed unless encryption and Cloudflare credentials are configured
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.repository.private }}" != "true" ] && [ -z "${BACKUP_ENCRYPTION_KEY:-}" ]; then
+            echo "::error::Missing required Actions secret BACKUP_ENCRYPTION_KEY; refusing to export sensitive data in a public repository."
+            exit 1
+          fi
+          if [ -z "${BACKUP_ENCRYPTION_KEY:-}" ]; then
+            echo "::error::Missing required Actions secret BACKUP_ENCRYPTION_KEY."
+            exit 1
+          fi
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::Missing required Actions secret CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+          if [ "${#BACKUP_ENCRYPTION_KEY}" -lt 32 ]; then
+            echo "::error::BACKUP_ENCRYPTION_KEY must contain at least 32 characters."
+            exit 1
+          fi
+          echo "::add-mask::${BACKUP_ENCRYPTION_KEY}"
+
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install SQLite CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y sqlite3
+
+      - name: Export complete remote D1 database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 export atlas_db --remote --output=backup.sql
+          test -s backup.sql
+
+      - name: Validate, encrypt, and test restoration
+        env:
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          PASSFILE="$(mktemp)"
+          RESTORED="$(mktemp --suffix=.sql)"
+          trap 'rm -f "$PASSFILE" "$RESTORED" backup.sql' EXIT
+          printf '%s' "$BACKUP_ENCRYPTION_KEY" > "$PASSFILE"
+          chmod 600 "$PASSFILE"
+          unset BACKUP_ENCRYPTION_KEY
+
+          python3 <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          raw = Path("backup.sql").read_bytes()
+          if not raw:
+              raise SystemExit("FAIL: backup.sql is empty")
+          try:
+              sql = raw.decode("utf-8")
+          except UnicodeDecodeError as exc:
+              raise SystemExit(f"FAIL: backup.sql is not valid UTF-8: {exc}")
+
+          lines = [line.strip() for line in sql.splitlines() if line.strip()]
+          if not lines or lines[-1].rstrip(";").strip().upper() not in {"COMMIT", "END TRANSACTION"} or not lines[-1].endswith(";"):
+              raise SystemExit("FAIL: final SQL line is not a complete COMMIT/END TRANSACTION statement")
+
+          ident = r'(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))'
+          create_re = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"+ident, re.I | re.M)
+          insert_re = re.compile(r"^\s*INSERT\s+INTO\s+"+ident, re.I | re.M)
+
+          def name(m):
+              return next(g for g in m.groups() if g is not None)
+
+          creates = [name(m) for m in create_re.finditer(sql)]
+          inserts = [name(m) for m in insert_re.finditer(sql)]
+          create_counts, insert_counts = {}, {}
+          for table in creates:
+              create_counts[table] = create_counts.get(table, 0) + 1
+          for table in inserts:
+              insert_counts[table] = insert_counts.get(table, 0) + 1
+
+          if not create_counts.get("demand_signals"):
+              raise SystemExit("FAIL: CREATE TABLE demand_signals is missing")
+          if insert_counts.get("demand_signals", 0) != 23:
+              raise SystemExit(f"FAIL: expected exactly 23 demand_signals INSERT statements, found {insert_counts.get('demand_signals', 0)}")
+
+          main_tables = [
+              "event_log", "order_quotes", "order_ledger", "execution_state",
+              "ceo_memory", "bridge_audit", "zatca_experiment_requests",
+              "acquisition_assets", "channel_watch", "publications",
+              "bountybook_auth_nonces", "order_files", "delivery_outbox",
+              "demand_signals", "demand_scan_source_runs", "demand_source_health"
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("## Encrypted D1 backup validation\n")
+              out.write(f"- Raw bytes: **{len(raw)}**\n")
+              out.write(f"- CREATE TABLE statements: **{len(creates)}**\n")
+              out.write(f"- INSERT statements total: **{len(inserts)}**\n")
+              out.write(f"- demand_signals INSERT statements: **{insert_counts.get('demand_signals', 0)} / 23**\n")
+              out.write("- Final SQL terminator: **verified**\n")
+              out.write("- Per-table INSERT counts:\n")
+              for table in main_tables:
+                  out.write(f"  - `{table}`: **{insert_counts.get(table, 0)}**\n")
+          PY
+
+          RAW_SHA="$(sha256sum backup.sql | cut -d ' ' -f1)"
+          gpg --batch --yes --pinentry-mode loopback --passphrase-file "$PASSFILE" --symmetric --cipher-algo AES256 --output backup.sql.gpg backup.sql
+          test -s backup.sql.gpg
+          chmod 600 backup.sql.gpg
+          CIPHER_SHA="$(sha256sum backup.sql.gpg | cut -d ' ' -f1)"
+
+          gpg --batch --yes --pinentry-mode loopback --passphrase-file "$PASSFILE" --decrypt --output "$RESTORED" backup.sql.gpg
+          RESTORED_SHA="$(sha256sum "$RESTORED" | cut -d ' ' -f1)"
+          if [ "$RAW_SHA" != "$RESTORED_SHA" ]; then
+            echo "::error::Restore SHA-256 mismatch"
+            exit 1
+          fi
+
+          RESTORE_COUNT="$(sqlite3 :memory: ".read $RESTORED" "SELECT COUNT(*) FROM demand_signals;")"
+          if [ "$RESTORE_COUNT" != "23" ]; then
+            echo "::error::Restored demand_signals row count mismatch"
+            exit 1
+          fi
+
+          {
+            echo "## Encrypted D1 backup and restore proof"
+            echo "- Raw SHA-256: **$RAW_SHA**"
+            echo "- Encrypted SHA-256: **$CIPHER_SHA**"
+            echo "- Encrypted bytes: **$(wc -c < backup.sql.gpg | tr -d ' ')**"
+            echo "- Restore SHA-256 match: **PASS**"
+            echo "- SQLite in-memory restore: **PASS**"
+            echo "- Restored demand_signals rows: **$RESTORE_COUNT / 23**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          rm -f backup.sql "$RESTORED" "$PASSFILE"
+          trap - EXIT
+          test ! -e backup.sql
+
+      - name: Upload encrypted backup only
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: atlas-db-full-backup-encrypted-${{ github.run_id }}
+          path: backup.sql.gpg
+          if-no-files-found: error
+          retention-days: 30
