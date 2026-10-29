@@ -13,7 +13,7 @@ class DemandDb {
         // Cloudflare D1 binds placeholders via .bind(...).first(); first() itself does not bind values.
         const key=values[0];
         if(sql.includes('autonomy_policies')) return {policy_id:'default',max_external_requests:30,max_tool_calls:20,max_retries:3,max_execution_seconds:120,max_build_iterations:5,outbound_spend_allowed:0};
-        if(sql.includes('SELECT id FROM demand_signals')) return db.signals.find(s=>s.signal_key===key)||null;
+        if(sql.includes('SELECT id FROM demand_signals')||sql.includes('SELECT id,source_url FROM demand_signals')) return db.signals.find(s=>s.signal_key===key)||null;
         if(sql.includes('SELECT * FROM demand_source_health')) return db.health.get(key)||null;
         if(sql.includes('INSERT INTO demand_source_health')&&sql.includes('RETURNING last_attempt_at')){
           const [source,lastAttemptAt,updatedAt,intervalSeconds]=values;
@@ -48,6 +48,12 @@ class DemandDb {
           const [scan_id,source,raw_count,raw_recent_count,accepted_count,rejected_count,rejection_counts_json,duplicate_count,response_ms,http_status,source_status,error_code,started_at,finished_at]=values;
           db.runs.push({scan_id,source,raw_count,raw_recent_count,accepted_count,rejected_count,rejection_counts_json,duplicate_count,response_ms,http_status,source_status,error_code,started_at,finished_at});
           return {meta:{changes:1}};
+        }
+        if(sql.includes('UPDATE demand_signals SET source_url=')){
+          const [source_url,created_at,id]=values;
+          const row=db.signals.find(s=>s.id===id);
+          if(row&&row.status==='NEW'&&!row.source_url){row.source_url=source_url;row.created_at=created_at;return {meta:{changes:1}};}
+          return {meta:{changes:0}};
         }
         if(sql.includes('INSERT INTO demand_signals')){
           const [source,signal_key,request_summary,score,status,source_url,created_at]=values;
@@ -436,4 +442,26 @@ test('AgentJob persistent 60-second gate blocks repeated manual scans before MCP
   assert.equal(third.ok,true);
   assert.equal(calls.length,6);
   assert.deepEqual(calls.slice(3),['initialize','notifications/initialized','tools/call']);
+});
+
+
+test('duplicate scan backfills the original source link and creation timestamp without adding a second signal',async()=>{
+  const db=new DemandDb();
+  db.signals.push({
+    id:77,source:'opentask_public_tasks',signal_key:'opentask_public_tasks|job-backfill',
+    request_summary:'CSV data quality review — Need a CSV dataset validated and normalized.',
+    score:0.8,status:'NEW',source_url:null,created_at:'2026-10-29T10:00:00.000Z'
+  });
+  const result=await scanAgentDemand(db,{
+    now:Date.parse('2026-10-29T12:00:00.000Z'),
+    sources:[{source:'opentask_public_tasks',provider:'OpenTask',url:'https://market.example/api'}],
+    fetcher:async()=>({ok:true,status:200,text:JSON.stringify({listings:[
+      {id:'job-backfill',createdAt:'2026-10-28T09:00:00Z',title:'CSV data quality review',description:'Need a CSV dataset validated and normalized.',url:'https://market.example/jobs/job-backfill'}
+    ]})})
+  });
+  assert.equal(result.ok,true);
+  assert.equal(db.signals.length,1);
+  assert.equal(result.diagnostics[0].duplicates,1);
+  assert.equal(db.signals[0].source_url,'https://market.example/jobs/job-backfill');
+  assert.equal(db.signals[0].created_at,'2026-10-28T09:00:00.000Z');
 });
