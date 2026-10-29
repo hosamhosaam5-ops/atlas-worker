@@ -17,19 +17,20 @@ function runWrangler(args) {
     maxBuffer: 8 * 1024 * 1024,
   });
   if (result.status !== 0) {
-    const detail = String(result.stderr || result.stdout || result.error?.message || 'Wrangler command failed').trim();
+    const detail = String(result.stderr || result.stdout || result.error?.message || 'Wrangler command failed').trim().replace(/[a-f0-9]{32}/gi, '[redacted]');
     fail('Wrangler read operation failed: ' + detail);
   }
   return String(result.stdout || '').trim();
 }
 
 function parseJson(text) {
-  const candidates = [text.indexOf('{'), text.indexOf('[')].filter(index => index >= 0);
-  if (candidates.length === 0) fail('Wrangler returned no JSON payload.');
-  const start = Math.min(...candidates);
-  const close = text[start] === '{' ? text.lastIndexOf('}') : text.lastIndexOf(']');
-  if (close < start) fail('Wrangler returned incomplete JSON.');
-  return JSON.parse(text.slice(start, close + 1));
+  const candidates = [text.indexOf('{'), text.indexOf('[')].filter(index => index >= 0).sort((a, b) => a - b);
+  for (const start of candidates) {
+    const close = text[start] === '{' ? text.lastIndexOf('}') : text.lastIndexOf(']');
+    if (close < start) continue;
+    try { return JSON.parse(text.slice(start, close + 1)); } catch {}
+  }
+  fail('Wrangler returned no complete JSON payload.');
 }
 
 function rowsFrom(value, arrays = []) {
