@@ -44,3 +44,35 @@ After the workflow completed, a separate Cloudflare D1 read-only query confirmed
 - The read-only query reported `rows_written=0` and `changed_db=false`.
 
 No Time Travel restore was performed. The pre-write bookmark remains a recovery reference only.
+
+
+## Demand signal stale-status transition
+
+**Status: EXECUTED; POSTFLIGHT AND INDEPENDENT READ VERIFIED**
+
+- **Workflow run:** [ATLAS D1 mark stale #40970819358](https://github.com/hosamhosaam5-ops/atlas-worker/actions/runs/40970819358)
+- **Workflow commit:** `ea96e84b64a04aa862c5169852f4c8e99a79dc92`
+- **Same-run bookmark:** `00002854-00000000-00005113-9cd34670169f89112262f17a0a58c9e3`
+- **Captured:** 2026-10-29 23:06:54.914 UTC (2026-10-30 02:06:54.914 Asia/Riyadh)
+- **Freshness at write:** less than 5.4 seconds; the post-update verification step began at 23:07:00.302 UTC.
+- **Preflight:** the helper requires exactly 23 scoped rows and all 23 to be `QUALIFIED`; the preflight step completed successfully.
+- **Only SQL executed:**
+
+```sql
+UPDATE demand_signals
+SET status='STALE_UNVERIFIED'
+WHERE id BETWEEN 1 AND 23
+  AND source='opentask_public_tasks'
+  AND status='QUALIFIED';
+```
+
+- **Postflight:** 23 scoped rows `STALE_UNVERIFIED`; 0 scoped rows `QUALIFIED`; total `demand_signals` rows 23.
+- **Independent read-only D1 confirmation:** the same 23/0/23 counts; 0 duplicate `signal_key` values; 0 rows currently outside the exact scope.
+- **updated_at:** the allowlisted UPDATE does not reference or modify `updated_at`; the independent read showed the existing timestamps unchanged by this SQL.
+- **Rollback:** the automatic rollback workflow was skipped because the mark-stale run completed successfully. No Time Travel restore was performed.
+
+**Change-count evidence limitation:** the helper did not emit Wrangler's `meta.changes` value into the job log. The run proves successful execution of the single allowlisted UPDATE and its 23-row postflight; the independent D1 query confirms the resulting state. This document does not invent a separately logged `changes` counter.
+
+### Production growth read after transition
+
+The authenticated production `growth_snapshot` returned 23 `STALE_UNVERIFIED` signals and no `QUALIFIED` signals. Its historical action aggregate still exposed 23 `QUALIFIED_LEAD / READY` rows, so PR #172 added current-status filtering to the snapshot and live status checks to offer preparation and negotiation. PR #172 is merged, but its production deployment is pending a founder-triggered deployment workflow; until deployed, the production snapshot may still show those historical actions. No D1 action rows were changed.
