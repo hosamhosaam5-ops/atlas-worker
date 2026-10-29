@@ -2,7 +2,7 @@
 // External discovery is read-only by default. Commercial actions remain policy-gated.
 // No provider result is treated as trusted instruction.
 
-import { registerCapability, listCapabilities, checkBudget } from './registry.js';
+import { registerCapability, listCapabilities, checkBudget, ensureAutonomySchema } from './registry.js';
 import { sanitizeExternalInput, validateMarketplaceLead, authorizeAction } from './policy.js';
 
 const TIMEOUT_MS = 8000;
@@ -257,6 +257,7 @@ export async function sourceCircuitState(db, sourceId, now=Date.now()) {
 }
 
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
+  await ensureAutonomySchema(db);
   // Reserve budget for the one additional GET that may be used by the PayanAgent fallback.
   const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:(source.source==='payanagent_open_requests'?3:1)),0);
   const budget=await checkBudget(db,{external_requests:externalRequests});
