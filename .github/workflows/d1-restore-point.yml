@@ -177,9 +177,6 @@ jobs:
           const lines = [
             '## D1 Time Travel restore point',
             '',
-            '- Database: **atlas_db**',
-            '- D1 backend: **production**',
-            '- Captured at (UTC): **' + timestamp + '**',
             '- Bookmark: `' + bookmark + '`',
             '- demand_signals columns: **' + columns + ' / 8**',
             '- demand_signals rows: **' + demandCount + ' / 23**',
