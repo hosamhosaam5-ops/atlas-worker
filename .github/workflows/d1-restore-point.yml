@@ -193,3 +193,4 @@ jobs:
           fs.appendFileSync(summary, lines.join('\n') + '\n');
           })().catch((error) => { console.error(error); process.exit(1); });
           NODE
+          cat "$GITHUB_STEP_SUMMARY"
