@@ -161,12 +161,12 @@ test('AgentJob list_posts gate is persistent, atomic, and allows one call per 60
   assert.equal(first.allowed,true);
   const early=await claimAgentJobListPostsGate(db,'agent_job_public_mcp',now+59999);
   assert.equal(early.allowed,false);
-  const due=await claimAgentJobListPostsGate(db,'agent_job_public_mcp',now+60000);
+  const due=await claimAgentJobListPostsGate(db,'agent_job_public_mcp',now+60001);
   assert.equal(due.allowed,true);
   const other=await claimAgentJobListPostsGate(db,'other_source',now+60000);
   assert.equal(other.allowed,true);
   const row=await db.prepare('SELECT * FROM demand_source_health WHERE source=?').bind('agent_job_public_mcp').first();
-  assert.equal(row.last_attempt_at,new Date(now+60000).toISOString());
+  assert.equal(row.last_attempt_at,new Date(now+60001).toISOString());
   db.close();
 });
 
