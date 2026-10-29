@@ -157,6 +157,18 @@ test('duplicate signal keys produce at most one qualified action',async()=>{
   assert.equal(result.skipped.duplicate_signal,1);
 });
 
+
+test('public source link redirects cannot target private addresses',async()=>{
+  let calls=0;
+  const result=await verifyOriginalSourceLink(VALID_URL,async()=>{
+    calls++;
+    return {ok:false,status:302,headers:{get(name){return name==='location'?'http://127.0.0.1/admin':null;}}};
+  });
+  assert.equal(result.ok,false);
+  assert.equal(result.reason,'UNSAFE_REDIRECT_TARGET');
+  assert.equal(calls,1);
+});
+
 test('private and non-HTTP source URLs are rejected without fetching',async()=>{
   for(const url of ['http://127.0.0.1/admin','http://169.254.169.254/latest/meta-data','file:///etc/passwd','javascript:alert(1)']){
     let calls=0;
