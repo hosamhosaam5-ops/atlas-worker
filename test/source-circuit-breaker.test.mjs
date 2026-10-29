@@ -137,41 +137,60 @@ test('source failures are isolated and a successful probe resets only its own so
   db.close();
 });
 
-test('PayanAgent primary HTTP 500 opens its circuit immediately even when fallback succeeds',async()=>{
+test('PayanAgent primary HTTP 500 respects the three-failure threshold when fallback succeeds',async()=>{
   const db=mockDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
-  const outcome=await recordPayanAgentOutcome(db,'payanagent_open_requests',{
+  const response={
     ok:true,status:200,primaryHttpStatus:500,fallbackUsed:true,fallbackStage:'filtered_requests',responseMs:23
-  },now);
-  assert.equal(outcome.state,'OPEN');
-  assert.equal(outcome.consecutive_failures,1);
-  assert.equal(outcome.next_probe_at,new Date(now+15*60*1000).toISOString());
-  assert.equal(outcome.primary_degraded,true);
+  };
+  const first=await recordPayanAgentOutcome(db,'payanagent_open_requests',response,now);
+  const second=await recordPayanAgentOutcome(db,'payanagent_open_requests',response,now+1000);
+  const third=await recordPayanAgentOutcome(db,'payanagent_open_requests',response,now+2000);
+
+  assert.equal(first.state,'CLOSED');
+  assert.equal(first.consecutive_failures,1);
+  assert.equal(first.next_probe_at,null);
+  assert.equal(second.state,'CLOSED');
+  assert.equal(second.consecutive_failures,2);
+  assert.equal(second.next_probe_at,null);
+  assert.equal(third.state,'OPEN');
+  assert.equal(third.consecutive_failures,3);
+  assert.equal(third.next_probe_at,new Date(now+2000+15*60*1000).toISOString());
+  assert.equal(third.primary_degraded,true);
+
   const row=await db.prepare('SELECT * FROM demand_source_health WHERE source=?').bind('payanagent_open_requests').first();
   assert.equal(row.state,'OPEN');
   assert.equal(row.last_status,500);
   assert.equal(row.last_http_status,500);
   assert.equal(row.last_error_code,'PRIMARY_HTTP_ERROR');
   assert.equal(row.last_response_ms,23);
-  assert.equal(row.next_probe_at,new Date(now+15*60*1000).toISOString());
+  assert.equal(row.next_probe_at,new Date(now+2000+15*60*1000).toISOString());
   db.close();
 });
 
-test('a final PayanAgent HTTP 500 opens the circuit after one failure',async()=>{
+test('a final PayanAgent HTTP 500 opens only after three consecutive failures',async()=>{
   const db=mockDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
-  const outcome=await recordSourceOutcome(db,'payanagent_open_requests',{
-    ok:false,status:500,error:'HTTP_ERROR',responseMs:42,now
-  });
-  assert.equal(outcome.state,'OPEN');
-  assert.equal(outcome.consecutive_failures,1);
-  assert.equal(outcome.last_error_code,'HTTP_500');
-  assert.equal(outcome.next_probe_at,new Date(now+15*60*1000).toISOString());
+  const first=await recordSourceOutcome(db,'payanagent_open_requests',{ok:false,status:500,error:'HTTP_ERROR',responseMs:42,now});
+  const second=await recordSourceOutcome(db,'payanagent_open_requests',{ok:false,status:500,error:'HTTP_ERROR',responseMs:42,now:now+1000});
+  const third=await recordSourceOutcome(db,'payanagent_open_requests',{ok:false,status:500,error:'HTTP_ERROR',responseMs:42,now:now+2000});
+
+  assert.equal(first.state,'CLOSED');
+  assert.equal(first.consecutive_failures,1);
+  assert.equal(first.next_probe_at,null);
+  assert.equal(second.state,'CLOSED');
+  assert.equal(second.consecutive_failures,2);
+  assert.equal(second.next_probe_at,null);
+  assert.equal(third.state,'OPEN');
+  assert.equal(third.consecutive_failures,3);
+  assert.equal(third.last_error_code,'HTTP_500');
+  assert.equal(third.next_probe_at,new Date(now+2000+15*60*1000).toISOString());
+
   const row=await db.prepare('SELECT * FROM demand_source_health WHERE source=?').bind('payanagent_open_requests').first();
   assert.equal(row.state,'OPEN');
   assert.equal(row.last_http_status,500);
   assert.equal(row.last_response_ms,42);
-  assert.equal(row.next_probe_at,new Date(now+15*60*1000).toISOString());
+  assert.equal(row.next_probe_at,new Date(now+2000+15*60*1000).toISOString());
   db.close();
 });
 
