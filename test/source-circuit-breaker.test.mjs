@@ -137,20 +137,41 @@ test('source failures are isolated and a successful probe resets only its own so
   db.close();
 });
 
-test('PayanAgent primary HTTP 500 remains a transient failure when fallback succeeds',async()=>{
+test('PayanAgent primary HTTP 500 opens its circuit immediately even when fallback succeeds',async()=>{
   const db=mockDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
   const outcome=await recordPayanAgentOutcome(db,'payanagent_open_requests',{
     ok:true,status:200,primaryHttpStatus:500,fallbackUsed:true,fallbackStage:'filtered_requests',responseMs:23
   },now);
-  assert.equal(outcome.state,'CLOSED');
+  assert.equal(outcome.state,'OPEN');
   assert.equal(outcome.consecutive_failures,1);
+  assert.equal(outcome.next_probe_at,new Date(now+15*60*1000).toISOString());
   assert.equal(outcome.primary_degraded,true);
   const row=await db.prepare('SELECT * FROM demand_source_health WHERE source=?').bind('payanagent_open_requests').first();
+  assert.equal(row.state,'OPEN');
   assert.equal(row.last_status,500);
   assert.equal(row.last_http_status,500);
   assert.equal(row.last_error_code,'PRIMARY_HTTP_ERROR');
   assert.equal(row.last_response_ms,23);
+  assert.equal(row.next_probe_at,new Date(now+15*60*1000).toISOString());
+  db.close();
+});
+
+test('a final PayanAgent HTTP 500 opens the circuit after one failure',async()=>{
+  const db=mockDb();
+  const now=Date.parse('2026-10-29T10:00:00.000Z');
+  const outcome=await recordSourceOutcome(db,'payanagent_open_requests',{
+    ok:false,status:500,error:'HTTP_ERROR',responseMs:42,now
+  });
+  assert.equal(outcome.state,'OPEN');
+  assert.equal(outcome.consecutive_failures,1);
+  assert.equal(outcome.last_error_code,'HTTP_500');
+  assert.equal(outcome.next_probe_at,new Date(now+15*60*1000).toISOString());
+  const row=await db.prepare('SELECT * FROM demand_source_health WHERE source=?').bind('payanagent_open_requests').first();
+  assert.equal(row.state,'OPEN');
+  assert.equal(row.last_http_status,500);
+  assert.equal(row.last_response_ms,42);
+  assert.equal(row.next_probe_at,new Date(now+15*60*1000).toISOString());
   db.close();
 });
 
