@@ -24,9 +24,12 @@ function runWrangler(args) {
 }
 
 function parseJson(text) {
-  const start = text.search(/[\\[{]/);
-  if (start < 0) fail('Wrangler returned no JSON payload.');
-  return JSON.parse(text.slice(start));
+  const candidates = [text.indexOf('{'), text.indexOf('[')].filter(index => index >= 0);
+  if (candidates.length === 0) fail('Wrangler returned no JSON payload.');
+  const start = Math.min(...candidates);
+  const close = text[start] === '{' ? text.lastIndexOf('}') : text.lastIndexOf(']');
+  if (close < start) fail('Wrangler returned incomplete JSON.');
+  return JSON.parse(text.slice(start, close + 1));
 }
 
 function rowsFrom(value, arrays = []) {
@@ -78,12 +81,12 @@ async function resolveDatabase() {
   if (!database?.uuid) fail('Exact D1 database atlas_db was not returned.');
   const details = await api('/accounts/' + accountId + '/d1/database/' + database.uuid + '?fields=uuid,name,version');
   if (details?.version !== 'production') fail('D1 backend is not production; refusing migration.');
-  return { api, databaseId: database.uuid };
+  return { api, accountId, databaseId: database.uuid };
 }
 
 async function capture() {
-  const { api, databaseId } = await resolveDatabase();
-  const result = await api('/accounts/' + await resolveAccountId() + '/d1/database/' + databaseId + '/time_travel/bookmark');
+  const { api, accountId, databaseId } = await resolveDatabase();
+  const result = await api('/accounts/' + accountId + '/d1/database/' + databaseId + '/time_travel/bookmark');
   const bookmark = String(result?.bookmark || '');
   if (!bookmark) fail('Cloudflare returned no Time Travel bookmark.');
   const capturedAtMs = Date.now();
