@@ -230,7 +230,7 @@ async function readSourceHealth(db, sourceId) {
   return await db.prepare('SELECT * FROM source_health WHERE source_id=?').bind(sourceId).first();
 }
 
-async function recordSourceOutcome(db, sourceId, {ok, status=null, error=null, now=Date.now()}) {
+export async function recordSourceOutcome(db, sourceId, {ok, status=null, error=null, now=Date.now()}) {
   const previous = await readSourceHealth(db, sourceId);
   const failures = ok ? 0 : Math.min(100, Number(previous?.consecutive_failures || 0) + 1);
   const cooldownUntil = ok ? null : new Date(now + SOURCE_COOLDOWN_MS).toISOString();
