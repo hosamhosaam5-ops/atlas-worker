@@ -177,9 +177,6 @@ jobs:
           const lines = [
             '## D1 Time Travel restore point',
             '',
-            '- Database: **atlas_db**',
-            '- D1 backend: **production**',
-            '- Captured at (UTC): **' + timestamp + '**',
             '- Bookmark: `' + bookmark + '`',
             '- demand_signals columns: **' + columns + ' / 8**',
             '- demand_signals rows: **' + demandCount + ' / 23**',
@@ -193,3 +190,4 @@ jobs:
           fs.appendFileSync(summary, lines.join('\n') + '\n');
           })().catch((error) => { console.error(error); process.exit(1); });
           NODE
+          cat "$GITHUB_STEP_SUMMARY"
