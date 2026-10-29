@@ -61,7 +61,7 @@ class StaleNegotiationDb {
     const db = this;
     return {
       bind() { return this; },
-      async run() { db.offerWrites++; return { meta: { changes: 1 } }; },
+      async run() { if (sql.includes('UPDATE growth_actions SET payload_json')) db.offerWrites++; return { meta: { changes: 1 } }; },
       async first() {
         if (sql.includes('FROM growth_actions WHERE action_key=?')) {
           return { action_type: 'QUALIFIED_LEAD', target_id: '23', payload_json: JSON.stringify({ price_usdc: 50 }) };
