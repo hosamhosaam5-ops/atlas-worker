@@ -76,3 +76,41 @@ WHERE id BETWEEN 1 AND 23
 ### Production growth read after transition
 
 The authenticated production `growth_snapshot` returned 23 `STALE_UNVERIFIED` signals and no `QUALIFIED` signals. Its historical action aggregate still exposed 23 `QUALIFIED_LEAD / READY` rows, so PR #172 added current-status filtering to the snapshot and live status checks to offer preparation and negotiation. PR #172 is merged, but its production deployment is pending a founder-triggered deployment workflow; until deployed, the production snapshot may still show those historical actions. No D1 action rows were changed.
+
+
+## Production release — demand observability, circuit breaker, and verified-source counting gate
+
+**Status: DEPLOYED AND HEALTH-VERIFIED**
+
+- **Merged implementation PRs:** [#169 per-source scan observability](https://github.com/hosamhosaam5-ops/atlas-worker/pull/169), [#173 persistent circuit breaker and AgentJob 60-second poll gate](https://github.com/hosamhosaam5-ops/atlas-worker/pull/173), [#174 verified original-source counting gate](https://github.com/hosamhosaam5-ops/atlas-worker/pull/174), and [#172 stale-offer visibility and negotiation guard](https://github.com/hosamhosaam5-ops/atlas-worker/pull/172).
+- **Production deployment workflow:** [ATLAS Production Deploy #40973569516](https://github.com/hosamhosaam5-ops/atlas-worker/actions/runs/40973569516)
+- **Deployed main commit / verified Worker `git_sha`:** `6cabe6d97f233abecb644dfb710625ec1f5ec7a8`
+- **Deployment health verification:** HTTP 200; `ok=true`; `db=ok`; deployed `git_sha` matched the exact tested commit.
+- **Pre-deploy test job:** 220 tests passed; 0 failed.
+- **Post-deploy ATLAS health tool:** `ok=true`, database `ok`, Telegram `LIVE`.
+
+### First post-deploy source-scan evidence
+
+A read-only D1 query after deployment found four per-source scan metric rows. The query itself reported `rows_written=0` and `changed_db=false`.
+
+| Existing source | Raw | Recent | Accepted | Rejected | Duplicates | HTTP | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `agent_job_public_mcp` | 50 | 1 | 0 | 50 | 0 | 200 | OK |
+| `opentask_public_tasks` | 26 | 5 | 0 | 26 | 0 | 200 | OK |
+| `agent_souk` | 0 | 0 | 0 | 0 | 0 | 200 | OK |
+| `payanagent_open_requests` | 0 | 0 | 0 | 0 | 0 | 500 | HTTP_ERROR |
+
+- `demand_source_health`: AgentJob, Agent Souk, and OpenTask were `CLOSED` with zero consecutive failures; PayanAgent was `CLOSED` with one consecutive failure and `HTTP_500`. The configured three-failure circuit-breaker threshold was not reached.
+- Production `growth_snapshot` after deployment: `actions=[]`; the only existing demand signals remained 23 `STALE_UNVERIFIED`; no `QUALIFIED` signal was counted.
+- The latest completed growth-cycle row returned by `growth_snapshot` at the time of this record was still the pre-deployment 23:30:40–23:30:47 UTC cycle. The first post-deploy source scan completed at 23:33:02 UTC; a later scheduled growth cycle is still required to establish post-deploy cycle completion.
+- No new sources, scoring thresholds, qualification criteria, or 30-day age conditions were introduced. No customer contact or spending occurred.
+
+### Seven-day qualification observation window
+
+- **Start:** 2026-10-29 23:31:22 UTC (2026-10-30 02:31:22 Asia/Riyadh), when the production health endpoint confirmed the exact deployed SHA.
+- **End:** 2026-11-05 23:31:22 UTC (2026-11-06 02:31:22 Asia/Riyadh).
+- **Required outcome:** at least 3 unique verified qualified opportunities from at least 2 existing sources, each with a reachable original source link and age within the unchanged 30-day rule.
+- **Initial state:** 0 qualified opportunities; 23 stale/unverified records; first post-deploy scan accepted 0 items.
+- A daily read-only monitoring automation was created for eight daily audits (2026-10-30 through 2026-11-06, target morning Asia/Riyadh). It must not trigger scans or write D1. The seven-day window is not considered successful until the required unique qualified opportunities are evidenced.
+
+No Time Travel restore was performed.
