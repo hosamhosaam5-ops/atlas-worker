@@ -309,7 +309,7 @@ test('scan persists per-source raw, recent, accepted, rejected and rejection met
     sources:[{source:'fixture_metrics',provider:'Fixture Metrics',url:'https://market.example/api/listings'}],
     fetcher:async()=>({ok:true,status:200,contentType:'application/json',text:JSON.stringify({listings:[
       {id:'fresh-1',createdAt:'2026-10-28T00:00:00Z',title:'CSV data quality review',description:'Need a CSV dataset validated, normalized, and returned as a clean spreadsheet.',url:'https://market.example/jobs/fresh-1'},
-      {id:'mismatch-1',createdAt:'2026-10-27T00:00:00Z',title:'Design a logo',description:'Need a new visual identity for a website.',url:'https://market.example/jobs/mismatch-1'},
+      {id:'mismatch-1',createdAt:'2026-10-27T00:00:00Z',title:'Plumbing repair request',description:'Need a local plumber to fix a leaking kitchen sink.',url:'https://market.example/jobs/mismatch-1'},
       {id:'stale-1',createdAt:'2026-09-01T00:00:00Z',title:'Old CSV data quality review',description:'Need a CSV dataset validated and normalized.',url:'https://market.example/jobs/stale-1'}
     ]})})
   });
