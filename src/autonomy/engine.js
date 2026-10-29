@@ -224,6 +224,38 @@ function extractPayanAgentFallbackPayload(payload) {
   } catch { return {requests:[]}; }
 }
 
+const SOURCE_COOLDOWN_MS = 15 * 60 * 1000;
+
+async function readSourceHealth(db, sourceId) {
+  return await db.prepare('SELECT * FROM source_health WHERE source_id=?').bind(sourceId).first();
+}
+
+async function recordSourceOutcome(db, sourceId, {ok, status=null, error=null, now=Date.now()}) {
+  const previous = await readSourceHealth(db, sourceId);
+  const failures = ok ? 0 : Math.min(100, Number(previous?.consecutive_failures || 0) + 1);
+  const cooldownUntil = ok ? null : new Date(now + SOURCE_COOLDOWN_MS).toISOString();
+  const state = ok ? 'HEALTHY' : 'COOLDOWN';
+  await db.prepare(`INSERT INTO source_health(source_id,consecutive_failures,state,last_status,last_error,last_tested_at,cooldown_until,updated_at)
+    VALUES(?,?,?,?,?,?,?,datetime('now'))
+    ON CONFLICT(source_id) DO UPDATE SET consecutive_failures=excluded.consecutive_failures,
+    state=excluded.state,last_status=excluded.last_status,last_error=excluded.last_error,
+    last_tested_at=excluded.last_tested_at,cooldown_until=excluded.cooldown_until,updated_at=datetime('now')`)
+    .bind(sourceId, failures, state, status===null?null:String(status), error?String(error).slice(0,300):null,
+      new Date(now).toISOString(), cooldownUntil).run();
+  return {source:sourceId,state,consecutive_failures:failures,cooldown_until:cooldownUntil};
+}
+
+export async function sourceCircuitState(db, sourceId, now=Date.now()) {
+  const row = await readSourceHealth(db, sourceId);
+  const until = row?.cooldown_until ? Date.parse(row.cooldown_until) : NaN;
+  if (row?.state === 'COOLDOWN' && Number.isFinite(until) && until > now) {
+    return {blocked:true,state:'COOLDOWN',cooldown_until:row.cooldown_until};
+  }
+  // Cooldown expiry permits exactly a fresh read-only probe; it does not restore trust
+  // until that probe returns successfully.
+  return {blocked:false,state:row?.state || 'HEALTHY',probe_due:row?.state === 'COOLDOWN'};
+}
+
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
   // Reserve budget for the one additional GET that may be used by the PayanAgent fallback.
   const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:(source.source==='payanagent_open_requests'?3:1)),0);
@@ -232,6 +264,12 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
   const signals=[];
   const diagnostics=[];
   for(const s of sources){
+    const circuit = await sourceCircuitState(db, s.source, now);
+    if (circuit.blocked) {
+      diagnostics.push({source:s.source,status:'CIRCUIT_OPEN',cooldown_until:circuit.cooldown_until,
+        reason:'temporary_cooldown_after_failure'});
+      continue;
+    }
     try {
       const r=s.protocol==='MCP'
         ? await fetchAgentJobPosts(fetcher)
@@ -239,6 +277,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
           ? await fetchPayanAgentOpenRequests(fetcher,s.url)
           : await fetcher(s.url,{method:'GET'}));
       if(!r.ok) {
+        await recordSourceOutcome(db, s.source, {ok:false,status:r.status,error:'HTTP_ERROR',now});
         diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status,
           ...(r.fallbackUsed?{
             fallback_used:true,
@@ -250,6 +289,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:s.protocol||'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
         continue;
       }
+      await recordSourceOutcome(db, s.source, {ok:true,status:r.status,now});
       const listings=(s.source==='payanagent_open_requests' && r.fallbackStage==='discover')
         ? extractListings(extractPayanAgentFallbackPayload(r.text))
         : extractListings(r.text);
@@ -293,6 +333,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
           endpoint:r.requestedEndpoint
         }: {})});
     } catch(e) {
+      await recordSourceOutcome(db, s.source, {ok:false,status:'NETWORK_ERROR',error:String(e?.message||e),now});
       diagnostics.push({source:s.source,status:'ERROR',error:String(e?.message||e).slice(0,300)});
     }
   }
