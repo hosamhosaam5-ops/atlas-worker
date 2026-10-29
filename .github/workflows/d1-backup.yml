@@ -68,9 +68,9 @@ jobs:
           if not nonempty[-1].endswith(";"):
               raise SystemExit("FAIL: final SQL terminator is missing")
 
-          ident = r'(?:"([^"]+)"|`([^`]+)`|\\[([^\\]]+)\\]|([A-Za-z_][A-Za-z0-9_]*))'
-          create_re = re.compile(r"^\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?"+ident, re.I | re.M)
-          insert_re = re.compile(r"^\\s*INSERT\\s+INTO\\s+"+ident, re.I | re.M)
+          ident = r'(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))'
+          create_re = re.compile(r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"+ident, re.I | re.M)
+          insert_re = re.compile(r"^\s*INSERT\s+INTO\s+"+ident, re.I | re.M)
 
           def table_name(match):
               return next(group for group in match.groups() if group is not None)
@@ -106,15 +106,15 @@ jobs:
           for name in main_tables:
               print(f"INSERT {name}: {insert_counts.get(name, 0)}")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write("## ATLAS D1 backup validation\\n")
-              summary.write(f"- File size: **{size} bytes**\\n")
-              summary.write(f"- CREATE TABLE statements: **{len(created)}**\\n")
-              summary.write(f"- INSERT statements total: **{len(inserted)}**\\n")
-              summary.write(f"- demand_signals INSERT statements: **{demand_inserts} / 23**\\n")
-              summary.write("- Final SQL terminator: **COMMIT; verified**\\n")
-              summary.write("- Per-table INSERT counts:\\n")
+              summary.write("## ATLAS D1 backup validation\n")
+              summary.write(f"- File size: **{size} bytes**\n")
+              summary.write(f"- CREATE TABLE statements: **{len(created)}**\n")
+              summary.write(f"- INSERT statements total: **{len(inserted)}**\n")
+              summary.write(f"- demand_signals INSERT statements: **{demand_inserts} / 23**\n")
+              summary.write("- Final SQL terminator: **COMMIT; verified**\n")
+              summary.write("- Per-table INSERT counts:\n")
               for name in main_tables:
-                  summary.write(f"  - `{name}`: **{insert_counts.get(name, 0)}**\\n")
+                  summary.write(f"  - `{name}`: **{insert_counts.get(name, 0)}**\n")
           PY
           sha256sum backup.sql | tee backup.sha256
           HASH="$(cut -d ' ' -f1 backup.sha256)"
