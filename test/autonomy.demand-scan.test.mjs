@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { extractListings, scanAgentDemand } from '../src/autonomy/engine.js';
 
 class DemandDb {
-  constructor(){ this.signals=[]; this.nextId=1; }
+  constructor(){ this.signals=[]; this.runs=[]; this.nextId=1; this.failMetrics=false; }
   prepare(sql){
     const db=this;
     let values=[];
@@ -17,10 +17,16 @@ class DemandDb {
         return null;
       },
       async run(){
+        if(sql.includes('INSERT INTO demand_scan_source_runs')){
+          if(db.failMetrics) throw new Error('metrics table unavailable');
+          const [scan_id,source,raw_count,raw_recent_count,accepted_count,rejected_count,rejection_counts_json,duplicate_count,response_ms,http_status,source_status,error_code,started_at,finished_at]=values;
+          db.runs.push({scan_id,source,raw_count,raw_recent_count,accepted_count,rejected_count,rejection_counts_json,duplicate_count,response_ms,http_status,source_status,error_code,started_at,finished_at});
+          return {meta:{changes:1}};
+        }
         if(sql.includes('INSERT INTO demand_signals')){
-          const [source,signal_key,request_summary,score,status]=values;
+          const [source,signal_key,request_summary,score,status,source_url,created_at]=values;
           if(db.signals.some(s=>s.signal_key===signal_key)) throw new Error('UNIQUE constraint failed: demand_signals.signal_key');
-          db.signals.push({id:db.nextId++,source,signal_key,request_summary,score,status});
+          db.signals.push({id:db.nextId++,source,signal_key,request_summary,score,status,source_url,created_at});
           return {meta:{changes:1}};
         }
         return {meta:{changes:0}};
@@ -47,7 +53,7 @@ test('scan turns a valid public marketplace listing into one NEW signal and dedu
   const db=new DemandDb();
   let calls=0;
   const fetcher=async()=>{calls++;return {ok:true,status:200,contentType:'application/json',text:JSON.stringify({listings:[
-    {id:'job-42',title:'CSV data quality review',description:'Need a specialist to validate columns, normalize values, and return a cleaned CSV.',url:'https://market.example/jobs/42'}
+    {id:'job-42',createdAt:'2026-10-27T00:00:00Z',title:'CSV data quality review',description:'Need a specialist to validate columns, normalize values, and return a cleaned CSV.',url:'https://market.example/jobs/42'}
   ]})};};
   const options={fetcher,sources:[{source:'fixture_marketplace',provider:'Fixture Marketplace',url:'https://market.example/api/listings'}]};
   const first=await scanAgentDemand(db,options);
@@ -55,6 +61,8 @@ test('scan turns a valid public marketplace listing into one NEW signal and dedu
   assert.equal(first.signals.length,1);
   assert.equal(db.signals.length,1);
   assert.equal(db.signals[0].status,'NEW');
+  assert.equal(db.signals[0].source_url,'https://market.example/jobs/42');
+  assert.equal(db.signals[0].created_at,'2026-10-27T00:00:00.000Z');
   assert.equal(first.diagnostics[0].accepted,1);
 
   const second=await scanAgentDemand(db,options);
@@ -290,4 +298,91 @@ test('PayanAgent records final endpoint diagnostics and creates no signal when a
   assert.equal(result.diagnostics[0].primary_http_status,500);
   assert.equal(result.diagnostics[0].intermediate_http_status,500);
   assert.equal(result.diagnostics[0].endpoint,'https://payanagent.com/api/v1/discover?q=csv&limit=50');
+});
+
+
+test('scan persists per-source raw, recent, accepted, rejected and rejection metrics',async()=>{
+  const db=new DemandDb();
+  const now=Date.parse('2026-10-29T00:00:00Z');
+  const result=await scanAgentDemand(db,{
+    now,
+    sources:[{source:'opentask_public_tasks',provider:'Fixture Metrics',url:'https://market.example/api/listings'}],
+    fetcher:async()=>({ok:true,status:200,contentType:'application/json',text:JSON.stringify({listings:[
+      {id:'fresh-1',createdAt:'2026-10-28T00:00:00Z',title:'CSV data quality review',description:'Need a CSV dataset validated, normalized, and returned as a clean spreadsheet.',url:'https://market.example/jobs/fresh-1'},
+      {id:'mismatch-1',createdAt:'2026-10-27T00:00:00Z',title:'Plumbing repair request',description:'Need a local plumber to fix a leaking kitchen sink.',url:'https://market.example/jobs/mismatch-1'},
+      {id:'stale-1',createdAt:'2026-09-01T00:00:00Z',title:'Old CSV data quality review',description:'Need a CSV dataset validated and normalized.',url:'https://market.example/jobs/stale-1'}
+    ]})})
+  });
+  assert.equal(result.ok,true);
+  assert.equal(db.runs.length,1);
+  const run=db.runs[0];
+  assert.equal(run.raw_count,3);
+  assert.equal(run.raw_recent_count,2);
+  assert.equal(run.accepted_count,1);
+  assert.equal(run.rejected_count,2);
+  assert.equal(run.duplicate_count,0);
+  assert.equal(run.http_status,200);
+  assert.equal(run.source_status,'OK');
+  assert.deepEqual(JSON.parse(run.rejection_counts_json),{service_mismatch:1,stale:1});
+  assert.ok(run.response_ms>=0);
+  assert.ok(run.scan_id);
+});
+
+test('scan records HTTP failures and timeout outcomes without row content',async()=>{
+  const httpDb=new DemandDb();
+  await scanAgentDemand(httpDb,{
+    sources:[{source:'fixture_http_error',provider:'Fixture',url:'https://market.example/api'}],
+    fetcher:async()=>({ok:false,status:503,text:'upstream unavailable'})
+  });
+  assert.equal(httpDb.runs[0].raw_count,0);
+  assert.equal(httpDb.runs[0].http_status,503);
+  assert.equal(httpDb.runs[0].source_status,'HTTP_ERROR');
+  assert.equal(httpDb.runs[0].error_code,'HTTP_503');
+
+  const timeoutDb=new DemandDb();
+  await scanAgentDemand(timeoutDb,{
+    sources:[{source:'fixture_timeout',provider:'Fixture',url:'https://market.example/api'}],
+    fetcher:async()=>{const error=new Error('request aborted');error.name='AbortError';throw error;}
+  });
+  assert.equal(timeoutDb.runs[0].source_status,'TIMEOUT');
+  assert.equal(timeoutDb.runs[0].error_code,'TIMEOUT');
+  assert.equal(timeoutDb.runs[0].raw_count,0);
+});
+
+test('scan records zero-result and duplicate-only runs',async()=>{
+  const zeroDb=new DemandDb();
+  await scanAgentDemand(zeroDb,{
+    sources:[{source:'fixture_zero',provider:'Fixture',url:'https://market.example/api'}],
+    fetcher:async()=>({ok:true,status:200,text:'{"listings":[]}'})
+  });
+  assert.equal(zeroDb.runs[0].raw_count,0);
+  assert.equal(zeroDb.runs[0].accepted_count,0);
+  assert.equal(zeroDb.runs[0].source_status,'OK');
+
+  const duplicateDb=new DemandDb();
+  const source={source:'fixture_duplicate',provider:'Fixture',url:'https://market.example/api'};
+  const fetcher=async()=>({ok:true,status:200,text:JSON.stringify({listings:[
+    {id:'duplicate-1',createdAt:'2026-10-28T00:00:00Z',title:'CSV data quality review',description:'Need a CSV dataset validated, normalized, and returned as a clean spreadsheet.',url:'https://market.example/jobs/duplicate-1'}
+  ]})});
+  await scanAgentDemand(duplicateDb,{sources:[source],fetcher});
+  await scanAgentDemand(duplicateDb,{sources:[source],fetcher});
+  assert.equal(duplicateDb.runs.length,2);
+  assert.equal(duplicateDb.runs[1].raw_count,1);
+  assert.equal(duplicateDb.runs[1].accepted_count,0);
+  assert.equal(duplicateDb.runs[1].duplicate_count,1);
+});
+
+test('failure to persist observability metrics never stops a demand scan',async()=>{
+  const db=new DemandDb();
+  db.failMetrics=true;
+  const result=await scanAgentDemand(db,{
+    sources:[{source:'fixture_metrics_failure',provider:'Fixture',url:'https://market.example/api'}],
+    fetcher:async()=>({ok:true,status:200,text:JSON.stringify({listings:[
+      {id:'metric-fail-1',title:'CSV data quality review',description:'Need a CSV dataset validated and normalized.',url:'https://market.example/jobs/metric-fail-1'}
+    ]})})
+  });
+  assert.equal(result.ok,true);
+  assert.equal(result.signals.length,1);
+  assert.equal(db.signals.length,1);
+  assert.equal(db.runs.length,0);
 });

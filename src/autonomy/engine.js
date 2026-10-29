@@ -146,6 +146,26 @@ function parseDate(value) {
   return Number.isFinite(n)?new Date(n):null;
 }
 
+export async function recordDemandScanSourceRun(db, metrics) {
+  try {
+    await db.prepare(`INSERT INTO demand_scan_source_runs(
+      scan_id,source,raw_count,raw_recent_count,accepted_count,rejected_count,
+      rejection_counts_json,duplicate_count,response_ms,http_status,source_status,error_code,
+      started_at,finished_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .bind(
+        metrics.scan_id, metrics.source, metrics.raw_count, metrics.raw_recent_count,
+        metrics.accepted_count, metrics.rejected_count, metrics.rejection_counts_json,
+        metrics.duplicate_count, metrics.response_ms, metrics.http_status, metrics.source_status,
+        metrics.error_code, metrics.started_at, metrics.finished_at
+      ).run();
+    return true;
+  } catch {
+    // Metrics are best-effort: an observability write must never stop demand discovery.
+    return false;
+  }
+}
+
 export function demandRejectionReason(lead,source,now=Date.now()) {
   const status=String(lead.status||'').trim().toLowerCase();
   if(/^(closed|complete|completed|cancelled|canceled|expired|fulfilled|archived|rejected|paid)$/.test(status)) return 'inactive_status';
@@ -274,22 +294,45 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
   const externalRequests=sources.reduce((total,source)=>total+(source.protocol==='MCP'?3:(source.source==='payanagent_open_requests'?3:1)),0);
   const budget=await checkBudget(db,{external_requests:externalRequests});
   if(!budget.allowed) return {ok:false,blocked:budget.violations,signals:[]};
+  const scanId=crypto.randomUUID();
   const signals=[];
   const diagnostics=[];
   for(const s of sources){
+    const startedAtMs=Date.now();
+    let requestStartedAtMs=0;
+    let requestCompleted=false;
+    const metrics={
+      scan_id:scanId,source:s.source,raw_count:0,raw_recent_count:0,accepted_count:0,
+      rejected_count:0,rejection_counts_json:'{}',duplicate_count:0,response_ms:0,
+      http_status:null,source_status:'NOT_STARTED',error_code:null,
+      started_at:new Date(startedAtMs).toISOString(),finished_at:null
+    };
+    const flushMetrics=async()=>{
+      metrics.finished_at=new Date().toISOString();
+      await recordDemandScanSourceRun(db,metrics);
+    };
     const circuit = await sourceCircuitState(db, s.source, now);
     if (circuit.blocked) {
+      metrics.source_status='CIRCUIT_OPEN';
+      metrics.error_code='CIRCUIT_OPEN';
+      await flushMetrics();
       diagnostics.push({source:s.source,status:'CIRCUIT_OPEN',cooldown_until:circuit.cooldown_until,
         reason:'temporary_cooldown_after_failure'});
       continue;
     }
     try {
+      requestStartedAtMs=Date.now();
       const r=s.protocol==='MCP'
         ? await fetchAgentJobPosts(fetcher)
         : (s.source==='payanagent_open_requests'
           ? await fetchPayanAgentOpenRequests(fetcher,s.url)
           : await fetcher(s.url,{method:'GET'}));
+      requestCompleted=true;
+      metrics.response_ms=Math.max(0,Date.now()-requestStartedAtMs);
+      metrics.http_status=Number.isFinite(Number(r.status))?Number(r.status):null;
       if(!r.ok) {
+        metrics.source_status='HTTP_ERROR';
+        metrics.error_code=metrics.http_status===null?'HTTP_ERROR':'HTTP_'+metrics.http_status;
         await recordSourceOutcome(db, s.source, {ok:false,status:r.status,error:'HTTP_ERROR',now});
         diagnostics.push({source:s.source,status:'HTTP_ERROR',http_status:r.status,
           ...(r.fallbackUsed?{
@@ -300,6 +343,7 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
             endpoint:r.requestedEndpoint
           }: {})});
         await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:s.protocol||'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
+        await flushMetrics();
         continue;
       }
       const sourceOutcome = s.source==='payanagent_open_requests'
@@ -308,6 +352,12 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
       const listings=(s.source==='payanagent_open_requests' && r.fallbackStage==='discover')
         ? extractListings(extractPayanAgentFallbackPayload(r.text))
         : extractListings(r.text);
+      metrics.raw_count=listings.length;
+      const recentCutoff=now-DEMAND_MAX_AGE_DAYS*86400000;
+      metrics.raw_recent_count=listings.filter(lead=>{
+        const created=parseDate(lead.created_at);
+        return !!created && created.getTime()>=recentCutoff && created.getTime()<=now;
+      }).length;
       const offersExcluded=countExcludedSupplyOffers(r.text);
       let accepted=0,duplicates=0,rejected=0;
       const rejection_counts={};
@@ -334,11 +384,22 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         if(exists){duplicates++;continue;}
         const summary=String([lead.title,lead.description].filter(Boolean).join(' — ')).slice(0,3000);
         const score=Number((valid.score*0.7 + 0.3).toFixed(4));
-        await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status) VALUES(?,?,?,?,?)')
-          .bind(s.source,key,summary,score,'NEW').run();
+        // Preserve the provider's original creation time for the phase-4 age gate.
+        // If age cannot be proven, keep source_url NULL so the signal cannot be counted.
+        const sourceCreatedAt=parseDate(lead.created_at);
+        const sourceUrl=sourceCreatedAt&&lead.source_url?lead.source_url:null;
+        const storedCreatedAt=sourceCreatedAt?sourceCreatedAt.toISOString():new Date(now).toISOString();
+        await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status,source_url,created_at) VALUES(?,?,?,?,?,?,?)')
+          .bind(s.source,key,summary,score,'NEW',sourceUrl,storedCreatedAt).run();
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
         accepted++;
       }
+      metrics.accepted_count=accepted;
+      metrics.rejected_count=rejected;
+      metrics.duplicate_count=duplicates;
+      metrics.rejection_counts_json=JSON.stringify(rejection_counts);
+      metrics.source_status=sourceOutcome.primary_degraded?'FALLBACK_OK_PRIMARY_DEGRADED':'OK';
+      if(sourceOutcome.primary_degraded) metrics.error_code='PRIMARY_HTTP_ERROR';
       diagnostics.push({source:s.source,status:sourceOutcome.primary_degraded?'FALLBACK_OK_PRIMARY_DEGRADED':'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected,rejection_counts,rejection_samples,age_policy_days:DEMAND_MAX_AGE_DAYS,
         ...(sourceOutcome.primary_degraded?{primary_degraded:true,circuit_state:sourceOutcome.state,cooldown_until:sourceOutcome.cooldown_until}:{}),
         ...(r.fallbackUsed?{
@@ -348,9 +409,16 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
           ...(r.intermediateHttpStatus!==undefined?{intermediate_http_status:r.intermediateHttpStatus}: {}),
           endpoint:r.requestedEndpoint
         }: {})});
+      await flushMetrics();
     } catch(e) {
-      await recordSourceOutcome(db, s.source, {ok:false,status:'NETWORK_ERROR',error:String(e?.message||e),now});
-      diagnostics.push({source:s.source,status:'ERROR',error:String(e?.message||e).slice(0,300)});
+      const message=String(e?.message||e);
+      if(!requestCompleted && requestStartedAtMs) metrics.response_ms=Math.max(0,Date.now()-requestStartedAtMs);
+      const timeout=e?.name==='AbortError'||e?.name==='TimeoutError'||/timed?\s*out|timeout|aborted/i.test(message);
+      metrics.source_status=timeout?'TIMEOUT':'ERROR';
+      metrics.error_code=timeout?'TIMEOUT':'NETWORK_ERROR';
+      await recordSourceOutcome(db, s.source, {ok:false,status:timeout?'TIMEOUT':'NETWORK_ERROR',error:message,now});
+      diagnostics.push({source:s.source,status:'ERROR',error:message.slice(0,300)});
+      await flushMetrics();
     }
   }
   return {ok:true,signals,diagnostics};
