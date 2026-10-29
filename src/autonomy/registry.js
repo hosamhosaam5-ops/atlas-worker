@@ -34,6 +34,11 @@ export async function ensureAutonomySchema(db){
     score REAL DEFAULT 0, metadata_json TEXT DEFAULT '{}', last_tested_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT
   )`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS source_health (
+    source_id TEXT PRIMARY KEY, consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL DEFAULT 'HEALTHY', last_status TEXT, last_error TEXT,
+    last_tested_at TEXT, cooldown_until TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`).run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS autonomy_policies (
     policy_id TEXT PRIMARY KEY, max_tool_calls INTEGER NOT NULL DEFAULT 20,
     max_retries INTEGER NOT NULL DEFAULT 3, max_execution_seconds INTEGER NOT NULL DEFAULT 120,
