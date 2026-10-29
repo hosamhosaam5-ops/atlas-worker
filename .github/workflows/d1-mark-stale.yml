@@ -1,0 +1,85 @@
+name: ATLAS D1 mark stale
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ops/triggers/mark-stale.trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-d1-mark-stale
+  cancel-in-progress: false
+
+jobs:
+  mark-stale:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact trigger commit
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked Wrangler dependency
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate guarded D1 status helper syntax
+        run: node --check ops/scripts/d1-stale-status.mjs
+
+      - name: Capture pre-write D1 Time Travel bookmark
+        id: restore_point
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs capture
+
+      - name: Require a fresh bookmark captured in this run
+        env:
+          D1_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
+          D1_BOOKMARK_CAPTURED_AT_MS: ${{ steps.restore_point.outputs.captured_at_ms }}
+          D1_BOOKMARK_RUN_ID: ${{ steps.restore_point.outputs.captured_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs guard
+
+      - name: Read-only preflight for exact 23-row scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs preflight-mark
+
+      - name: Re-check same-run bookmark age immediately before write
+        env:
+          D1_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
+          D1_BOOKMARK_CAPTURED_AT_MS: ${{ steps.restore_point.outputs.captured_at_ms }}
+          D1_BOOKMARK_RUN_ID: ${{ steps.restore_point.outputs.captured_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs guard
+
+      - name: Execute only the exact allowlisted status UPDATE
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs mark
+
+      - name: Verify all 23 rows changed and no other scoped status remains
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs verify-mark
