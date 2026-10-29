@@ -3,3 +3,5 @@ Capture a read-only D1 Time Travel restore point and baseline counts. No databas
 Parser retry trigger: 2026-10-30; no D1 writes.
 
 Direct metadata verification and bookmark retrieval parser correction: 2026-10-30; read-only.
+
+Node 22 async IIFE wrapper fix: 2026-10-30; no D1 writes.
