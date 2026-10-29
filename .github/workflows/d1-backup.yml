@@ -15,11 +15,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
       CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
     steps:
       - name: Fail closed unless encryption and Cloudflare credentials are configured
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -61,6 +62,8 @@ jobs:
           sudo apt-get install -y sqlite3
 
       - name: Export complete remote D1 database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -68,6 +71,8 @@ jobs:
           test -s backup.sql
 
       - name: Validate, encrypt, and test restoration
+        env:
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
         shell: bash
         run: |
           set -euo pipefail
