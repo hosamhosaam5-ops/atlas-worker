@@ -1,6 +1,11 @@
 name: ATLAS D1 full backup
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ops/triggers/encrypted-backup.trigger'
   workflow_dispatch:
 
 permissions:
@@ -128,12 +133,6 @@ jobs:
               "bountybook_auth_nonces", "order_files", "delivery_outbox",
               "demand_signals", "demand_scan_source_runs", "demand_source_health"
           ]
-          print(f"Raw backup bytes: {len(raw)}")
-          print(f"CREATE TABLE statements: {len(creates)}")
-          print(f"INSERT statements total: {len(inserts)}")
-          print(f"demand_signals INSERT statements: {insert_counts.get('demand_signals', 0)}")
-          for table in main_tables:
-              print(f"INSERT {table}: {insert_counts.get(table, 0)}")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
               out.write("## Encrypted D1 backup validation\n")
               out.write(f"- Raw bytes: **{len(raw)}**\n")
