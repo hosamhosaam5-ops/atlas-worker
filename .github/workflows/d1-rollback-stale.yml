@@ -1,0 +1,89 @@
+name: ATLAS D1 rollback stale
+
+on:
+  workflow_run:
+    workflows: ["ATLAS D1 mark stale"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-d1-rollback-stale
+  cancel-in-progress: false
+
+jobs:
+  rollback-stale:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout main rollback implementation
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked Wrangler dependency
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate guarded D1 status helper syntax
+        run: node --check ops/scripts/d1-stale-status.mjs
+
+      - name: Capture rollback-run D1 Time Travel bookmark
+        id: restore_point
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs capture
+
+      - name: Require a fresh bookmark captured in this rollback run
+        env:
+          D1_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
+          D1_BOOKMARK_CAPTURED_AT_MS: ${{ steps.restore_point.outputs.captured_at_ms }}
+          D1_BOOKMARK_RUN_ID: ${{ steps.restore_point.outputs.captured_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs guard
+
+      - name: Read-only rollback preflight
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs preflight-rollback
+
+      - name: Re-check same-run bookmark age immediately before rollback write
+        if: ${{ steps.preflight.outputs.rollback_needed == 'true' }}
+        env:
+          D1_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
+          D1_BOOKMARK_CAPTURED_AT_MS: ${{ steps.restore_point.outputs.captured_at_ms }}
+          D1_BOOKMARK_RUN_ID: ${{ steps.restore_point.outputs.captured_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs guard
+
+      - name: Execute only the constrained rollback UPDATE
+        if: ${{ steps.preflight.outputs.rollback_needed == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs rollback
+
+      - name: Verify rollback restored the exact scope
+        if: ${{ steps.preflight.outputs.rollback_needed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node ops/scripts/d1-stale-status.mjs verify-rollback
