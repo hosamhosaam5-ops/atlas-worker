@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recordSourceOutcome, sourceCircuitState } from '../src/autonomy/engine.js';
+import { recordPayanAgentOutcome, recordSourceOutcome, sourceCircuitState } from '../src/autonomy/engine.js';
 
 function mockDb() {
   const rows = new Map();
@@ -54,4 +54,27 @@ test('successful read-only probe clears cooldown; failures do not affect another
   assert.equal(recovered.blocked,false);
   assert.equal(recovered.probe_due,false);
   assert.equal(db.rows.get('payanagent_open_requests').consecutive_failures,0);
+});
+
+
+test('PayanAgent primary HTTP 500 remains in cooldown when fallback succeeds', async () => {
+  const db = mockDb();
+  const now = Date.parse('2026-10-29T10:00:00.000Z');
+  const outcome = await recordPayanAgentOutcome(db, 'payanagent_open_requests', {
+    ok: true,
+    status: 200,
+    primaryHttpStatus: 500,
+    fallbackUsed: true,
+    fallbackStage: 'filtered_requests'
+  }, now);
+
+  assert.equal(outcome.state, 'COOLDOWN');
+  assert.equal(outcome.consecutive_failures, 1);
+  assert.equal(outcome.primary_degraded, true);
+  assert.equal(db.rows.get('payanagent_open_requests').last_status, '500');
+  assert.equal(db.rows.get('payanagent_open_requests').last_error, 'PRIMARY_HTTP_ERROR');
+
+  const circuit = await sourceCircuitState(db, 'payanagent_open_requests', now + 60_000);
+  assert.equal(circuit.blocked, true);
+  assert.equal(circuit.state, 'COOLDOWN');
 });
