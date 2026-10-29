@@ -18,6 +18,13 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
     steps:
+      - name: Refuse public repository backup storage
+        if: ${{ github.event.repository.private != true }}
+        shell: bash
+        run: |
+          echo "::error::Refusing to export sensitive D1 data: this repository must be private before an artifact can be created."
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
