@@ -39,6 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           node <<'NODE'
+          (async () => {
           const { spawnSync } = require('node:child_process');
           const fs = require('node:fs');
           const summary = process.env.GITHUB_STEP_SUMMARY;
@@ -81,6 +82,7 @@ jobs:
             process.exit(23);
           }
           fs.appendFileSync(summary, '## D1 credential and backend verification\n\n- Wrangler D1 info: **PASS**\n- Cloudflare D1 API backend version: **production**\n');
+          })().catch((error) => { console.error(error); process.exit(1); });
           NODE
 
       - name: Capture Time Travel bookmark and read-only baseline counts
@@ -91,6 +93,7 @@ jobs:
         run: |
           set -euo pipefail
           node <<'NODE'
+          (async () => {
           const { spawnSync } = require('node:child_process');
           const fs = require('node:fs');
           const summary = process.env.GITHUB_STEP_SUMMARY;
@@ -188,4 +191,5 @@ jobs:
             '- Database writes performed: **NO**',
           ];
           fs.appendFileSync(summary, lines.join('\n') + '\n');
+          })().catch((error) => { console.error(error); process.exit(1); });
           NODE
