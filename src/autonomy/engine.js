@@ -256,6 +256,18 @@ export async function sourceCircuitState(db, sourceId, now=Date.now()) {
   return {blocked:false,state:row?.state || 'HEALTHY',probe_due:row?.state === 'COOLDOWN'};
 }
 
+// A successful fallback response must not erase a server-side failure on PayanAgent's primary route.
+export async function recordPayanAgentOutcome(db, sourceId, response, now=Date.now()) {
+  const primaryFailed = sourceId === 'payanagent_open_requests' && Number(response?.primaryHttpStatus) >= 500;
+  const outcome = await recordSourceOutcome(db, sourceId, {
+    ok: response?.ok === true && !primaryFailed,
+    status: primaryFailed ? response.primaryHttpStatus : response?.status,
+    error: primaryFailed ? 'PRIMARY_HTTP_ERROR' : (response?.ok === true ? null : 'HTTP_ERROR'),
+    now
+  });
+  return {...outcome, primary_degraded:primaryFailed};
+}
+
 export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMAND_SOURCES,now=Date.now()}={}) {
   await ensureAutonomySchema(db);
   // Reserve budget for the one additional GET that may be used by the PayanAgent fallback.
@@ -290,7 +302,9 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         await registerCapability(db,{capability_id:s.source,kind:'marketplace',provider:s.provider||s.source,protocol:s.protocol||'API',endpoint:s.url,cost_class:'free',risk:'medium',status:'DEGRADED',metadata:{http_status:r.status}});
         continue;
       }
-      await recordSourceOutcome(db, s.source, {ok:true,status:r.status,now});
+      const sourceOutcome = s.source==='payanagent_open_requests'
+        ? await recordPayanAgentOutcome(db, s.source, r, now)
+        : await recordSourceOutcome(db, s.source, {ok:true,status:r.status,now});
       const listings=(s.source==='payanagent_open_requests' && r.fallbackStage==='discover')
         ? extractListings(extractPayanAgentFallbackPayload(r.text))
         : extractListings(r.text);
@@ -325,7 +339,8 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
         accepted++;
       }
-      diagnostics.push({source:s.source,status:'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected,rejection_counts,rejection_samples,age_policy_days:DEMAND_MAX_AGE_DAYS,
+      diagnostics.push({source:s.source,status:sourceOutcome.primary_degraded?'FALLBACK_OK_PRIMARY_DEGRADED':'OK',http_status:r.status,content_type:r.contentType||null,listings_seen:listings.length,offers_excluded:offersExcluded,accepted,duplicates,rejected,rejection_counts,rejection_samples,age_policy_days:DEMAND_MAX_AGE_DAYS,
+        ...(sourceOutcome.primary_degraded?{primary_degraded:true,circuit_state:sourceOutcome.state,cooldown_until:sourceOutcome.cooldown_until}:{}),
         ...(r.fallbackUsed?{
           fallback_used:true,
           fallback_stage:r.fallbackStage||null,
