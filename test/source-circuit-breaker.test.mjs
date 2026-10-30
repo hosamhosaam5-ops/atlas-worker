@@ -259,16 +259,26 @@ test('AgentJob list_posts gate persists across SQLite reopen and is atomic acros
     const tracked=[0,1].map(()=> {
       const worker=new Worker(workerCode,{eval:true,workerData:{filename,source,now:workerNow,engineUrl}});
       workers.push(worker);
-      let readyResolve,resultResolve,errorReject;
-      const ready=new Promise((resolve,reject)=>{readyResolve=resolve;errorReject=reject;});
-      const result=new Promise((resolve,reject)=>{resultResolve=resolve;errorReject=reject;});
+      let readyResolve,resultResolve,readyReject,resultReject;
+      const ready=new Promise((resolve,reject)=>{readyResolve=resolve;readyReject=reject;});
+      const result=new Promise((resolve,reject)=>{resultResolve=resolve;resultReject=reject;});
       worker.on('message',message=>{
         if(message.ready)readyResolve();
         else if(message.result)resultResolve(message.result);
-        else if(message.worker_error)errorReject(new Error(message.worker_error));
+        else if(message.worker_error){
+          const error=new Error(message.worker_error);
+          readyReject(error);
+          resultReject(error);
+        }
       });
-      worker.on('error',errorReject);
-      worker.on('exit',code=>{if(code!==0)errorReject(new Error('gate worker exit '+code));});
+      worker.on('error',error=>{readyReject(error);resultReject(error);});
+      worker.on('exit',code=>{
+        if(code!==0){
+          const error=new Error('gate worker exit '+code);
+          readyReject(error);
+          resultReject(error);
+        }
+      });
       return {worker,ready,result};
     });
     await Promise.all(tracked.map(item=>item.ready));
