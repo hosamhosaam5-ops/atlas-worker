@@ -34,15 +34,35 @@ test('0007 migration contains exactly six additive CREATE INDEX IF NOT EXISTS st
   assert.match(statements.find(statement => statement.includes('idx_demand_signal_key')), /^CREATE UNIQUE INDEX IF NOT EXISTS /i);
 });
 
-test('0007 helper pins the exact production database and verifies bookmark, index definitions and row counts', async () => {
+test('0007 helper waits for GITHUB_SHA and selects the latest completed post-deploy cycle', async () => {
   const helper = await read('ops/scripts/d1-apply-0007.mjs');
-  assert.match(helper, /const ACCOUNT_ID = 'c46718094ced1f5f75492f4c67c7d390'/);
-  assert.match(helper, /const DATABASE_ID = 'a5a75faa-e800-4112-b67a-3c53d7b0d8d4'/);
-  assert.match(helper, /details\?\.version !== 'production'/);
-  assert.match(helper, /age >= 2 \* 60 \* 60 \* 1000/);
+  const trigger = await read('ops/triggers/apply-0007.trigger');
+  assert.match(helper, /env\\.GITHUB_SHA/);
+  assert.match(helper, /ORDER BY started_at DESC LIMIT 1/);
+  assert.match(helper, /attemptAgeMs>=30\\*60\\*1000/);
+  assert.match(helper, /HAVING COUNT\\(\\*\\)=4/);
+  assert.match(helper, /demand_signals must have exactly 10 columns/);
+  assert.match(helper, /demand_signals rows; observed/);
+  assert.match(helper, /nullKeys !== 0/);
+  assert.match(helper, /duplicateGroups !== 0/);
+  assert.match(helper, /age >= 2 \\* 60 \\* 60 \\* 1000/);
   assert.match(helper, /PRAGMA index_list/);
   assert.match(helper, /PRAGMA index_info/);
   assert.match(helper, /one or more table row counts changed during 0007/i);
-  assert.match(helper, /last_attempt_at was not persisted/i);
+  assert.doesNotMatch(helper, /readTrigger|EXPECTED_GROWTH_RUN_ID|EXPECTED_SCAN_ID/);
+  assert.doesNotMatch(trigger, /EXPECTED_GROWTH_RUN_ID|EXPECTED_SCAN_ID|EXPECTED_WORKER_SHA/);
   assert.doesNotMatch(helper, /DROP INDEX|wrangler d1 migrations apply/i);
+});
+
+test('AgentJob gate allows exactly 60,000ms and is covered by persistent real SQLite tests', async () => {
+  const engine = await read('src/autonomy/engine.js');
+  const sqliteTest = await read('test/source-circuit-breaker.test.mjs');
+  assert.match(engine, /new Date\\(now-AGENTJOB_LIST_POSTS_INTERVAL_MS\\)\\.toISOString\\(\\)/);
+  assert.match(engine, /demand_source_health\\.last_attempt_at <= \\?/);
+  assert.match(sqliteTest, /new DatabaseSync/);
+  assert.match(sqliteTest, /\\[\\[0,false\\],\\[59999,false\\],\\[60000,true\\],\\[60001,true\\]\\]/);
+  assert.match(sqliteTest, /DatabaseSync\\(filename\\)/);
+  assert.match(sqliteTest, /Promise\\.all\\(\\[/);
+  assert.match(sqliteTest, /mkdtempSync/);
+  assert.match(sqliteTest, /rmSync/);
 });
