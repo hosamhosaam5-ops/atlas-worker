@@ -105,15 +105,32 @@ A read-only D1 query after deployment found four per-source scan metric rows. Th
 - The latest completed growth-cycle row returned by `growth_snapshot` at the time of this record was still the pre-deployment 23:30:40–23:30:47 UTC cycle. The first post-deploy source scan completed at 23:33:02 UTC; a later scheduled growth cycle is still required to establish post-deploy cycle completion.
 - No new sources, scoring thresholds, qualification criteria, or 30-day age conditions were introduced. No customer contact or spending occurred.
 
+### Corrective release — restore approved three-failure circuit policy
+
+**Status: DEPLOYED AND SHA-VERIFIED**
+
+- **Corrective PR:** [#181 — revert unauthorized PayanAgent circuit threshold exception](https://github.com/hosamhosaam5-ops/atlas-worker/pull/181); merged after ATLAS CI, ATLAS tests, live Agent Card audit, quality-strategy checks, and manual review passed.
+- **Production deployment:** [ATLAS Production Deploy #40976434004](https://github.com/hosamhosaam5-ops/atlas-worker/actions/runs/40976434004); the complete test suite passed before deployment.
+- **Production /health:** `ok=true`, `db=ok`; Worker `git_sha` equals `d316ecaf996cf6acadd2dd6f5d75fa30349613dc`, the deployed/main commit at verification.
+- **Circuit behavior restored:** all sources, including PayanAgent, retain the three-consecutive-transient-failure threshold; first and second failures keep the circuit CLOSED, third failure opens it. The 15-minute initial cooldown, exponential backoff to six hours, Retry-After handling for HTTP 429, and AUTH_REQUIRED treatment for 401/403 remain unchanged.
+- No D1 migration or direct D1 data write was part of this corrective release.
+
 ### Seven-day qualification observation window
 
-**Status: NOT STARTED — the previously recorded deployment-time start is superseded**
+**Status: NOT STARTED — no start/end timestamp is authorized**
 
-- PR #177 recorded 2026-10-29 23:31:22 UTC as the start, based on deployment health verification. That timestamp is **not an authorized observation-window start** under the founder's subsequent explicit gate and must not be counted.
-- The required gate is: at least two complete growth cycles after deployed SHA `6cabe6d97f233abecb644dfb710625ec1f5ec7a8`; non-empty `demand_scan_source_runs` and `demand_source_health` with source metrics from those cycles; and read-only confirmation of the PayanAgent breaker and persisted AgentJob polling gate.
-- Independent production D1 read at **2026-10-30 02:36:27 Asia/Riyadh** found 4 rows in each measurement table but only **1 distinct scan_id**. That scan ran from 2026-10-29 23:32:48.835 UTC through 23:33:02.183 UTC. The latest recorded `growth_runs` row at that read was 23:30:40–23:30:47 UTC, before the production deployment was verified. Two complete post-deploy growth cycles were not proven.
-- At that same read, PayanAgent had `HTTP_500`, `consecutive_failures=1`, `state=CLOSED`, and `next_probe_at=NULL`. The deployed logic opens the circuit at three consecutive failures; this does not meet the founder's expected OPEN/cooldown condition and remains unresolved.
-- Automation `6ae3d78f03388191a23a1cfe70d4dea5` is pre-window monitoring only. Any summaries before the gate is met are **PRE-WINDOW — NOT COUNTED** and cannot contribute to the seven-day outcome.
-- **Start timestamp: not set. End timestamp: not set.** Record both only through a reviewed PR after the full gate above is evidenced. The seven-day outcome remains at 0 qualified opportunities at the last verified baseline; no source or qualification rule is changed here.
+- PR #177 had recorded 2026-10-29 23:31:22 UTC as the start based on health verification. That timestamp was superseded by [PR #179](https://github.com/hosamhosaam5-ops/atlas-worker/pull/179) and must not be counted.
+- Current release: production/main SHA `d316ecaf996cf6acadd2dd6f5d75fa30349613dc`, verified in [Production Deploy #40976434004](https://github.com/hosamhosaam5-ops/atlas-worker/actions/runs/40976434004).
+- The only conditions for starting the seven-day window are:
+  1. Main SHA and production `/health` `git_sha` match.
+  2. At least two complete growth cycles finish after the current deployment, with rows written to both `demand_scan_source_runs` and `demand_source_health` for those cycles.
+  3. Production evidence demonstrates the persisted 60-second AgentJob gate using two real attempts in the log, with the second rejected or deferred.
+  4. The two cycles complete without cycle-level errors.
+- Read-only production D1 query after the current deployment found **0 `growth_runs` rows** with `started_at >= 2026-10-29 23:57:14 UTC`. `demand_scan_source_runs` contained 8 rows across two scan IDs only: `f172f52b-908a-4112-ac57-661891e41715` (finished 23:45:48.620 UTC) and `3ada58a3-461c-4bb1-8bb6-e43c133468eb` (finished 23:33:02.183 UTC). Both precede the current deployment.
+- `demand_source_health` had four source rows, last updated at `2026-10-29T23:45:41.064Z`, also before the current deployment. The AgentJob source-run rows currently visible are two `OK` entries; no real production `POLL_GATE`/deferred attempt is recorded yet. The persisted gate implementation is covered by unit tests, but that is not a substitute for the required production-log evidence.
+- The last recorded PayanAgent state before the current deployment was `CLOSED`, `consecutive_failures=2`, `last_http_status=500`, `next_probe_at=NULL`, updated at `23:45:41.064Z`. This is not itself a blocker to starting the window; the approved circuit behavior opens after three consecutive transient failures. No failure was artificially triggered.
+- Automation `6ae3d78f03388191a23a1cfe70d4dea5` remains **PRE-WINDOW — NOT COUNTED**. Its run history is empty, and delivery status is unknown. Any pre-gate summaries do not count.
+- **Start timestamp: not set. End timestamp: not set.** A single reviewed PR may set these only after all four conditions above have been evidenced, including scan IDs, source-row counts, cycle IDs, and the deployed SHA.
+- Last verified baseline remains 23 `STALE_UNVERIFIED` signals, 0 qualified signals, and 0 newly accepted demand items. No source, scoring rule, original-source verification requirement, or 30-day age limit is changed here.
 
 No Time Travel restore was performed.
