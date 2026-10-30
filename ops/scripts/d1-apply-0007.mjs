@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, readFileSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 
 const mode = process.argv[2];
 const env = process.env;
@@ -156,14 +156,20 @@ async function verifyDeploymentCycle(trigger, expectedSha) {
     }
   }
   const healthRows = queryRows(
-    "SELECT source,updated_at FROM demand_source_health WHERE source IN " +
+    "SELECT source,updated_at,last_attempt_at FROM demand_source_health WHERE source IN " +
     "('agent_job_public_mcp','agent_souk','opentask_public_tasks','payanagent_open_requests')"
   );
   if (healthRows.length !== 4) fail('Four corresponding demand_source_health rows are not present.');
-  const healthUpdated = Math.min(...healthRows.map(row => Date.parse(row.updated_at || '')).filter(Number.isFinite));
+  const healthUpdatedTimes = healthRows.map(row => Date.parse(row.updated_at || ''));
   const cycleStarted = Date.parse(String(runs[0].started_at).replace(' ', 'T') + 'Z');
-  if (!Number.isFinite(healthUpdated) || !Number.isFinite(cycleStarted) || healthUpdated < cycleStarted - 60000) {
+  if (healthUpdatedTimes.some(value => !Number.isFinite(value)) || !Number.isFinite(cycleStarted) ||
+      Math.min(...healthUpdatedTimes) < cycleStarted - 60000) {
     fail('Source health rows do not correspond in time with the expected completed growth cycle.');
+  }
+  const agentJobHealth = healthRows.find(row => row.source === 'agent_job_public_mcp');
+  const agentJobAttempt = Date.parse(agentJobHealth?.last_attempt_at || '');
+  if (!Number.isFinite(agentJobAttempt) || agentJobAttempt < cycleStarted - 60000) {
+    fail('The production AgentJob last_attempt_at was not persisted for the expected growth cycle.');
   }
   return { run: runs[0], scans, healthRows };
 }
@@ -231,7 +237,7 @@ function readAllTableCounts(tables) {
 async function preflight() {
   const trigger = readTrigger();
   await resolveD1();
-  const cycle = await verifyDeploymentCycle(trigger, trigger.EXPECTED_WORKER_SHA);
+  await verifyDeploymentCycle(trigger, trigger.EXPECTED_WORKER_SHA);
 
   const demandColumns = queryRows('PRAGMA table_info(demand_signals)').map(row => String(row.name));
   if (demandColumns.length !== 10 ||
