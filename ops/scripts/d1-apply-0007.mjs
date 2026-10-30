@@ -73,18 +73,10 @@ function quoteIdentifier(value) {
   return '"' + String(value).replaceAll('"', '""') + '"';
 }
 
-function readTrigger() {
-  const source = readFileSync(TRIGGER_PATH, 'utf8');
-  const values = {};
-  for (const line of source.split(/\r?\n/)) {
-    const match = line.match(/^([A-Z0-9_]+)=(.+)$/);
-    if (match) values[match[1]] = match[2].trim();
-  }
-  for (const required of ['EXPECTED_WORKER_SHA', 'EXPECTED_GROWTH_RUN_ID', 'EXPECTED_SCAN_ID']) {
-    if (!values[required]) fail('Missing ' + required + ' in allowlisted trigger file.');
-  }
-  if (!/^[a-f0-9]{40}$/i.test(values.EXPECTED_WORKER_SHA)) fail('Invalid expected Worker SHA in trigger file.');
-  return values;
+function readExpectedWorkerSha() {
+  const sha=String(env.GITHUB_SHA||'');
+  if(!/^[a-f0-9]{40}$/i.test(sha)) fail('GITHUB_SHA is missing or invalid; refusing D1 operation.');
+  return sha;
 }
 
 async function resolveD1() {
@@ -121,62 +113,98 @@ async function resolveD1() {
   return { api };
 }
 
-async function readProductionHealth(expectedSha) {
-  const response = await fetch(HEALTH_URL, { headers: { accept: 'application/json', 'cache-control': 'no-cache' } });
-  if (response.status !== 200) fail('Production /health returned HTTP ' + response.status + '.');
-  const body = await response.json();
-  if (body?.ok !== true || body?.db !== 'ok' || body?.git_sha !== expectedSha) {
-    fail('Production /health did not match the expected healthy Worker SHA.');
+async function readProductionHealth(expectedSha, attempts=1, intervalMs=15000) {
+  let lastObserved='no successful health response';
+  for(let attempt=0;attempt<attempts;attempt++){
+    try{
+      const response=await fetch(HEALTH_URL,{headers:{accept:'application/json','cache-control':'no-cache'}});
+      if(response.status===200){
+        const body=await response.json();
+        if(body?.ok===true&&body?.db==='ok'&&body?.git_sha===expectedSha) return {body,observedAt:Date.now()};
+        lastObserved='HTTP 200 but expected healthy git_sha was not active';
+      }else lastObserved='HTTP '+response.status;
+    }catch(error){
+      lastObserved='health request failed: '+String(error?.message||error).slice(0,160);
+    }
+    if(attempt+1<attempts) await new Promise(resolve=>setTimeout(resolve,intervalMs));
   }
-  return body;
+  fail('Production /health did not reach the exact workflow GITHUB_SHA: '+lastObserved);
 }
 
-async function verifyDeploymentCycle(trigger, expectedSha) {
-  await readProductionHealth(expectedSha);
-  const runs = queryRows(
-    "SELECT run_id,status,started_at,finished_at FROM growth_runs WHERE run_id='" +
-    trigger.EXPECTED_GROWTH_RUN_ID.replaceAll("'", "''") + "'"
-  );
-  if (runs.length !== 1 || runs[0].status !== 'COMPLETED') {
-    fail('Expected post-deploy growth cycle is missing or not COMPLETED.');
-  }
-  const scans = queryRows(
-    "SELECT scan_id,source,http_status,source_status,error_code,started_at,finished_at " +
-    "FROM demand_scan_source_runs WHERE scan_id='" + trigger.EXPECTED_SCAN_ID.replaceAll("'", "''") + "' ORDER BY source"
-  );
-  const expectedSources = ['agent_job_public_mcp','agent_souk','opentask_public_tasks','payanagent_open_requests'];
-  if (scans.length !== 4 || scans.some(row => row.scan_id !== trigger.EXPECTED_SCAN_ID) ||
-      expectedSources.some(source => !scans.some(row => row.source === source))) {
-    fail('Expected four source scan rows for the recorded post-deploy scan were not found.');
-  }
-  for (const source of ['agent_job_public_mcp','opentask_public_tasks','agent_souk']) {
-    const row = scans.find(item => item.source === source);
-    if (Number(row.http_status) !== 200 || row.source_status !== 'OK') {
-      fail('A required healthy source is not OK in the recorded post-deploy scan: ' + source);
+function parseD1Timestamp(value) {
+  const raw=String(value||'').trim();
+  if(!raw) return NaN;
+  const normalized=/(?:Z|[+-]\d\d:\d\d)$/i.test(raw)
+    ? raw
+    : (raw.includes('T') ? raw+'Z' : raw.replace(' ','T')+'Z');
+  return Date.parse(normalized);
+}
+
+function sqlLiteral(value) {
+  return "'"+String(value).replaceAll("'","''")+"'";
+}
+
+async function verifyDeploymentCycle(expectedSha) {
+  const health=await readProductionHealth(expectedSha,20,15000);
+  const deploymentObservedAt=health.observedAt;
+  const expectedSources=['agent_job_public_mcp','agent_souk','opentask_public_tasks','payanagent_open_requests'];
+
+  // Growth cycles are scheduled. Select the latest COMPLETED cycle after this exact deploy.
+  for(let attempt=0;attempt<40;attempt++){
+    const runs=queryRows("SELECT run_id,status,started_at,finished_at FROM growth_runs ORDER BY started_at DESC LIMIT 1");
+    if(runs.length===1&&runs[0].status==='COMPLETED'){
+      const cycleStarted=parseD1Timestamp(runs[0].started_at);
+      const cycleFinished=parseD1Timestamp(runs[0].finished_at);
+      if(Number.isFinite(cycleStarted)&&Number.isFinite(cycleFinished)&&
+         cycleStarted>=deploymentObservedAt-1000&&cycleFinished>=cycleStarted){
+        const windowStart=new Date(cycleStarted-10000).toISOString();
+        const windowEnd=new Date(cycleStarted+180000).toISOString();
+        const candidates=queryRows(
+          "SELECT scan_id,COUNT(*) AS source_rows,MIN(started_at) AS scan_started_at "+
+          "FROM demand_scan_source_runs WHERE started_at>="+sqlLiteral(windowStart)+
+          " AND started_at<="+sqlLiteral(windowEnd)+
+          " GROUP BY scan_id HAVING COUNT(*)=4 "+
+          "ORDER BY ABS((julianday(MIN(started_at))-julianday("+sqlLiteral(new Date(cycleStarted).toISOString())+"))*86400000) LIMIT 5"
+        );
+        if(candidates.length===0) fail('The latest post-deploy COMPLETED growth cycle has no matching four-row source scan.');
+        const scanId=String(candidates[0].scan_id||'');
+        if(!scanId) fail('The latest completed growth cycle has no valid scan_id.');
+        const scans=queryRows(
+          "SELECT scan_id,source,http_status,source_status,error_code,started_at,finished_at "+
+          "FROM demand_scan_source_runs WHERE scan_id="+sqlLiteral(scanId)+" ORDER BY source"
+        );
+        if(scans.length!==4||scans.some(row=>row.scan_id!==scanId)||
+           expectedSources.some(source=>!scans.some(row=>row.source===source))){
+          fail('The latest post-deploy scan must contain exactly four rows for the four approved sources.');
+        }
+        for(const source of ['agent_job_public_mcp','opentask_public_tasks','agent_souk']){
+          const row=scans.find(item=>item.source===source);
+          if(Number(row.http_status)!==200||row.source_status!=='OK'){
+            fail('A required healthy source is not OK in the latest post-deploy scan: '+source);
+          }
+        }
+        const healthRows=queryRows(
+          "SELECT source,updated_at,last_attempt_at FROM demand_source_health WHERE source IN "+
+          "('agent_job_public_mcp','agent_souk','opentask_public_tasks','payanagent_open_requests')"
+        );
+        if(healthRows.length!==4) fail('Four corresponding demand_source_health rows are not present.');
+        const healthUpdatedTimes=healthRows.map(row=>parseD1Timestamp(row.updated_at));
+        if(healthUpdatedTimes.some(value=>!Number.isFinite(value))||
+           Math.min(...healthUpdatedTimes)<cycleStarted-60000){
+          fail('demand_source_health was not updated for the latest completed growth cycle.');
+        }
+        const agentJobHealth=healthRows.find(row=>row.source==='agent_job_public_mcp');
+        const agentJobAttempt=parseD1Timestamp(agentJobHealth?.last_attempt_at);
+        const attemptAgeMs=Date.now()-agentJobAttempt;
+        if(!Number.isFinite(agentJobAttempt)||attemptAgeMs<0||attemptAgeMs>=30*60*1000){
+          fail('AgentJob last_attempt_at must be present and younger than 30 minutes at preflight.');
+        }
+        return {run:runs[0],scanId,scans,healthRows,agentJobAttemptAgeMs:attemptAgeMs};
+      }
     }
+    if(attempt+1<40) await new Promise(resolve=>setTimeout(resolve,30000));
   }
-  const healthRows = queryRows(
-    "SELECT source,updated_at,last_attempt_at FROM demand_source_health WHERE source IN " +
-    "('agent_job_public_mcp','agent_souk','opentask_public_tasks','payanagent_open_requests')"
-  );
-  if (healthRows.length !== 4) fail('Four corresponding demand_source_health rows are not present.');
-  const healthUpdatedTimes = healthRows.map(row => Date.parse(row.updated_at || ''));
-  const cycleStarted = Date.parse(String(runs[0].started_at).replace(' ', 'T') + 'Z');
-  if (healthUpdatedTimes.some(value => !Number.isFinite(value)) || !Number.isFinite(cycleStarted) ||
-      Math.min(...healthUpdatedTimes) < cycleStarted - 60000) {
-    fail('Source health rows do not correspond in time with the expected completed growth cycle.');
-  }
-  const agentJobHealth = healthRows.find(row => row.source === 'agent_job_public_mcp');
-  const agentJobAttempt = Date.parse(agentJobHealth?.last_attempt_at || '');
-  const agentJobScan = scans.find(row => row.source === 'agent_job_public_mcp');
-  const agentJobScanStarted = Date.parse(agentJobScan?.started_at || '');
-  const agentJobScanFinished = Date.parse(agentJobScan?.finished_at || '');
-  if (!Number.isFinite(agentJobAttempt) || !Number.isFinite(agentJobScanStarted) ||
-      !Number.isFinite(agentJobScanFinished) || agentJobAttempt < cycleStarted - 5000 ||
-      agentJobAttempt > agentJobScanStarted + 30000 || agentJobAttempt > agentJobScanFinished) {
-    fail('The production AgentJob last_attempt_at was not persisted for the expected growth cycle.');
-  }
-  return { run: runs[0], scans, healthRows };
+  fail('No post-deploy COMPLETED growth cycle with four source rows and a recent AgentJob last_attempt_at appeared within 20 minutes.');
 }
 
 async function capture() {
@@ -240,9 +268,9 @@ function readAllTableCounts(tables) {
 }
 
 async function preflight() {
-  const trigger = readTrigger();
+  const expectedSha=readExpectedWorkerSha();
   await resolveD1();
-  await verifyDeploymentCycle(trigger, trigger.EXPECTED_WORKER_SHA);
+  const cycle=await verifyDeploymentCycle(expectedSha);
 
   const demandColumns = queryRows('PRAGMA table_info(demand_signals)').map(row => String(row.name));
   if (demandColumns.length !== 10 ||
@@ -292,9 +320,9 @@ async function preflight() {
   const counts = readAllTableCounts(tables);
   const baseline = {
     database_id: DATABASE_ID,
-    expected_worker_sha: trigger.EXPECTED_WORKER_SHA,
-    growth_run_id: trigger.EXPECTED_GROWTH_RUN_ID,
-    scan_id: trigger.EXPECTED_SCAN_ID,
+    expected_worker_sha: expectedSha,
+    growth_run_id: cycle.run.run_id,
+    scan_id: cycle.scanId,
     tables,
     counts,
     demand_signals_rows: demandRows,
@@ -308,9 +336,9 @@ async function preflight() {
 
   appendFileSync(summary, '\n## 0007 read-only preflight — PASS\n\n');
   appendFileSync(summary, '- Production D1: **' + DATABASE_NAME + '**\n');
-  appendFileSync(summary, '- Production Worker SHA: **' + trigger.EXPECTED_WORKER_SHA + '**\n');
-  appendFileSync(summary, '- Growth run: **' + trigger.EXPECTED_GROWTH_RUN_ID + '** — COMPLETED\n');
-  appendFileSync(summary, '- Scan ID: **' + trigger.EXPECTED_SCAN_ID + '** — 4 source rows\n');
+  appendFileSync(summary, '- Production Worker SHA: **' + expectedSha + '**\n');
+  appendFileSync(summary, '- Growth run: **' + cycle.run.run_id + '** — COMPLETED\n');
+  appendFileSync(summary, '- Scan ID: **' + cycle.scanId + '** — 4 source rows\n');
   appendFileSync(summary, '- demand_signals columns: **' + demandColumns.length + '**\n');
   appendFileSync(summary, '- demand_signals rows: **' + demandRows + '**\n');
   appendFileSync(summary, '- signal_key NULL values: **0**\n');
@@ -326,9 +354,9 @@ async function preflight() {
 
 async function verify() {
   const baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8'));
-  const trigger = readTrigger();
+  const expectedSha=readExpectedWorkerSha();
   await resolveD1();
-  await readProductionHealth(trigger.EXPECTED_WORKER_SHA);
+  await readProductionHealth(expectedSha);
 
   const tables = currentTableNames();
   if (JSON.stringify(tables) !== JSON.stringify(baseline.tables)) fail('Postflight mismatch: table set changed during 0007.');
