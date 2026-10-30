@@ -168,7 +168,12 @@ async function verifyDeploymentCycle(trigger, expectedSha) {
   }
   const agentJobHealth = healthRows.find(row => row.source === 'agent_job_public_mcp');
   const agentJobAttempt = Date.parse(agentJobHealth?.last_attempt_at || '');
-  if (!Number.isFinite(agentJobAttempt) || agentJobAttempt < cycleStarted - 60000) {
+  const agentJobScan = scans.find(row => row.source === 'agent_job_public_mcp');
+  const agentJobScanStarted = Date.parse(agentJobScan?.started_at || '');
+  const agentJobScanFinished = Date.parse(agentJobScan?.finished_at || '');
+  if (!Number.isFinite(agentJobAttempt) || !Number.isFinite(agentJobScanStarted) ||
+      !Number.isFinite(agentJobScanFinished) || agentJobAttempt < cycleStarted - 5000 ||
+      agentJobAttempt > agentJobScanStarted + 30000 || agentJobAttempt > agentJobScanFinished) {
     fail('The production AgentJob last_attempt_at was not persisted for the expected growth cycle.');
   }
   return { run: runs[0], scans, healthRows };
@@ -316,7 +321,7 @@ async function preflight() {
     if (Object.hasOwn(counts, table)) appendFileSync(summary, '- ' + table + ' rows: **' + counts[table] + '**\n');
   }
   appendFileSync(summary, '- AgentJob gate last_attempt_at is populated in the verified post-deploy cycle.\n');
-  return cycle;
+  return true;
 }
 
 async function verify() {
