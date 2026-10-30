@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   claimAgentJobListPostsGate,
   claimHalfOpenProbe,
@@ -9,8 +12,8 @@ import {
   sourceCircuitState
 } from '../src/autonomy/engine.js';
 
-function mockDb() {
-  const sqlite=new DatabaseSync(':memory:');
+function sqliteDb(filename=':memory:') {
+  const sqlite=new DatabaseSync(filename);
   sqlite.exec(`
     CREATE TABLE demand_source_health (
       source TEXT PRIMARY KEY,
@@ -44,7 +47,7 @@ function mockDb() {
 }
 
 test('three consecutive 5xx/timeout failures open the circuit; half-open allows one probe',async()=>{
-  const db=mockDb();
+  const db=sqliteDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
   const first=await recordSourceOutcome(db,'source_a',{ok:false,status:500,error:'HTTP_ERROR',responseMs:10,now});
   const second=await recordSourceOutcome(db,'source_a',{ok:false,status:502,error:'HTTP_ERROR',responseMs:11,now:now+1000});
@@ -84,7 +87,7 @@ test('three consecutive 5xx/timeout failures open the circuit; half-open allows 
 });
 
 test('exponential circuit cooldown increases after failed half-open probes and caps at six hours',async()=>{
-  const db=mockDb();
+  const db=sqliteDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
   let t=now;
   let outcome;
@@ -103,7 +106,7 @@ test('exponential circuit cooldown increases after failed half-open probes and c
 });
 
 test('429 opens until Retry-After while 401/403 remain actionable non-transient errors',async()=>{
-  const db=mockDb();
+  const db=sqliteDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
   const limited=await recordSourceOutcome(db,'rate_limited',{ok:false,status:429,error:'HTTP_ERROR',retryAfter:'120',now});
   assert.equal(limited.state,'OPEN');
@@ -124,7 +127,7 @@ test('429 opens until Retry-After while 401/403 remain actionable non-transient 
 });
 
 test('source failures are isolated and a successful probe resets only its own source',async()=>{
-  const db=mockDb();
+  const db=sqliteDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
   await recordSourceOutcome(db,'source_a',{ok:false,status:500,now});
   const healthy=await recordSourceOutcome(db,'source_b',{ok:true,status:200,now});
@@ -138,7 +141,7 @@ test('source failures are isolated and a successful probe resets only its own so
 });
 
 test('PayanAgent primary HTTP 500 respects the three-failure threshold when fallback succeeds',async()=>{
-  const db=mockDb();
+  const db=sqliteDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
   const response={
     ok:true,status:200,primaryHttpStatus:500,fallbackUsed:true,fallbackStage:'filtered_requests',responseMs:23
@@ -169,7 +172,7 @@ test('PayanAgent primary HTTP 500 respects the three-failure threshold when fall
 });
 
 test('a final PayanAgent HTTP 500 opens only after three consecutive failures',async()=>{
-  const db=mockDb();
+  const db=sqliteDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
   const first=await recordSourceOutcome(db,'payanagent_open_requests',{ok:false,status:500,error:'HTTP_ERROR',responseMs:42,now});
   const second=await recordSourceOutcome(db,'payanagent_open_requests',{ok:false,status:500,error:'HTTP_ERROR',responseMs:42,now:now+1000});
@@ -194,20 +197,52 @@ test('a final PayanAgent HTTP 500 opens only after three consecutive failures',a
   db.close();
 });
 
-test('AgentJob list_posts gate is persistent, atomic, and allows one call per 60 seconds',async()=>{
-  const db=mockDb();
+test('AgentJob list_posts gate enforces 0/59999/60000/60001ms exactly in real SQLite',async()=>{
+  const db=sqliteDb();
   const now=Date.parse('2026-10-29T10:00:00.000Z');
-  const first=await claimAgentJobListPostsGate(db,'agent_job_public_mcp',now);
-  assert.equal(first.allowed,true);
-  const early=await claimAgentJobListPostsGate(db,'agent_job_public_mcp',now+59999);
-  assert.equal(early.allowed,false);
-  const due=await claimAgentJobListPostsGate(db,'agent_job_public_mcp',now+60001);
-  assert.equal(due.allowed,true);
-  const other=await claimAgentJobListPostsGate(db,'other_source',now+60000);
-  assert.equal(other.allowed,true);
-  const row=await db.prepare('SELECT * FROM demand_source_health WHERE source=?').bind('agent_job_public_mcp').first();
-  assert.equal(row.last_attempt_at,new Date(now+60001).toISOString());
+  for(const [offset,expectedAllowed] of [[0,false],[59999,false],[60000,true],[60001,true]]){
+    const source='boundary_'+offset;
+    assert.equal((await claimAgentJobListPostsGate(db,source,now)).allowed,true);
+    const result=await claimAgentJobListPostsGate(db,source,now+offset);
+    assert.equal(result.allowed,expectedAllowed,'offset '+offset+'ms');
+    if(expectedAllowed)assert.equal(result.last_attempt_at,new Date(now+offset).toISOString());
+  }
   db.close();
+});
+
+test('AgentJob list_posts gate persists across SQLite reopen and remains an atomic conditional UPSERT',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'atlas-agentjob-gate-'));
+  const filename=join(dir,'demand-source-health.sqlite');
+  const source='agent_job_public_mcp';
+  const now=Date.parse('2026-10-29T10:00:00.000Z');
+  let db=sqliteDb(filename);
+  let peer;
+  try{
+    const first=await claimAgentJobListPostsGate(db,source,now);
+    assert.equal(first.allowed,true);
+    assert.equal(first.last_attempt_at,new Date(now).toISOString());
+    db.close();
+    db=sqliteDb(filename);
+    const persisted=await db.prepare('SELECT last_attempt_at FROM demand_source_health WHERE source=?').bind(source).first();
+    assert.equal(persisted.last_attempt_at,new Date(now).toISOString());
+    assert.equal((await claimAgentJobListPostsGate(db,source,now+59999)).allowed,false);
+    const exact=await claimAgentJobListPostsGate(db,source,now+60000);
+    assert.equal(exact.allowed,true);
+    assert.equal(exact.last_attempt_at,new Date(now+60000).toISOString());
+    peer=sqliteDb(filename);
+    const competingNow=now+120000;
+    const results=await Promise.all([
+      claimAgentJobListPostsGate(db,source,competingNow),
+      claimAgentJobListPostsGate(peer,source,competingNow)
+    ]);
+    assert.deepEqual(results.map(x=>x.allowed).sort(),[false,true]);
+    const finalRow=await db.prepare('SELECT last_attempt_at FROM demand_source_health WHERE source=?').bind(source).first();
+    assert.equal(finalRow.last_attempt_at,new Date(competingNow).toISOString());
+  }finally{
+    if(peer)peer.close();
+    db.close();
+    rmSync(dir,{recursive:true,force:true});
+  }
 });
 
 test('AgentJob gate fails closed when D1 cannot persist the 60-second claim',async()=>{
