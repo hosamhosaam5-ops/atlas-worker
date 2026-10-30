@@ -37,7 +37,7 @@ test('0007 migration contains exactly six additive CREATE INDEX IF NOT EXISTS st
 test('0007 helper waits for GITHUB_SHA and selects the latest completed post-deploy cycle', async () => {
   const helper = await read('ops/scripts/d1-apply-0007.mjs');
   const trigger = await read('ops/triggers/apply-0007.trigger');
-  assert.ok(helper.includes("const ACCOUNT_ID = 'c46718094ced1f5f75492f4c67d7c390'"));
+  assert.ok(helper.includes("const ACCOUNT_ID = 'c46718094ced1f5f75492f4c67c7d390'"));
   assert.ok(helper.includes("const DATABASE_ID = 'a5a75faa-e800-4112-b67a-3c53d7b0d8d4'"));
   assert.ok(helper.includes("details?.version !== 'production'"));
   assert.ok(helper.includes('env.GITHUB_SHA'));
