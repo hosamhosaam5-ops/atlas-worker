@@ -44,6 +44,9 @@ test('0007 helper waits for GITHUB_SHA and selects the latest completed post-dep
   assert.ok(helper.includes('ORDER BY started_at DESC LIMIT 1'));
   assert.ok(helper.includes('attemptAgeMs>=30*60*1000'));
   assert.ok(helper.includes('HAVING COUNT(*)=4'));
+  assert.ok(helper.includes('payanBlockedByApprovedCircuit'));
+  assert.ok(helper.includes("payanScan?.source_status==='CIRCUIT_OPEN'"));
+  assert.ok(helper.includes('payanNextProbe>Date.now()'));
   assert.ok(helper.includes('demand_signals must have exactly 10 columns'));
   assert.ok(helper.includes('expected 23 demand_signals rows'));
   assert.ok(helper.includes('nullKeys !== 0'));
