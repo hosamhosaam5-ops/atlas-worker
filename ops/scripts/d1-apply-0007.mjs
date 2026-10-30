@@ -270,7 +270,7 @@ function getIndexDefinitions(tableNames) {
 }
 
 function currentTableNames() {
-  return queryRows("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+  return queryRows("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT GLOB '_cf_*' ORDER BY name")
     .map(row => String(row.name));
 }
 
