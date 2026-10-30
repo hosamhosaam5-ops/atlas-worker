@@ -294,6 +294,8 @@ export async function claimHalfOpenProbe(db, sourceId, now=Date.now()) {
 
 export async function claimAgentJobListPostsGate(db, sourceId='agent_job_public_mcp', now=Date.now()) {
   const iso=new Date(now).toISOString();
+  // Fixed-width ISO UTC comparison avoids julianday floating-point rounding at 60,000ms.
+  const eligibleSince=new Date(now-AGENTJOB_LIST_POSTS_INTERVAL_MS).toISOString();
   try {
     const row=await db.prepare(`INSERT INTO demand_source_health(
         source,state,consecutive_failures,cooldown_ms,last_attempt_at,updated_at
@@ -302,8 +304,8 @@ export async function claimAgentJobListPostsGate(db, sourceId='agent_job_public_
         last_attempt_at=excluded.last_attempt_at,
         updated_at=excluded.updated_at
       WHERE demand_source_health.last_attempt_at IS NULL
-        OR (julianday(excluded.last_attempt_at)-julianday(demand_source_health.last_attempt_at))*86400 >= ?
-      RETURNING last_attempt_at`).bind(sourceId,iso,iso,AGENTJOB_LIST_POSTS_INTERVAL_MS/1000).first();
+        OR demand_source_health.last_attempt_at <= ?
+      RETURNING last_attempt_at`).bind(sourceId,iso,iso,eligibleSince).first();
     return {allowed:!!row,last_attempt_at:row?.last_attempt_at||null};
   } catch {
     return {allowed:false,last_attempt_at:null,reason:'D1_POLL_GATE_UNAVAILABLE'};

@@ -16,9 +16,9 @@ class DemandDb {
         if(sql.includes('SELECT id FROM demand_signals')||sql.includes('SELECT id,source_url FROM demand_signals')) return db.signals.find(s=>s.signal_key===key)||null;
         if(sql.includes('SELECT * FROM demand_source_health')) return db.health.get(key)||null;
         if(sql.includes('INSERT INTO demand_source_health')&&sql.includes('RETURNING last_attempt_at')){
-          const [source,lastAttemptAt,updatedAt,intervalSeconds]=values;
+          const [source,lastAttemptAt,updatedAt,eligibleSince]=values;
           const previous=db.health.get(source);
-          if(!previous||!previous.last_attempt_at||(Date.parse(lastAttemptAt)-Date.parse(previous.last_attempt_at))>=Number(intervalSeconds)*1000){
+          if(!previous||!previous.last_attempt_at||Date.parse(previous.last_attempt_at)<=Date.parse(eligibleSince)){
             const row={...previous,source,state:previous?.state||'CLOSED',consecutive_failures:previous?.consecutive_failures||0,cooldown_ms:previous?.cooldown_ms||900000,last_attempt_at:lastAttemptAt,updated_at:updatedAt};
             db.health.set(source,row);
             return {last_attempt_at:lastAttemptAt};

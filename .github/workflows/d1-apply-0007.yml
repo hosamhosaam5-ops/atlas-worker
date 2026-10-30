@@ -44,7 +44,7 @@ jobs:
   apply-0007:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout exact approved trigger commit
         uses: actions/checkout@v7.0.1
