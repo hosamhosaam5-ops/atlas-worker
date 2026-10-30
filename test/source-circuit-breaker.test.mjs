@@ -43,7 +43,7 @@ function sqliteDb(filename=':memory:') {
         async all(){return {results:sqlite.prepare(sql).all(...values)};}
       };
     },
-    close(){sqlite.close();}
+    close(){if(sqlite.isOpen!==false)sqlite.close();}
   };
 }
 
