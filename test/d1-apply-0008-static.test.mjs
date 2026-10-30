@@ -40,7 +40,8 @@ function oldSnapshot(){
 }
 
 test('0008 is strictly three additive ALTER TABLE ADD COLUMN statements',()=>{
-  const statements=migration.split(';').map(x=>x.trim()).filter(Boolean);
+  const sqlWithoutComments=migration.replace(/^\s*--.*$/gm,'').trim();
+  const statements=sqlWithoutComments.split(';').map(x=>x.trim()).filter(Boolean);
   assert.equal(statements.length,3);
   assert.match(statements[0],/^ALTER TABLE demand_scan_source_runs ADD COLUMN breaker_state TEXT$/i);
   assert.match(statements[1],/^ALTER TABLE demand_scan_source_runs ADD COLUMN consecutive_failures INTEGER$/i);
