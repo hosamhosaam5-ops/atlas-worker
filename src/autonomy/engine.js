@@ -148,16 +148,30 @@ function parseDate(value) {
 
 export async function recordDemandScanSourceRun(db, metrics) {
   try {
+    // Snapshot the persisted breaker state after this source's outcome has been recorded.
+    // Missing/unavailable health metadata remains NULL; it must not prevent the scan row
+    // from being recorded for observability.
+    let breaker = null;
+    try {
+      breaker = await db.prepare(
+        'SELECT state,consecutive_failures,cooldown_ms FROM demand_source_health WHERE source=?'
+      ).bind(metrics.source).first();
+    } catch {
+      breaker = null;
+    }
     await db.prepare(`INSERT INTO demand_scan_source_runs(
       scan_id,source,raw_count,raw_recent_count,accepted_count,rejected_count,
       rejection_counts_json,duplicate_count,response_ms,http_status,source_status,error_code,
-      started_at,finished_at
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      started_at,finished_at,breaker_state,consecutive_failures,cooldown_ms
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .bind(
         metrics.scan_id, metrics.source, metrics.raw_count, metrics.raw_recent_count,
         metrics.accepted_count, metrics.rejected_count, metrics.rejection_counts_json,
         metrics.duplicate_count, metrics.response_ms, metrics.http_status, metrics.source_status,
-        metrics.error_code, metrics.started_at, metrics.finished_at
+        metrics.error_code, metrics.started_at, metrics.finished_at,
+        breaker?.state ?? null,
+        breaker ? Number(breaker.consecutive_failures) : null,
+        breaker ? Number(breaker.cooldown_ms) : null
       ).run();
     return true;
   } catch {
