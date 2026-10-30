@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import {
   claimAgentJobListPostsGate,
   claimHalfOpenProbe,
+  recordDemandScanSourceRun,
   recordPayanAgentOutcome,
   recordSourceOutcome,
   sourceCircuitState
@@ -301,4 +302,51 @@ test('AgentJob gate fails closed when D1 cannot persist the 60-second claim',asy
   const gate=await claimAgentJobListPostsGate(db,'agent_job_public_mcp',Date.now());
   assert.equal(gate.allowed,false);
   assert.equal(gate.reason,'D1_POLL_GATE_UNAVAILABLE');
+});
+
+test('per-source scan rows persist the breaker snapshot for every source outcome, with NULL when unavailable',async()=>{
+  const db=sqliteDb();
+  db.sqlite.exec(`
+    CREATE TABLE demand_scan_source_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scan_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      raw_count INTEGER NOT NULL DEFAULT 0,
+      raw_recent_count INTEGER NOT NULL DEFAULT 0,
+      accepted_count INTEGER NOT NULL DEFAULT 0,
+      rejected_count INTEGER NOT NULL DEFAULT 0,
+      rejection_counts_json TEXT NOT NULL DEFAULT '{}',
+      duplicate_count INTEGER NOT NULL DEFAULT 0,
+      response_ms INTEGER,
+      http_status INTEGER,
+      source_status TEXT NOT NULL,
+      error_code TEXT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT NOT NULL,
+      breaker_state TEXT,
+      consecutive_failures INTEGER,
+      cooldown_ms INTEGER,
+      UNIQUE(scan_id,source)
+    );
+    INSERT INTO demand_source_health(source,state,consecutive_failures,cooldown_ms)
+      VALUES('source_open','OPEN',3,3600000);
+    INSERT INTO demand_source_health(source,state,consecutive_failures,cooldown_ms)
+      VALUES('source_half_open','HALF_OPEN',3,1800000);
+  `);
+  const base={
+    raw_count:8,raw_recent_count:3,accepted_count:0,rejected_count:8,
+    rejection_counts_json:'{}',duplicate_count:0,response_ms:12,http_status:200,
+    source_status:'OK',error_code:null,started_at:'2026-10-30T10:00:00.000Z',
+    finished_at:'2026-10-30T10:00:00.012Z'
+  };
+  assert.equal(await recordDemandScanSourceRun(db,{...base,scan_id:'scan-open',source:'source_open'}),true);
+  assert.equal(await recordDemandScanSourceRun(db,{...base,scan_id:'scan-half',source:'source_half_open'}),true);
+  assert.equal(await recordDemandScanSourceRun(db,{...base,scan_id:'scan-null',source:'source_without_health'}),true);
+  const open=await db.prepare('SELECT breaker_state,consecutive_failures,cooldown_ms FROM demand_scan_source_runs WHERE scan_id=?').bind('scan-open').first();
+  assert.deepEqual(open,{breaker_state:'OPEN',consecutive_failures:3,cooldown_ms:3600000});
+  const half=await db.prepare('SELECT breaker_state,consecutive_failures,cooldown_ms FROM demand_scan_source_runs WHERE scan_id=?').bind('scan-half').first();
+  assert.deepEqual(half,{breaker_state:'HALF_OPEN',consecutive_failures:3,cooldown_ms:1800000});
+  const absent=await db.prepare('SELECT breaker_state,consecutive_failures,cooldown_ms FROM demand_scan_source_runs WHERE scan_id=?').bind('scan-null').first();
+  assert.deepEqual(absent,{breaker_state:null,consecutive_failures:null,cooldown_ms:null});
+  db.close();
 });
