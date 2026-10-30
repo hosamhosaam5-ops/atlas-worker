@@ -54,6 +54,7 @@ test('0007 helper waits for GITHUB_SHA and selects the latest completed post-dep
   assert.ok(helper.includes('age >= 2 * 60 * 60 * 1000'));
   assert.ok(helper.includes('PRAGMA index_list'));
   assert.ok(helper.includes('PRAGMA index_info'));
+  assert.ok(helper.includes("AND name NOT GLOB '_cf_*'"));
   assert.ok(helper.includes('one or more table row counts changed during 0007'));
   assert.ok(!helper.includes('readTrigger'));
   assert.ok(!helper.includes('EXPECTED_GROWTH_RUN_ID'));
