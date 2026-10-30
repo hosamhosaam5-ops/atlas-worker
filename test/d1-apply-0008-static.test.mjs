@@ -70,7 +70,7 @@ test('0008 applies cleanly to a pre-migration SQLite snapshot and preserves hist
     }
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM demand_scan_source_runs').get().n,before);
     const old=db.prepare('SELECT scan_id,breaker_state,consecutive_failures,cooldown_ms FROM demand_scan_source_runs').get();
-    assert.deepEqual(old,{
+    assert.deepEqual({...old},{
       scan_id:'scan-before-0008',
       breaker_state:null,
       consecutive_failures:null,
