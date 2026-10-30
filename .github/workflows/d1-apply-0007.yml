@@ -5,6 +5,12 @@ on:
     branches: [main]
     paths:
       - 'ops/triggers/apply-0007.trigger'
+  pull_request:
+    paths:
+      - '.github/workflows/d1-apply-0007.yml'
+      - 'ops/scripts/d1-apply-0007.mjs'
+      - 'ops/triggers/apply-0007.trigger'
+      - 'migrations/0007_demand_query_indexes.sql'
   workflow_dispatch:
 
 permissions:
@@ -15,7 +21,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout pull-request commit
+        uses: actions/checkout@v7.0.1
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Validate guarded helper syntax
+        run: node --check ops/scripts/d1-apply-0007.mjs
+      - name: Validate the migration is strictly additive and allowlisted
+        run: node --test test/d1-apply-0007-static.test.mjs
+
   apply-0007:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
