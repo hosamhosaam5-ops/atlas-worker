@@ -18,7 +18,8 @@ test('0007 workflow is fail-closed on PRs and executes only the explicit SQL all
 
 test('0007 migration contains exactly six additive CREATE INDEX IF NOT EXISTS statements', async () => {
   const sql = await read('migrations/0007_demand_query_indexes.sql');
-  const statements = sql.split(';').map(value => value.trim()).filter(Boolean);
+  const executableSql = sql.replace(/^\\s*--.*$/gm, '').trim();
+  const statements = executableSql.split(';').map(value => value.trim()).filter(Boolean);
   assert.equal(statements.length, 6);
   for (const statement of statements) assert.match(statement, /^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS /i);
   assert.doesNotMatch(sql, /\b(?:ALTER|DROP|DELETE|UPDATE|INSERT|REPLACE|CREATE TABLE)\b/i);
