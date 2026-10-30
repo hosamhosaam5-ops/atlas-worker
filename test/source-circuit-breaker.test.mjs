@@ -228,6 +228,7 @@ test('AgentJob list_posts gate persists across SQLite reopen and is atomic acros
     assert.equal(persisted.last_attempt_at,new Date(now).toISOString());
     assert.equal((await claimAgentJobListPostsGate(db,source,now+59999)).allowed,false);
     db.close();
+    db=null;
 
     const workerCode = `
       const { parentPort, workerData } = require('node:worker_threads');
@@ -290,7 +291,7 @@ test('AgentJob list_posts gate persists across SQLite reopen and is atomic acros
     assert.equal(finalRow.last_attempt_at,new Date(workerNow).toISOString());
   }finally{
     for(const worker of workers)await worker.terminate();
-    db.close();
+    if(db)db.close();
     rmSync(dir,{recursive:true,force:true});
   }
 });
