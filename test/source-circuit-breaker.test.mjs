@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { Worker } from 'node:worker_threads';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -210,13 +211,13 @@ test('AgentJob list_posts gate enforces 0/59999/60000/60001ms exactly in real SQ
   db.close();
 });
 
-test('AgentJob list_posts gate persists across SQLite reopen and remains an atomic conditional UPSERT',async()=>{
+test('AgentJob list_posts gate persists across SQLite reopen and is atomic across real concurrent SQLite connections',async()=>{
   const dir=mkdtempSync(join(tmpdir(),'atlas-agentjob-gate-'));
   const filename=join(dir,'demand-source-health.sqlite');
   const source='agent_job_public_mcp';
   const now=Date.parse('2026-10-29T10:00:00.000Z');
   let db=sqliteDb(filename);
-  let peer;
+  const workers=[];
   try{
     const first=await claimAgentJobListPostsGate(db,source,now);
     assert.equal(first.allowed,true);
@@ -226,20 +227,59 @@ test('AgentJob list_posts gate persists across SQLite reopen and remains an atom
     const persisted=await db.prepare('SELECT last_attempt_at FROM demand_source_health WHERE source=?').bind(source).first();
     assert.equal(persisted.last_attempt_at,new Date(now).toISOString());
     assert.equal((await claimAgentJobListPostsGate(db,source,now+59999)).allowed,false);
-    const exact=await claimAgentJobListPostsGate(db,source,now+60000);
-    assert.equal(exact.allowed,true);
-    assert.equal(exact.last_attempt_at,new Date(now+60000).toISOString());
-    peer=sqliteDb(filename);
-    const competingNow=now+120000;
-    const results=await Promise.all([
-      claimAgentJobListPostsGate(db,source,competingNow),
-      claimAgentJobListPostsGate(peer,source,competingNow)
-    ]);
-    assert.deepEqual(results.map(x=>x.allowed).sort(),[false,true]);
+    db.close();
+
+    const workerCode = `
+      const { parentPort, workerData } = require('node:worker_threads');
+      const { DatabaseSync } = require('node:sqlite');
+      (async () => {
+        const { claimAgentJobListPostsGate } = await import(workerData.engineUrl);
+        const sqlite = new DatabaseSync(workerData.filename);
+        sqlite.exec('PRAGMA busy_timeout=5000');
+        const adapter = {
+          prepare(sql) {
+            let values = [];
+            return {
+              bind(...args) { values = args; return this; },
+              async first() { return sqlite.prepare(sql).get(...values) || null; }
+            };
+          }
+        };
+        parentPort.postMessage({ ready: true });
+        await new Promise(resolve => parentPort.once('message', resolve));
+        const result = await claimAgentJobListPostsGate(adapter, workerData.source, workerData.now);
+        parentPort.postMessage({ result });
+        sqlite.close();
+      })().catch(error => {
+        parentPort.postMessage({ worker_error: String(error?.message || error) });
+      });
+    `;
+    const workerNow=now+60000;
+    const engineUrl=new URL('../src/autonomy/engine.js',import.meta.url).href;
+    const tracked=[0,1].map(()=> {
+      const worker=new Worker(workerCode,{eval:true,workerData:{filename,source,now:workerNow,engineUrl}});
+      workers.push(worker);
+      let readyResolve,resultResolve,errorReject;
+      const ready=new Promise((resolve,reject)=>{readyResolve=resolve;errorReject=reject;});
+      const result=new Promise((resolve,reject)=>{resultResolve=resolve;errorReject=reject;});
+      worker.on('message',message=>{
+        if(message.ready)readyResolve();
+        else if(message.result)resultResolve(message.result);
+        else if(message.worker_error)errorReject(new Error(message.worker_error));
+      });
+      worker.on('error',errorReject);
+      worker.on('exit',code=>{if(code!==0)errorReject(new Error('gate worker exit '+code));});
+      return {worker,ready,result};
+    });
+    await Promise.all(tracked.map(item=>item.ready));
+    tracked.forEach(item=>item.worker.postMessage('go'));
+    const outcomes=await Promise.all(tracked.map(item=>item.result));
+    assert.deepEqual(outcomes.map(item=>item.allowed).sort(),[false,true]);
+    db=sqliteDb(filename);
     const finalRow=await db.prepare('SELECT last_attempt_at FROM demand_source_health WHERE source=?').bind(source).first();
-    assert.equal(finalRow.last_attempt_at,new Date(competingNow).toISOString());
+    assert.equal(finalRow.last_attempt_at,new Date(workerNow).toISOString());
   }finally{
-    if(peer)peer.close();
+    for(const worker of workers)await worker.terminate();
     db.close();
     rmSync(dir,{recursive:true,force:true});
   }
