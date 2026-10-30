@@ -16,7 +16,7 @@ import {
 function sqliteDb(filename=':memory:') {
   const sqlite=new DatabaseSync(filename);
   sqlite.exec(`
-    CREATE TABLE demand_source_health (
+    CREATE TABLE IF NOT EXISTS demand_source_health (
       source TEXT PRIMARY KEY,
       state TEXT NOT NULL DEFAULT 'CLOSED',
       consecutive_failures INTEGER NOT NULL DEFAULT 0,
