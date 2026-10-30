@@ -11,6 +11,7 @@ on:
       - 'ops/scripts/d1-apply-0007.mjs'
       - 'ops/triggers/apply-0007.trigger'
       - 'migrations/0007_demand_query_indexes.sql'
+      - 'test/d1-apply-0007-static.test.mjs'
   workflow_dispatch:
 
 permissions:
