@@ -184,14 +184,32 @@ async function verifyDeploymentCycle(expectedSha) {
           }
         }
         const healthRows=queryRows(
-          "SELECT source,updated_at,last_attempt_at FROM demand_source_health WHERE source IN "+
+          "SELECT source,state,updated_at,last_attempt_at,next_probe_at,last_http_status "+
+          "FROM demand_source_health WHERE source IN "+
           "('agent_job_public_mcp','agent_souk','opentask_public_tasks','payanagent_open_requests')"
         );
         if(healthRows.length!==4) fail('Four corresponding demand_source_health rows are not present.');
-        const healthUpdatedTimes=healthRows.map(row=>parseD1Timestamp(row.updated_at));
-        if(healthUpdatedTimes.some(value=>!Number.isFinite(value))||
-           Math.min(...healthUpdatedTimes)<cycleStarted-60000){
-          fail('demand_source_health was not updated for the latest completed growth cycle.');
+        // The three healthy sources must have been updated by this cycle. PayanAgent may
+        // remain OPEN without a new health write while its approved cooldown is still active;
+        // in that case require an explicit CIRCUIT_OPEN scan row and a future next_probe_at.
+        for(const source of ['agent_job_public_mcp','agent_souk','opentask_public_tasks']){
+          const row=healthRows.find(item=>item.source===source);
+          const updatedAt=parseD1Timestamp(row?.updated_at);
+          if(!Number.isFinite(updatedAt)||updatedAt<cycleStarted-60000){
+            fail('demand_source_health was not updated for the latest completed growth cycle: '+source);
+          }
+        }
+        const payanHealth=healthRows.find(row=>row.source==='payanagent_open_requests');
+        const payanScan=scans.find(row=>row.source==='payanagent_open_requests');
+        const payanNextProbe=parseD1Timestamp(payanHealth?.next_probe_at);
+        const payanUpdated=parseD1Timestamp(payanHealth?.updated_at);
+        const payanUpdatedThisCycle=Number.isFinite(payanUpdated)&&payanUpdated>=cycleStarted-60000;
+        const payanBlockedByApprovedCircuit=payanHealth?.state==='OPEN'&&
+          Number(payanHealth.last_http_status)>=500&&
+          Number.isFinite(payanNextProbe)&&payanNextProbe>Date.now()&&
+          payanScan?.source_status==='CIRCUIT_OPEN'&&payanScan.http_status===null;
+        if(!payanUpdatedThisCycle&&!payanBlockedByApprovedCircuit){
+          fail('PayanAgent health must be updated this cycle or explicitly isolated by its OPEN circuit before next_probe_at.');
         }
         const agentJobHealth=healthRows.find(row=>row.source==='agent_job_public_mcp');
         const agentJobAttempt=parseD1Timestamp(agentJobHealth?.last_attempt_at);
