@@ -343,10 +343,10 @@ test('per-source scan rows persist the breaker snapshot for every source outcome
   assert.equal(await recordDemandScanSourceRun(db,{...base,scan_id:'scan-half',source:'source_half_open'}),true);
   assert.equal(await recordDemandScanSourceRun(db,{...base,scan_id:'scan-null',source:'source_without_health'}),true);
   const open=await db.prepare('SELECT breaker_state,consecutive_failures,cooldown_ms FROM demand_scan_source_runs WHERE scan_id=?').bind('scan-open').first();
-  assert.deepEqual(open,{breaker_state:'OPEN',consecutive_failures:3,cooldown_ms:3600000});
+  assert.deepEqual({...open},{breaker_state:'OPEN',consecutive_failures:3,cooldown_ms:3600000});
   const half=await db.prepare('SELECT breaker_state,consecutive_failures,cooldown_ms FROM demand_scan_source_runs WHERE scan_id=?').bind('scan-half').first();
-  assert.deepEqual(half,{breaker_state:'HALF_OPEN',consecutive_failures:3,cooldown_ms:1800000});
+  assert.deepEqual({...half},{breaker_state:'HALF_OPEN',consecutive_failures:3,cooldown_ms:1800000});
   const absent=await db.prepare('SELECT breaker_state,consecutive_failures,cooldown_ms FROM demand_scan_source_runs WHERE scan_id=?').bind('scan-null').first();
-  assert.deepEqual(absent,{breaker_state:null,consecutive_failures:null,cooldown_ms:null});
+  assert.deepEqual({...absent},{breaker_state:null,consecutive_failures:null,cooldown_ms:null});
   db.close();
 });
