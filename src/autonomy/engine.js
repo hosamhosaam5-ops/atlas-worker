@@ -528,8 +528,20 @@ export async function scanAgentDemand(db,{fetcher=fetchJson,sources=DEFAULT_DEMA
         const score=Number((valid.score*0.7 + 0.3).toFixed(4));
         // Preserve the provider's original creation time for the phase-4 age gate.
         // If age cannot be proven, keep source_url NULL so the signal cannot be counted.
-        await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status,source_url,created_at) VALUES(?,?,?,?,?,?,?)')
-          .bind(s.source,key,summary,score,'NEW',sourceUrl,storedCreatedAt).run();
+        try {
+          await db.prepare('INSERT INTO demand_signals(source,signal_key,request_summary,score,status,source_url,created_at) VALUES(?,?,?,?,?,?,?)')
+            .bind(s.source,key,summary,score,'NEW',sourceUrl,storedCreatedAt).run();
+        } catch (error) {
+          if (!/UNIQUE constraint failed: demand_signals\.signal_key/i.test(String(error?.message||error))) throw error;
+          const racedDuplicate=await db.prepare('SELECT id,source_url FROM demand_signals WHERE signal_key=?').bind(key).first();
+          if (!racedDuplicate) throw error;
+          duplicates++;
+          if(!racedDuplicate.source_url&&sourceUrl){
+            await db.prepare("UPDATE demand_signals SET source_url=?,created_at=? WHERE id=? AND status='NEW' AND source_url IS NULL")
+              .bind(sourceUrl,storedCreatedAt,racedDuplicate.id).run();
+          }
+          continue;
+        }
         signals.push({source:s.source,id:lead.id,title:lead.title,score});
         accepted++;
       }
