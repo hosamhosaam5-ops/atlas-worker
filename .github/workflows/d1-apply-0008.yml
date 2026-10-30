@@ -12,6 +12,7 @@ on:
       - 'ops/triggers/apply-0008.trigger'
       - 'migrations/0008_demand_scan_breaker_observability.sql'
       - 'test/d1-apply-0008-static.test.mjs'
+      - 'test/d1-apply-0008-guardrails.test.mjs'
       - 'test/source-circuit-breaker.test.mjs'
       - 'src/autonomy/engine.js'
   workflow_dispatch:
@@ -42,6 +43,8 @@ jobs:
         run: node --check ops/scripts/d1-apply-0008.mjs
       - name: Test migration against pre-0008 SQLite snapshot
         run: node --test test/d1-apply-0008-static.test.mjs
+      - name: Test runner guardrails
+        run: node --test test/d1-apply-0008-guardrails.test.mjs
       - name: Test breaker state persistence in scan rows
         run: node --test test/source-circuit-breaker.test.mjs
 
@@ -63,7 +66,7 @@ jobs:
         run: node --check ops/scripts/d1-apply-0008.mjs
       - name: Read-only production preflight
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -72,32 +75,32 @@ jobs:
       - name: Capture one fresh production D1 bookmark
         id: restore_point
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           node ops/scripts/d1-apply-0008.mjs capture
       - name: Require same-run bookmark younger than two hours
         env:
-          D1_BOOKMARK: ${{ steps.restore_point.outputs.d1_bookmark }}
-          D1_BOOKMARK_CAPTURED_AT_MS: ${{ steps.restore_point.outputs.d1_bookmark_captured_at_ms }}
-          D1_BOOKMARK_RUN_ID: ${{ steps.restore_point.outputs.d1_bookmark_run_id }}
+          D1_BOOKMARK: \${{ steps.restore_point.outputs.d1_bookmark }}
+          D1_BOOKMARK_CAPTURED_AT_MS: \${{ steps.restore_point.outputs.d1_bookmark_captured_at_ms }}
+          D1_BOOKMARK_RUN_ID: \${{ steps.restore_point.outputs.d1_bookmark_run_id }}
         shell: bash
         run: |
           set -euo pipefail
           node ops/scripts/d1-apply-0008.mjs guard
       - name: Re-check bookmark immediately before the allowlisted write
         env:
-          D1_BOOKMARK: ${{ steps.restore_point.outputs.d1_bookmark }}
-          D1_BOOKMARK_CAPTURED_AT_MS: ${{ steps.restore_point.outputs.d1_bookmark_captured_at_ms }}
-          D1_BOOKMARK_RUN_ID: ${{ steps.restore_point.outputs.d1_bookmark_run_id }}
+          D1_BOOKMARK: \${{ steps.restore_point.outputs.d1_bookmark }}
+          D1_BOOKMARK_CAPTURED_AT_MS: \${{ steps.restore_point.outputs.d1_bookmark_captured_at_ms }}
+          D1_BOOKMARK_RUN_ID: \${{ steps.restore_point.outputs.d1_bookmark_run_id }}
         shell: bash
         run: |
           set -euo pipefail
           node ops/scripts/d1-apply-0008.mjs guard
       - name: Execute exactly migrations/0008_demand_scan_breaker_observability.sql
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -114,7 +117,7 @@ jobs:
           echo "Executed only $SQL_FILE"
       - name: Verify three nullable columns and preserve existing data
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail

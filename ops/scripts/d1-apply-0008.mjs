@@ -148,7 +148,7 @@ async function preflight(){
   appendFileSync(summary,'- Existing demand_scan_source_runs columns: **16 / 16 exact**\n');
   appendFileSync(summary,'- Target 0008 columns absent: **3 / 3**\n');
   appendFileSync(summary,'- Existing scan rows: **'+scanRows+'**; highest row id: **'+maxId+'**\n');
-  appendFileSync(summary,'- demand_source_health rows: **'+healthRows+'**; demand_signals rows: **'+demandRows+'\n');
+  appendFileSync(summary,'- demand_source_health rows: **'+healthRows+'**; demand_signals rows: **'+demandRows+'**\n');
   appendFileSync(summary,'- Migration allowlist: **migrations/0008_demand_scan_breaker_observability.sql only**\n');
 }
 
