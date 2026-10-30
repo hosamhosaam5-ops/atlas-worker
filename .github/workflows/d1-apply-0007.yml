@@ -34,6 +34,15 @@ jobs:
       - name: Validate guarded helper syntax
         run: node --check ops/scripts/d1-apply-0007.mjs
 
+      - name: Read-only production preflight and source-cycle verification
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          node ops/scripts/d1-apply-0007.mjs preflight
+
       - name: Capture one fresh production D1 bookmark
         id: restore_point
         env:
@@ -41,7 +50,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          umask 077
           node ops/scripts/d1-apply-0007.mjs capture
 
       - name: Require same-run bookmark younger than two hours
@@ -53,14 +61,6 @@ jobs:
         run: |
           set -euo pipefail
           node ops/scripts/d1-apply-0007.mjs guard
-
-      - name: Read-only production preflight and source-cycle verification
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node ops/scripts/d1-apply-0007.mjs preflight
 
       - name: Re-check bookmark immediately before the allowlisted write
         env:
