@@ -465,3 +465,41 @@ test('duplicate scan backfills the original source link and creation timestamp w
   assert.equal(db.signals[0].source_url,'https://market.example/jobs/job-backfill');
   assert.equal(db.signals[0].created_at,'2026-10-28T09:00:00.000Z');
 });
+
+
+test('a concurrent UNIQUE signal_key race is counted as a duplicate and does not fail the scan',async()=>{
+  const db=new DemandDb();
+  const originalPrepare=db.prepare.bind(db);
+  let injected=false;
+  db.prepare=(sql)=>{
+    const statement=originalPrepare(sql);
+    if(!sql.includes('INSERT INTO demand_signals')) return statement;
+    return {
+      bind(...values){
+        statement.bind(...values);
+        return {
+          async run(){
+            if(injected) return statement.run();
+            injected=true;
+            const [source,signal_key,request_summary,score,status,source_url,created_at]=values;
+            db.signals.push({id:db.nextId++,source,signal_key,request_summary,score,status,source_url,created_at});
+            throw new Error('UNIQUE constraint failed: demand_signals.signal_key');
+          }
+        };
+      }
+    };
+  };
+  const result=await scanAgentDemand(db,{
+    now:Date.parse('2026-10-29T12:00:00.000Z'),
+    sources:[{source:'fixture_concurrent_duplicate',provider:'Fixture',url:'https://market.example/api'}],
+    fetcher:async()=>({ok:true,status:200,text:JSON.stringify({listings:[
+      {id:'race-1',createdAt:'2026-10-28T12:00:00Z',title:'CSV data quality review',description:'Need a CSV dataset validated and normalized.',url:'https://market.example/jobs/race-1'}
+    ]})})
+  });
+  assert.equal(result.ok,true);
+  assert.equal(result.signals.length,0);
+  assert.equal(db.signals.length,1);
+  assert.equal(db.runs[0].accepted_count,0);
+  assert.equal(db.runs[0].duplicate_count,1);
+  assert.equal(db.runs[0].source_status,'OK');
+});
