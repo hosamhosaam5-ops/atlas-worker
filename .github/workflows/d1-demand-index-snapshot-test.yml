@@ -1,0 +1,48 @@
+name: ATLAS D1 demand-index production snapshot test
+
+on:
+  pull_request:
+    paths:
+      - 'migrations/0007_demand_query_indexes.sql'
+      - 'ops/scripts/test-0007-demand-indexes.mjs'
+      - 'test/demand-indexes-migration.test.mjs'
+      - '.github/workflows/d1-demand-index-snapshot-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-d1-demand-index-snapshot-test
+  cancel-in-progress: false
+
+jobs:
+  production-snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+    steps:
+      - name: Checkout pull-request commit
+        uses: actions/checkout@v7.0.1
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked Wrangler dependency
+        run: npm ci --no-audit --no-fund
+      - name: Export production D1 and test migration only in local SQLite
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "::error::Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          SNAPSHOT='production-snapshot.sql'
+          trap 'rm -f "$SNAPSHOT"' EXIT
+          npx --no-install wrangler d1 export atlas_db --remote --output="$SNAPSHOT"
+          test -s "$SNAPSHOT"
+          node ops/scripts/test-0007-demand-indexes.mjs "$SNAPSHOT"
+      - name: Run deterministic fixture integration test
+        run: node --test test/demand-indexes-migration.test.mjs
