@@ -76,7 +76,7 @@ async function clearJobStorage(storage) {
   await deletePrefix(storage, '');
 }
 
-export class JobState {
+class JobState {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
 
   async fetch(request) {
@@ -278,6 +278,8 @@ async function handleCreateJob(request, env) {
   }
   return json({ jobId, status: 'queued', chunks: totalChunks }, 202);
 }
+
+export { JobState };
 
 export default {
   async fetch(request, env) {

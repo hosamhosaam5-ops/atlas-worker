@@ -5,12 +5,15 @@ import { Miniflare } from 'miniflare';
 
 const scriptPath = resolve('src/data-cleaning/worker.js');
 const mf = new Miniflare({
-  scriptPath,
-  modules: true,
-  compatibilityDate: '2026-10-31',
-  durableObjects: { JOB_STATE: 'JobState' },
-  queueProducers: ['ATLAS_CLEANING_QUEUE'],
-  bindings: { TEST_MODE: '1' },
+  workers: [{
+    name: 'atlas-cleaning-test',
+    scriptPath,
+    modules: true,
+    compatibilityDate: '2026-10-31',
+    durableObjects: { JOB_STATE: 'JobState' },
+    queueProducers: ['ATLAS_CLEANING_QUEUE'],
+    bindings: { TEST_MODE: '1' },
+  }],
 });
 
 after(async () => {
@@ -63,7 +66,7 @@ async function submit(csv, options) {
 
 async function deliverQueue(jobId, csv) {
   const messages = makeQueueMessages(jobId, encode(csv));
-  const worker = await mf.getWorker();
+  const worker = await mf.getWorker('atlas-cleaning-test');
   await worker.queue('atlas-data-cleaning-local', messages);
   assert.equal(messages.every(message => message.acked && !message.retried), true);
   return messages.length;
@@ -132,9 +135,12 @@ test('Miniflare integration: malformed CSV fails closed and exposes only a stabl
 
 test('Miniflare integration: the standalone Worker wrapper is closed without explicit test mode', async () => {
   const guarded = new Miniflare({
-    scriptPath,
-    modules: true,
-    compatibilityDate: '2026-10-31',
+    workers: [{
+      name: 'atlas-cleaning-guarded',
+      scriptPath,
+      modules: true,
+      compatibilityDate: '2026-10-31',
+    }],
   });
   try {
     const response = await guarded.dispatchFetch('http://localhost/__test/jobs', {
