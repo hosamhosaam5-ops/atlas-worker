@@ -184,35 +184,80 @@ function materializeCsv(records, delimiter, maxRows) {
   return { headers: headers.slice(), rows, delimiter, rowCount: rows.length };
 }
 
+function detectCsvDelimiter(text) {
+  const counts = new Map(DELIMITERS.map(delimiter => [delimiter, 0]));
+  let inQuotes = false;
+  let afterQuote = false;
+  let fieldStarted = false;
+  let line = 1;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '\r') {
+      if (text[i + 1] !== '\n') throw fault('CSV_BARE_CARRIAGE_RETURN', { line });
+      if (inQuotes) {
+        line++;
+        i++;
+        continue;
+      }
+      break;
+    }
+    if (c === '\n') {
+      if (inQuotes) {
+        line++;
+        continue;
+      }
+      break;
+    }
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') i++;
+        else {
+          inQuotes = false;
+          afterQuote = true;
+        }
+      }
+      continue;
+    }
+    if (afterQuote) {
+      if (counts.has(c)) {
+        counts.set(c, counts.get(c) + 1);
+        afterQuote = false;
+        fieldStarted = false;
+        continue;
+      }
+      throw fault('CSV_CHARACTERS_AFTER_CLOSING_QUOTE', { line });
+    }
+    if (counts.has(c)) {
+      counts.set(c, counts.get(c) + 1);
+      fieldStarted = false;
+      continue;
+    }
+    if (c === '"') {
+      if (fieldStarted) throw fault('CSV_QUOTE_IN_UNQUOTED_FIELD', { line });
+      inQuotes = true;
+      fieldStarted = true;
+      continue;
+    }
+    fieldStarted = true;
+  }
+
+  if (inQuotes) throw fault('CSV_UNTERMINATED_QUOTE', { line });
+  const candidates = DELIMITERS.filter(delimiter => counts.get(delimiter) > 0);
+  if (candidates.length > 1) throw fault('CSV_DELIMITER_AMBIGUOUS', { candidates });
+  if (candidates.length === 0) throw fault('CSV_DELIMITER_UNDETECTED');
+  return candidates[0];
+}
+
 export function parseCsv(input, options = {}) {
   const maxRows = Math.min(MAX_DATA_ROWS, options.maxRows ?? MAX_DATA_ROWS);
   const decoded = decodeUtf8(input, options.maxBytes ?? MAX_FILE_BYTES);
-  if (options.delimiter !== undefined) {
-    if (!validDelimiter(options.delimiter)) throw fault('CSV_DELIMITER_UNSUPPORTED');
-    const records = parseCsvRecords(decoded.text, options.delimiter);
-    return { ...materializeCsv(records, options.delimiter, maxRows), byteLength: decoded.byteLength };
-  }
-
-  const candidates = [];
-  const errors = [];
-  for (const delimiter of DELIMITERS) {
-    try {
-      const records = parseCsvRecords(decoded.text, delimiter);
-      if (records.length > 0 && records[0].values.length > 1) {
-        candidates.push(materializeCsv(records, delimiter, maxRows));
-      }
-    } catch (err) {
-      errors.push(err);
-    }
-  }
-  if (candidates.length > 1) throw fault('CSV_DELIMITER_AMBIGUOUS', { candidates: candidates.map(c => c.delimiter) });
-  if (candidates.length === 1) return { ...candidates[0], byteLength: decoded.byteLength };
-
-  const structural = errors.find(err => err.code === 'CSV_ROW_WIDTH_MISMATCH' || err.code === 'CSV_DUPLICATE_HEADER' || err.code === 'CSV_EMPTY_HEADER' || err.code === 'ROW_LIMIT_EXCEEDED');
-  if (structural) throw structural;
-  const syntax = errors.find(err => err.code && err.code.startsWith('CSV_'));
-  if (syntax && errors.every(err => err.code === syntax.code)) throw syntax;
-  throw fault('CSV_DELIMITER_UNDETECTED');
+  const delimiter = options.delimiter === undefined
+    ? detectCsvDelimiter(decoded.text)
+    : options.delimiter;
+  if (!validDelimiter(delimiter)) throw fault('CSV_DELIMITER_UNSUPPORTED');
+  const records = parseCsvRecords(decoded.text, delimiter);
+  return { ...materializeCsv(records, delimiter, maxRows), byteLength: decoded.byteLength };
 }
 
 function isPlainObject(value) {

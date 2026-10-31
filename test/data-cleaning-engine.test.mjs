@@ -10,7 +10,7 @@ import {
   validateRows,
   convertFormat,
   executeCleaningJob,
-} from '../src/data-cleaning/engine.js';
+} from '../src/data-cleaning/index.js';
 
 const encoder = new TextEncoder();
 const bytes = value => encoder.encode(value);
