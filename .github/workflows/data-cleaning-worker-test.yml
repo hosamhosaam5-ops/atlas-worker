@@ -1,0 +1,36 @@
+name: Data cleaning Worker isolated integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/data-cleaning/**"
+      - "test/worker/**"
+      - ".github/workflows/data-cleaning-worker-test.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: data-cleaning-worker-pr
+  cancel-in-progress: true
+
+jobs:
+  miniflare-integration:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install existing locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run isolated Queue + Durable Object tests in Miniflare
+        run: node --test --test-concurrency=1 test/worker/*.test.mjs
