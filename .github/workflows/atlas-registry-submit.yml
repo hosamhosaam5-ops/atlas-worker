@@ -3,7 +3,6 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/atlas-registry-submit.yml"
   workflow_dispatch:
 
 permissions:
