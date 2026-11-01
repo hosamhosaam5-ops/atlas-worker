@@ -97,7 +97,7 @@ jobs:
             }
             return body.result;
           }
-          const scripts = await get('/accounts/' + account + '/workers/scripts', 'Workers Metadata Read-Only');
+          const scripts = await get('/accounts/' + account + '/workers/scripts', 'Workers Scripts Read');
           const queues = await get('/accounts/' + account + '/queues', 'Queues Read');
           const subscriptions = await get('/accounts/' + account + '/subscriptions', 'Billing Read');
           if (!Array.isArray(subscriptions)) {
@@ -115,7 +115,7 @@ jobs:
           }
           console.log('PASS | Billing Read; no active non-free Workers subscription returned');
 
-          const subdomain = await get('/accounts/' + account + '/workers/subdomain', 'Workers Metadata Read-Only');
+          const subdomain = await get('/accounts/' + account + '/workers/subdomain', 'Workers Scripts Read');
           const workerName = 'atlas-data-cleaning-trial';
           const queueName = 'atlas-data-cleaning-trial-queue';
           if ((scripts || []).some(x => [x.id, x.name, x.script_name].includes(workerName))) {
@@ -127,7 +127,7 @@ jobs:
             process.exit(1);
           }
           if (!subdomain?.subdomain) {
-            console.log('FAIL | Workers Metadata Read-Only (workers.dev subdomain unavailable)');
+            console.log('FAIL | Workers Scripts Read (workers.dev subdomain unavailable)');
             process.exit(1);
           }
           const url = 'https://' + workerName + '.' + subdomain.subdomain + '.workers.dev';
