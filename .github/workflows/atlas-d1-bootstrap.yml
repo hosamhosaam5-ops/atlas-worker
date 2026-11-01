@@ -9,7 +9,6 @@ on:
       - "schema-m3.sql"
       - "schema-m4.sql"
       - "schema-m5.sql"
-      - ".github/workflows/atlas-d1-bootstrap.yml"
   workflow_dispatch:
 
 permissions:
