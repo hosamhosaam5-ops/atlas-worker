@@ -76,6 +76,75 @@ async function clearJobStorage(storage) {
   await deletePrefix(storage, '');
 }
 
+class RateLimitState {
+  constructor(ctx) { this.ctx = ctx; }
+
+  async fetch(request) {
+    if (request.method !== 'POST' || new URL(request.url).pathname !== '/consume') {
+      return json({ error: 'NOT_FOUND' }, 404);
+    }
+    const body = await request.json();
+    const limit = Number.isInteger(body.limit) && body.limit >= 1 && body.limit <= 60 ? body.limit : 10;
+    const windowMs = Number.isInteger(body.windowMs) && body.windowMs >= 1000 && body.windowMs <= 300_000
+      ? body.windowMs : 60_000;
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const now = Date.now();
+      let bucket = await this.ctx.storage.get('bucket');
+      if (!bucket || now - bucket.windowStartedAt >= windowMs) bucket = { windowStartedAt: now, count: 0 };
+      if (bucket.count >= limit) {
+        return json({ allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((bucket.windowStartedAt + windowMs - now) / 1000)) }, 429);
+      }
+      bucket.count += 1;
+      await this.ctx.storage.put('bucket', bucket);
+      return json({ allowed: true, remaining: limit - bucket.count, resetAt: bucket.windowStartedAt + windowMs });
+    });
+  }
+}
+
+async function constantTimeTokenMatch(provided, expected) {
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(provided)),
+    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
+  ]);
+  const a = new Uint8Array(left), b = new Uint8Array(right);
+  let difference = 0;
+  for (let i = 0; i < a.length; i++) difference |= a[i] ^ b[i];
+  return difference === 0;
+}
+
+async function authorize(request, env) {
+  const expected = env.CLEANING_API_TOKEN;
+  if (typeof expected !== 'string' || expected.length < 32) {
+    return { ok: false, response: json({ error: 'AUTH_NOT_CONFIGURED' }, 503) };
+  }
+  const header = request.headers.get('authorization') || '';
+  const match = /^Bearer ([A-Za-z0-9._~+\/-]{32,512})$/.exec(header);
+  if (!match || !(await constantTimeTokenMatch(match[1], expected))) {
+    return { ok: false, response: json({ error: 'UNAUTHORIZED' }, 401) };
+  }
+  return { ok: true, token: expected };
+}
+
+async function enforceRateLimit(request, env, token) {
+  if (!env.RATE_LIMITER) return json({ error: 'RATE_LIMITER_NOT_CONFIGURED' }, 503);
+  const ip = request.headers.get('cf-connecting-ip') || 'unknown-client';
+  const material = new TextEncoder().encode(token + '\n' + ip);
+  const digest = await crypto.subtle.digest('SHA-256', material);
+  const key = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+  const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(key));
+  const limitValue = Number(env.CLEANING_RATE_LIMIT_PER_MINUTE);
+  const limit = Number.isInteger(limitValue) && limitValue >= 1 && limitValue <= 60 ? limitValue : 10;
+  const response = await stub.fetch(new Request('https://rate-limit/consume', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ limit, windowMs: 60_000 }),
+  }));
+  if (response.status === 429) return json({ error: 'RATE_LIMIT_EXCEEDED' }, 429);
+  if (!response.ok) return json({ error: 'RATE_LIMIT_CHECK_FAILED' }, 503);
+  return null;
+}
+
 class JobState {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
 
@@ -374,24 +443,40 @@ async function handleCreateJob(request, env) {
   return json({ jobId, status: 'queued', chunks: totalChunks }, 202);
 }
 
-export { JobState };
+export { JobState, RateLimitState };
 
 export default {
   async fetch(request, env) {
-    if (env.TEST_MODE !== '1') return new Response('Not Found', { status: 404 });
     const url = new URL(request.url);
-    if (request.method === 'GET' && url.pathname === '/__test/health') {
-      return json({ ok: true, scope: 'local-test-only' });
+
+    if (request.method === 'POST' && url.pathname === '/v1/jobs') {
+      const auth = await authorize(request, env);
+      if (!auth.ok) return auth.response;
+      const limited = await enforceRateLimit(request, env, auth.token);
+      if (limited) return limited;
+      return handleCreateJob(request, env);
     }
-    if (request.method === 'POST' && url.pathname === '/__test/jobs') return handleCreateJob(request, env);
-    const match = /^\/__test\/jobs\/([0-9a-f-]{36})\/(status|result)$/i.exec(url.pathname);
-    if (match && request.method === 'GET') {
-      const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(match[1]));
-      return stub.fetch(new Request('https://job/' + match[2], { method: 'GET' }));
+    const publicMatch = /^\\/v1\\/jobs\\/([0-9a-f-]{36})\\/(status|result)$/i.exec(url.pathname);
+    if (publicMatch && request.method === 'GET') {
+      const auth = await authorize(request, env);
+      if (!auth.ok) return auth.response;
+      const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(publicMatch[1]));
+      return stub.fetch(new Request('https://job/' + publicMatch[2], { method: 'GET' }));
+    }
+
+    if (env.TEST_MODE === '1') {
+      if (request.method === 'GET' && url.pathname === '/__test/health') {
+        return json({ ok: true, scope: 'local-test-only' });
+      }
+      if (request.method === 'POST' && url.pathname === '/__test/jobs') return handleCreateJob(request, env);
+      const testMatch = /^\\/__test\\/jobs\\/([0-9a-f-]{36})\\/(status|result)$/i.exec(url.pathname);
+      if (testMatch && request.method === 'GET') {
+        const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(testMatch[1]));
+        return stub.fetch(new Request('https://job/' + testMatch[2], { method: 'GET' }));
+      }
     }
     return new Response('Not Found', { status: 404 });
   },
-
   async queue(batch, env) {
     for (const message of batch.messages) {
       try {
