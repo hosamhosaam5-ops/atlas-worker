@@ -280,7 +280,7 @@ test('public upload requires bearer auth and enforces the durable per-client rat
       if (state.status === 'complete' || state.status === 'failed') break;
       await delay(100);
     }
-    assert.equal(state.status, 'complete');
+    assert.equal(state.status, 'complete', JSON.stringify(state));
     const result = await fetch(BASE + '/v1/jobs/' + jobId + '/result', {
       headers: { authorization: 'Bearer ' + token },
     });
