@@ -381,6 +381,8 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 
+export function canonicalRowKey(value) { return canonical(value); }
+
 function safePath(path) {
   if (typeof path !== 'string' || path.length === 0) throw fault('JSON_PATH_INVALID');
   const segments = path.split('.');
@@ -571,16 +573,13 @@ export function convertFormat(input, options = {}) {
   return { bytes, from, to, rowCount: parsed.rowCount, byteLength: bytes.byteLength };
 }
 
-export function executeCleaningJob(input, options = {}) {
+export function createCleaningSession(parsed, options = {}) {
   const inputFormat = options.inputFormat;
   if (!['csv', 'json'].includes(inputFormat)) throw fault('INPUT_FORMAT_UNSUPPORTED');
-  const parsed = inputFormat === 'csv' ? parseCsv(input, options) : parseJson(input, options);
-  let rows = parsed.rows;
-  let headers = parsed.headers.slice();
-  let validation = null;
+  if (!parsed || !Array.isArray(parsed.rows) || !Array.isArray(parsed.headers)) throw fault('PARSED_INPUT_INVALID');
+
   const operations = options.operations ?? [];
   if (!Array.isArray(operations)) throw fault('OPERATIONS_MUST_BE_ARRAY');
-
   const conversions = operations.filter(operation => operation && operation.type === 'convert_format');
   if (conversions.length > 1 || (conversions.length === 1 && operations[operations.length - 1] !== conversions[0])) {
     throw fault('CONVERSION_OPERATION_ORDER_INVALID');
@@ -596,33 +595,121 @@ export function executeCleaningJob(input, options = {}) {
   }
   if (!['csv', 'json'].includes(outputFormat)) throw fault('OUTPUT_FORMAT_UNSUPPORTED');
 
+  let headerState = parsed.headers.slice();
+  const headersByOperation = [];
   for (const operation of operations) {
-    const result = applyOperation(rows, operation, headers);
-    rows = result.rows;
-    if (operation.type === 'rename_fields') headers = headers.map(header => operation.mapping[header] ?? header);
-    if (operation.type === 'extract_json_paths') {
-      for (const target of Object.keys(operation.paths)) if (!headers.includes(target)) headers.push(target);
+    headersByOperation.push(headerState.slice());
+    // Validate every operation before any chunk is committed, including empty inputs.
+    applyOperation([], operation, headerState);
+    if (operation.type === 'rename_fields') {
+      headerState = headerState.map(header => operation.mapping[header] ?? header);
     }
-    if (result.validation) validation = result.validation;
-  }
-
-  if (rows.length > 0) headers = jsonHeaders(rows);
-  let bytes;
-  if (outputFormat === 'json') bytes = encoder.encode(JSON.stringify(rows));
-  else bytes = serializeCsv(rows, headers, options.delimiter ?? parsed.delimiter ?? ',');
-  if (bytes.byteLength > MAX_FILE_BYTES) {
-    throw fault('OUTPUT_SIZE_LIMIT_EXCEEDED', { maxBytes: MAX_FILE_BYTES, actualBytes: bytes.byteLength });
+    if (operation.type === 'extract_json_paths') {
+      for (const target of Object.keys(operation.paths)) if (!headerState.includes(target)) headerState.push(target);
+    }
   }
 
   return {
     inputFormat,
     outputFormat,
-    rowCount: rows.length,
+    operations,
+    headersByOperation,
+    headers: headerState,
     inputRowCount: parsed.rowCount,
+    delimiter: options.delimiter ?? parsed.delimiter ?? ',',
+    operationOffsets: operations.map(() => 0),
+    dedupeSeen: operations.map(() => []),
+    validation: operations.map(operation => operation.type === 'validate'
+      ? { errors: [], totalRows: 0, failedRowNumbers: [] }
+      : null),
+  };
+}
+
+export function processCleaningChunk(rows, session) {
+  let current = cloneRows(rows);
+  for (let index = 0; index < session.operations.length; index++) {
+    const operation = session.operations[index];
+    const headerNames = session.headersByOperation[index];
+    const rowsBeforeOperation = current.length;
+
+    if (operation.type === 'dedupe_exact') {
+      const local = applyOperation(current, operation, headerNames).rows;
+      const seen = new Set(session.dedupeSeen[index]);
+      current = local.filter(row => {
+        const key = canonical(row);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      session.dedupeSeen[index] = [...seen];
+    } else {
+      const result = applyOperation(current, operation, headerNames);
+      current = result.rows;
+      if (result.validation) {
+        const record = session.validation[index];
+        const offset = session.operationOffsets[index];
+        record.errors.push(...result.validation.errors.map(error => ({ ...error, row: error.row + offset })));
+        record.failedRowNumbers.push(...result.validation.errors.map(error => error.row + offset));
+        record.totalRows += result.validation.totalRows;
+      }
+    }
+
+    session.operationOffsets[index] += rowsBeforeOperation;
+  }
+  return current;
+}
+
+export function finalizeCleaningSession(session, outputChunks) {
+  const rows = outputChunks.flat();
+  const headers = rows.length > 0 ? jsonHeaders(rows) : session.headers.slice();
+  let validation = null;
+  for (let index = session.operations.length - 1; index >= 0; index--) {
+    if (session.operations[index].type !== 'validate') continue;
+    const record = session.validation[index];
+    validation = {
+      valid: record.errors.length === 0,
+      totalRows: record.totalRows,
+      failedRows: new Set(record.failedRowNumbers).size,
+      errors: record.errors,
+    };
+    break;
+  }
+
+  const bytes = session.outputFormat === 'json'
+    ? encoder.encode(JSON.stringify(rows))
+    : serializeCsv(rows, headers, session.delimiter);
+  if (bytes.byteLength > MAX_FILE_BYTES) {
+    throw fault('OUTPUT_SIZE_LIMIT_EXCEEDED', { maxBytes: MAX_FILE_BYTES, actualBytes: bytes.byteLength });
+  }
+
+  return {
+    inputFormat: session.inputFormat,
+    outputFormat: session.outputFormat,
+    rowCount: rows.length,
+    inputRowCount: session.inputRowCount,
     byteLength: bytes.byteLength,
     headers,
     rows,
     bytes,
     validation,
   };
+}
+
+export function executeCleaningJob(input, options = {}) {
+  const inputFormat = options.inputFormat;
+  if (!['csv', 'json'].includes(inputFormat)) throw fault('INPUT_FORMAT_UNSUPPORTED');
+  const parsed = inputFormat === 'csv' ? parseCsv(input, options) : parseJson(input, options);
+  const session = createCleaningSession(parsed, options);
+  const chunkRows = Number.isInteger(options.chunkRows) && options.chunkRows > 0
+    ? Math.min(10_000, options.chunkRows)
+    : Math.max(1, parsed.rows.length);
+  const outputChunks = [];
+  if (parsed.rows.length === 0) {
+    outputChunks.push(processCleaningChunk([], session));
+  } else {
+    for (let offset = 0; offset < parsed.rows.length; offset += chunkRows) {
+      outputChunks.push(processCleaningChunk(parsed.rows.slice(offset, offset + chunkRows), session));
+    }
+  }
+  return finalizeCleaningSession(session, outputChunks);
 }
