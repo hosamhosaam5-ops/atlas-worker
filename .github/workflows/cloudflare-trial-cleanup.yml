@@ -103,7 +103,7 @@ jobs:
           if (targetNamespaces.length) {
             const deletedClasses = [...new Set(targetNamespaces.map(x => x.class))].sort();
             mkdirSync('.atlas-trial-cleanup', { recursive: true });
-            writeFileSync('.atlas-trial-cleanup/worker.js', 'export default { fetch() { return new Response("Not Found", { status: 404 }); } };\\n');
+            writeFileSync('.atlas-trial-cleanup/worker.js', 'export default { fetch() { return new Response("Not Found", { status: 404 }); } };\n');
             const migrationConfig = [
               'name = "' + workerName + '"',
               'main = "worker.js"',
@@ -122,7 +122,7 @@ jobs:
               'tag = "trial-cleanup-v2"',
               'deleted_classes = [ ' + deletedClasses.map(x => JSON.stringify(x)).join(', ') + ' ]',
               '',
-            ].join('\\n');
+            ].join('\n');
             writeFileSync('.atlas-trial-cleanup/wrangler.toml', migrationConfig);
             const deployed = spawnSync('npx', ['--yes', 'wrangler@4', 'deploy', '--config', '.atlas-trial-cleanup/wrangler.toml'], {
               encoding: 'utf8',
@@ -130,8 +130,8 @@ jobs:
               env: { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account },
             });
             if (deployed.error || deployed.status !== 0) {
-              const rawDetail = [deployed.stderr, deployed.stdout, deployed.error?.message].filter(Boolean).join('\\n');
-              const detail = rawDetail.split('\\n').filter(x => /error|fail|migration|durable|permission|denied/i.test(x)).slice(-8).join(' | ').replaceAll(token, '[redacted]');
+              const rawDetail = [deployed.stderr, deployed.stdout, deployed.error?.message].filter(Boolean).join('\n');
+              const detail = rawDetail.split('\n').filter(x => /error|fail|migration|durable|permission|denied/i.test(x)).slice(-8).join(' | ').replaceAll(token, '[redacted]');
               console.log('FAIL | Durable Object deleted_classes migration' + (detail ? ' | ' + detail : ''));
               process.exit(1);
             }
