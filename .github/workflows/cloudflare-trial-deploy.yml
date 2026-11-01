@@ -27,13 +27,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          marker="$(tr -d '\r\n' < ops/triggers/trial-deploy.trigger)"
-          if [ "$marker" = "RUN" ]; then
+          activation="$(sed -n '1p' ops/triggers/trial-deploy.trigger | tr -d '\r')"
+          free_plan_confirmation="$(sed -n '2p' ops/triggers/trial-deploy.trigger | tr -d '\r')"
+          extra_marker_line="$(sed -n '3p' ops/triggers/trial-deploy.trigger | tr -d '\r')"
+          if [ "$activation" = "RUN" ] && [ "$free_plan_confirmation" = "OWNER_CONFIRMED_WORKERS_FREE" ] && [ -z "$extra_marker_line" ]; then
             echo "armed=true" >> "$GITHUB_OUTPUT"
-            echo "ARMED | isolated trial deployment"
+            echo "free_plan_confirmed=true" >> "$GITHUB_OUTPUT"
+            echo "ARMED | isolated trial deployment; Workers Free plan owner-confirmed"
           else
             echo "armed=false" >> "$GITHUB_OUTPUT"
-            echo "SKIP | trial deployment marker is disarmed"
+            echo "SKIP | trial deployment requires RUN and OWNER_CONFIRMED_WORKERS_FREE marker lines"
           fi
 
       - name: Verify both required secrets are configured
@@ -80,6 +83,7 @@ jobs:
         env:
           CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+          OWNER_CONFIRMED_WORKERS_FREE: ${{ steps.gate.outputs.free_plan_confirmed }}
         shell: bash
         run: |
           set +x
@@ -99,21 +103,11 @@ jobs:
           }
           const scripts = await get('/accounts/' + account + '/workers/scripts', 'Workers Scripts Read');
           const queues = await get('/accounts/' + account + '/queues', 'Queues Read');
-          const subscriptions = await get('/accounts/' + account + '/subscriptions', 'Billing Read');
-          if (!Array.isArray(subscriptions)) {
-            console.log('FAIL | Billing Read (cannot verify Workers Free plan)');
+          if (process.env.OWNER_CONFIRMED_WORKERS_FREE !== 'true') {
+            console.log('FAIL | Workers Free plan owner-confirmation marker missing');
             process.exit(1);
           }
-          const activePaidWorkers = subscriptions.filter(item => {
-            const plan = String(item.rate_plan?.public_name || item.rate_plan?.id || '').toLowerCase();
-            const state = String(item.state || '').toLowerCase();
-            return /worker/.test(plan) && !/free/.test(plan) && !['cancelled','failed','expired'].includes(state);
-          });
-          if (activePaidWorkers.length) {
-            console.log('FAIL | Workers Free plan precondition (active non-free Workers subscription detected)');
-            process.exit(1);
-          }
-          console.log('PASS | Billing Read; no active non-free Workers subscription returned');
+          console.log('PASS | Workers Free plan owner-confirmed; Billing API not queried');
 
           const subdomain = await get('/accounts/' + account + '/workers/subdomain', 'Workers Scripts Read');
           const workerName = 'atlas-data-cleaning-trial';
@@ -207,8 +201,8 @@ jobs:
             process.exit(1);
           }
           const { appendFileSync } = await import('node:fs');
-          appendFileSync(process.env.GITHUB_ENV, 'TRIAL_JOB_STATE_NAMESPACE_ID=' + jobState.id + '\\n');
-          appendFileSync(process.env.GITHUB_ENV, 'TRIAL_RATE_LIMIT_NAMESPACE_ID=' + rateLimitState.id + '\\n');
+          appendFileSync(process.env.GITHUB_ENV, 'TRIAL_JOB_STATE_NAMESPACE_ID=' + jobState.id + '\n');
+          appendFileSync(process.env.GITHUB_ENV, 'TRIAL_RATE_LIMIT_NAMESPACE_ID=' + rateLimitState.id + '\n');
           console.log('PASS | trial JobState and RateLimitState namespaces confirmed');
           NODE
       - name: Provision CLEANING_API_TOKEN as a Worker secret

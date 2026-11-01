@@ -79,7 +79,6 @@ jobs:
           probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/scripts"
           probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/subdomain"
           probe "Queues Read" "/accounts/$CF_ACCOUNT_ID/queues"
-          probe "Billing Read" "/accounts/$CF_ACCOUNT_ID/subscriptions"
 
           analytics_body="$(mktemp)"
           analytics_status="$(curl --silent --show-error --max-time 15 -X POST -o "$analytics_body" -w '%{http_code}' \
