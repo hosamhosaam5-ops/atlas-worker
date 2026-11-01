@@ -2,32 +2,88 @@ name: Cloudflare trial token check
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ops/triggers/trial-whoami.trigger"
 
 permissions:
   contents: read
 
+concurrency:
+  group: atlas-trial-whoami
+  cancel-in-progress: false
+
 jobs:
-  verify-trial-token:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
     steps:
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Verify Cloudflare authentication without exposing credentials
+      - uses: actions/checkout@v4
+
+      - name: Check one-shot activation marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="$(tr -d '\r\n' < ops/triggers/trial-whoami.trigger)"
+          if [ "$marker" = "RUN" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+            echo "ARMED | trial whoami"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP | trial whoami marker is disarmed"
+          fi
+
+      - name: Authenticate and probe read permissions
+        if: steps.gate.outputs.armed == 'true'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
         shell: bash
         run: |
           set +x
-          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-            echo "FAIL — CF_TRIAL_API_TOKEN is not available to this workflow." >> "$GITHUB_STEP_SUMMARY"
+          set -u
+          if [ -z "${CF_TRIAL_API_TOKEN:-}" ]; then
+            echo "FAIL | CF_TRIAL_API_TOKEN"
             exit 1
           fi
+          export CLOUDFLARE_API_TOKEN="$CF_TRIAL_API_TOKEN"
           if npx --yes wrangler@4 whoami >/dev/null 2>&1; then
-            echo "PASS — wrangler whoami authenticated successfully; no credential values were emitted." >> "$GITHUB_STEP_SUMMARY"
+            echo "PASS | wrangler whoami"
           else
-            echo "FAIL — wrangler whoami failed; check token validity and Cloudflare permissions. No credential values were emitted." >> "$GITHUB_STEP_SUMMARY"
+            echo "FAIL | Cloudflare API Token authentication"
+            exit 1
+          fi
+
+          failed=0
+          probe() {
+            permission="$1"
+            path="$2"
+            code="$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $CF_TRIAL_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4$path" || true)"
+            if [ "$code" = "200" ]; then
+              echo "PASS | $permission"
+            elif [ "$code" = "401" ]; then
+              echo "FAIL | CF_TRIAL_API_TOKEN authentication"
+              failed=1
+            elif [ "$code" = "403" ]; then
+              echo "FAIL | $permission"
+              failed=1
+            else
+              echo "FAIL | $permission (HTTP $code)"
+              failed=1
+            fi
+          }
+          probe "Workers Metadata Read-Only" "/accounts/$CF_ACCOUNT_ID/workers/scripts"
+          probe "Workers Metadata Read-Only" "/accounts/$CF_ACCOUNT_ID/workers/subdomain"
+          probe "Queues Read" "/accounts/$CF_ACCOUNT_ID/queues"
+          probe "Workers Metadata Read-Only" "/accounts/$CF_ACCOUNT_ID/workers/durable_objects/namespaces?per_page=1000"
+
+          echo "REQUIRED FOR ISOLATED PROVISION/REMOVAL | Workers Admin, Queues Write"
+          echo "REQUIRED FOR ANALYTICS | Workers Metadata Read-Only, Queues Read"
+          if [ "$failed" -ne 0 ]; then
             exit 1
           fi
