@@ -1,4 +1,4 @@
-import { executeCleaningJob, MAX_FILE_BYTES } from './engine.js';
+import { createCleaningSession, finalizeCleaningSession, parseCsv, parseJson, processCleaningChunk, MAX_FILE_BYTES } from './engine.js';
 
 const JOB_TTL_MS = 30 * 60 * 1000;
 const CHUNK_BYTES = 48 * 1024;
@@ -106,6 +106,8 @@ class JobState {
       if (existing) return json({ error: 'JOB_ALREADY_EXISTS' }, 409);
       const job = {
         id: jobId, status: 'queued', totalChunks, options,
+        failAtChunk: Number.isInteger(body.failAtChunk) ? body.failAtChunk : null,
+        processAttempts: 0, retryCount: 0, chunkMetrics: [],
         createdAt: Date.now(),
         expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + JOB_TTL_MS,
         errorCode: null, resultBytes: 0, outputFormat: null,
@@ -141,36 +143,111 @@ class JobState {
       if (job.status === 'complete') return json({ status: 'complete', resultBytes: job.resultBytes });
       if (job.status === 'failed') return json({ status: 'failed', errorCode: job.errorCode }, 422);
       if (job.status !== 'queued' && job.status !== 'processing') return json({ error: 'JOB_STATE_INVALID' }, 409);
+
       const entries = await this.ctx.storage.list({ prefix: 'input:', limit: MAX_CHUNKS + 1 });
       if (entries.size !== job.totalChunks) return json({ error: 'CHUNKS_INCOMPLETE' }, 409);
-      const parts = [...entries.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([, payload]) => fromBase64(payload));
-      let result;
+
       try {
+        const parts = [...entries.entries()]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([, payload]) => fromBase64(payload));
         const input = joinBytes(parts);
-        result = executeCleaningJob(input, job.options);
+        const parsed = job.options.inputFormat === 'csv'
+          ? parseCsv(input, job.options)
+          : parseJson(input, job.options);
+        const chunkRows = job.options.chunkRows;
+        const processingChunkCount = Math.max(1, Math.ceil(parsed.rows.length / chunkRows));
+        if (job.failAtChunk !== null && job.failAtChunk !== undefined &&
+            (!Number.isInteger(job.failAtChunk) || job.failAtChunk < 0 || job.failAtChunk >= processingChunkCount)) {
+          throw fault('TEST_FAILURE_CHUNK_OUT_OF_RANGE');
+        }
+
+        let session = await this.ctx.storage.get('session');
+        if (!session) session = createCleaningSession(parsed, job.options);
+        job.status = 'processing';
+        job.processAttempts = (job.processAttempts || 0) + 1;
+        job.inputRowCount = parsed.rowCount;
+        job.processingChunkRows = chunkRows;
+        job.processingChunkCount = processingChunkCount;
+        job.chunkMetrics = job.chunkMetrics || [];
+        await this.ctx.storage.put('job', job);
+
+        for (let index = 0; index < processingChunkCount; index++) {
+          if (await this.ctx.storage.get('processed:' + index)) continue;
+          const sourceRows = parsed.rows.slice(index * chunkRows, (index + 1) * chunkRows);
+          const started = performance.now();
+          const outputRows = processCleaningChunk(sourceRows, session);
+          const computeMs = Number((performance.now() - started).toFixed(3));
+          const metric = { index, inputRows: sourceRows.length, outputRows: outputRows.length, computeMs };
+          job.chunkMetrics[index] = metric;
+          await this.ctx.storage.put({
+            session,
+            job,
+            ['processed:' + index]: true,
+            ['rows:' + index]: outputRows,
+          });
+
+          // Test-only fault is injected after the middle chunk is durably committed.
+          // The Queue retries its trigger message; the processed marker prevents duplicate work.
+          if (job.failAtChunk === index && !job.failureInjected) {
+            job.failureInjected = true;
+            job.retryCount = (job.retryCount || 0) + 1;
+            await this.ctx.storage.put('job', job);
+            return json({ error: 'SIMULATED_TRANSIENT_FAILURE' }, 503);
+          }
+        }
+
+        const outputChunks = [];
+        for (let index = 0; index < processingChunkCount; index++) {
+          const chunk = await this.ctx.storage.get('rows:' + index);
+          if (!Array.isArray(chunk)) throw fault('PROCESSED_CHUNK_MISSING', 500);
+          outputChunks.push(chunk);
+        }
+        const result = finalizeCleaningSession(session, outputChunks);
+        const outputValues = {};
+        for (let offset = 0, index = 0; offset < result.bytes.byteLength; offset += CHUNK_BYTES, index++) {
+          const part = result.bytes.subarray(offset, Math.min(offset + CHUNK_BYTES, result.bytes.byteLength));
+          outputValues['output:' + String(index).padStart(4, '0')] = toBase64(part);
+        }
+        if (Object.keys(outputValues).length > MAX_CHUNKS) throw fault('OUTPUT_CHUNK_LIMIT_EXCEEDED', 413);
+        await this.ctx.storage.put(outputValues);
+        await deletePrefix(this.ctx.storage, 'input:');
+        await deletePrefix(this.ctx.storage, 'rows:');
+        await deletePrefix(this.ctx.storage, 'processed:');
+        await this.ctx.storage.delete('session');
+
+        const computeTimes = job.chunkMetrics.map(metric => metric.computeMs).sort((a, b) => a - b);
+        const p95Index = Math.max(0, Math.ceil(computeTimes.length * 0.95) - 1);
+        job.status = 'complete';
+        job.resultBytes = result.bytes.byteLength;
+        job.outputFormat = result.outputFormat;
+        job.outputRowCount = result.rowCount;
+        job.completedAt = Date.now();
+        job.p95ChunkComputeMs = computeTimes.length ? computeTimes[p95Index] : 0;
+        job.maxChunkComputeMs = computeTimes.length ? computeTimes[computeTimes.length - 1] : 0;
+        job.processedChunkCount = processingChunkCount;
+        await this.ctx.storage.put('job', job);
+        return json({
+          status: 'complete',
+          resultBytes: job.resultBytes,
+          outputFormat: job.outputFormat,
+          processingChunkCount,
+          processAttempts: job.processAttempts,
+          retryCount: job.retryCount || 0,
+          p95ChunkComputeMs: job.p95ChunkComputeMs,
+          maxChunkComputeMs: job.maxChunkComputeMs,
+        });
       } catch (error) {
+        if (error?.status === 500 && error?.code === 'PROCESSED_CHUNK_MISSING') throw error;
         job.status = 'failed';
         job.errorCode = cleanErrorCode(error);
         await this.ctx.storage.put('job', job);
         await deletePrefix(this.ctx.storage, 'input:');
+        await deletePrefix(this.ctx.storage, 'rows:');
+        await deletePrefix(this.ctx.storage, 'processed:');
+        await this.ctx.storage.delete('session');
         return json({ status: 'failed', errorCode: job.errorCode }, 422);
       }
-      const outputValues = {};
-      for (let offset = 0, index = 0; offset < result.bytes.byteLength; offset += CHUNK_BYTES, index++) {
-        const part = result.bytes.subarray(offset, Math.min(offset + CHUNK_BYTES, result.bytes.byteLength));
-        outputValues['output:' + String(index).padStart(4, '0')] = toBase64(part);
-      }
-      if (Object.keys(outputValues).length > MAX_CHUNKS) throw fault('OUTPUT_CHUNK_LIMIT_EXCEEDED', 413);
-      await this.ctx.storage.put(outputValues);
-      await deletePrefix(this.ctx.storage, 'input:');
-      job.status = 'complete';
-      job.resultBytes = result.bytes.byteLength;
-      job.outputFormat = result.outputFormat;
-      job.completedAt = Date.now();
-      await this.ctx.storage.put('job', job);
-      return json({ status: 'complete', resultBytes: job.resultBytes, outputFormat: job.outputFormat });
     });
   }
 
@@ -196,6 +273,16 @@ class JobState {
       jobId: job.id, status: job.status, errorCode: job.errorCode,
       resultBytes: job.status === 'complete' ? job.resultBytes : undefined,
       outputFormat: job.status === 'complete' ? job.outputFormat : undefined,
+      inputRowCount: job.inputRowCount,
+      outputRowCount: job.outputRowCount,
+      processingChunkRows: job.processingChunkRows,
+      processingChunkCount: job.processingChunkCount,
+      processedChunkCount: job.processedChunkCount,
+      processAttempts: job.processAttempts,
+      retryCount: job.retryCount,
+      p95ChunkComputeMs: job.p95ChunkComputeMs,
+      maxChunkComputeMs: job.maxChunkComputeMs,
+      chunkMetrics: job.chunkMetrics,
     });
   }
 
@@ -236,7 +323,9 @@ async function readOptions(request) {
     if (!options || !['csv', 'json'].includes(options.inputFormat) || !Array.isArray(options.operations)) {
       throw fault('CLEANING_OPTIONS_INVALID');
     }
-    return options;
+    const chunkRows = options.chunkRows === undefined ? 250 : options.chunkRows;
+    if (!Number.isInteger(chunkRows) || chunkRows < 1 || chunkRows > 500) throw fault('CHUNK_ROWS_INVALID');
+    return { ...options, chunkRows };
   } catch (error) {
     if (error.code) throw error;
     throw fault('CLEANING_OPTIONS_INVALID');
@@ -253,10 +342,16 @@ async function handleCreateJob(request, env) {
 
   const jobId = crypto.randomUUID();
   const totalChunks = Math.max(1, Math.ceil(bytes.byteLength / CHUNK_BYTES));
+  let failAtChunk = null;
+  const failHeader = request.headers.get('x-atlas-test-fail-chunk');
+  if (env.TEST_MODE === '1' && failHeader !== null) {
+    if (!/^\d+$/.test(failHeader)) return json({ error: 'TEST_FAILURE_CHUNK_INVALID' }, 400);
+    failAtChunk = Number(failHeader);
+  }
   const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(jobId));
   const init = await stub.fetch(new Request('https://job/init', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jobId, totalChunks, options, expiresAt: Date.now() + JOB_TTL_MS }),
+    body: JSON.stringify({ jobId, totalChunks, options, failAtChunk, expiresAt: Date.now() + JOB_TTL_MS }),
   }));
   if (!init.ok) return json({ error: 'JOB_INITIALIZATION_FAILED' }, 503);
 
