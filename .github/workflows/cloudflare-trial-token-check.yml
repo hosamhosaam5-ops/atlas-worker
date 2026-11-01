@@ -91,6 +91,8 @@ jobs:
             echo "PASS | Account Analytics"
           else
             echo "FAIL | Account Analytics"
+            rm -f "$analytics_body"
+            exit 1
           fi
           rm -f "$analytics_body"
           probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/durable_objects/namespaces?per_page=1000"
