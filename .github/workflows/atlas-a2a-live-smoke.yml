@@ -1,10 +1,6 @@
 name: ATLAS read-only A2A protocol smoke
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/atlas-a2a-live-smoke.yml"
   workflow_dispatch:
 
 permissions:
