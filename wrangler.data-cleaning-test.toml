@@ -6,14 +6,24 @@ preview_urls = false
 
 [vars]
 TEST_MODE = "1"
+CLEANING_API_TOKEN = "local-test-token-not-for-production-000000000000"
+CLEANING_RATE_LIMIT_PER_MINUTE = "2"
 
 [[durable_objects.bindings]]
 name = "JOB_STATE"
 class_name = "JobState"
 
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimitState"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = [ "JobState" ]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = [ "RateLimitState" ]
 
 [[queues.producers]]
 queue = "atlas-data-cleaning-ci-local"
