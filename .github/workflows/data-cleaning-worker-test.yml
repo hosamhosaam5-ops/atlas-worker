@@ -6,6 +6,8 @@ on:
     paths:
       - "src/data-cleaning/**"
       - "ci/data-cleaning/**"
+      - "package.json"
+      - "package-lock.json"
       - "wrangler.data-cleaning-test.toml"
       - ".github/workflows/data-cleaning-worker-test.yml"
 
