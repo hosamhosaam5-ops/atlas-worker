@@ -112,6 +112,11 @@ jobs:
           const subdomain = await get('/accounts/' + account + '/workers/subdomain', 'Workers Scripts Read');
           const workerName = 'atlas-data-cleaning-trial';
           const queueName = 'atlas-data-cleaning-trial-queue';
+          const namespaces = await get('/accounts/' + account + '/workers/durable_objects/namespaces?per_page=1000', 'Workers Scripts Read');
+          if ((namespaces || []).some(x => x.script === workerName)) {
+            console.log('FAIL | trial Durable Object namespace already exists; refusing to reuse');
+            process.exit(1);
+          }
           if ((scripts || []).some(x => [x.id, x.name, x.script_name].includes(workerName))) {
             console.log('FAIL | trial Worker name already exists; refusing to overwrite');
             process.exit(1);
