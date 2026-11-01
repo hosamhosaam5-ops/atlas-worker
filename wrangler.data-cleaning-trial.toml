@@ -1,0 +1,37 @@
+name = "atlas-data-cleaning-trial"
+main = "src/data-cleaning/worker.js"
+compatibility_date = "2026-10-26"
+workers_dev = true
+preview_urls = false
+
+[limits]
+cpu_ms = 10
+
+[vars]
+CLEANING_RATE_LIMIT_PER_MINUTE = "10"
+
+[[durable_objects.bindings]]
+name = "JOB_STATE"
+class_name = "JobState"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimitState"
+
+[[migrations]]
+tag = "trial-v1"
+new_sqlite_classes = [ "JobState", "RateLimitState" ]
+
+[[queues.producers]]
+queue = "atlas-data-cleaning-trial-queue"
+binding = "ATLAS_CLEANING_QUEUE"
+
+[[queues.consumers]]
+queue = "atlas-data-cleaning-trial-queue"
+max_batch_size = 10
+max_batch_timeout = 1
+max_retries = 1
+
+[observability]
+enabled = true
+head_sampling_rate = 1.0

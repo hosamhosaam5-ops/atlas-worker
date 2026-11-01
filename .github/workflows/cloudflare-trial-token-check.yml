@@ -1,0 +1,101 @@
+name: Cloudflare trial token check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ops/triggers/trial-whoami.trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-trial-whoami
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check one-shot activation marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="$(tr -d '\r\n' < ops/triggers/trial-whoami.trigger)"
+          if [ "$marker" = "RUN" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+            echo "ARMED | trial whoami"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP | trial whoami marker is disarmed"
+          fi
+
+      - name: Authenticate and probe read permissions
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set +x
+          set -u
+          if [ -z "${CF_TRIAL_API_TOKEN:-}" ]; then
+            echo "FAIL | CF_TRIAL_API_TOKEN"
+            exit 1
+          fi
+          export CLOUDFLARE_API_TOKEN="$CF_TRIAL_API_TOKEN"
+          if npx --yes wrangler@4 whoami >/dev/null 2>&1; then
+            echo "PASS | wrangler whoami"
+          else
+            echo "FAIL | Cloudflare API Token authentication"
+            exit 1
+          fi
+
+          probe() {
+            permission="$1"
+            path="$2"
+            code="$(curl --silent --show-error --max-time 15 -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $CF_TRIAL_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4$path" || true)"
+            if [ "$code" = "200" ]; then
+              echo "PASS | $permission"
+            elif [ "$code" = "401" ]; then
+              echo "FAIL | CF_TRIAL_API_TOKEN authentication"
+              exit 1
+            elif [ "$code" = "403" ]; then
+              echo "FAIL | $permission"
+              exit 1
+            else
+              echo "FAIL | $permission (HTTP $code)"
+              exit 1
+            fi
+          }
+          probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/scripts"
+          probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/subdomain"
+          probe "Queues Read" "/accounts/$CF_ACCOUNT_ID/queues"
+          probe "Billing Read" "/accounts/$CF_ACCOUNT_ID/subscriptions"
+
+          analytics_body="$(mktemp)"
+          analytics_status="$(curl --silent --show-error --max-time 15 -X POST -o "$analytics_body" -w '%{http_code}' \
+            -H "Authorization: Bearer $CF_TRIAL_API_TOKEN" \
+            -H 'content-type: application/json' \
+            --data "{\"query\":\"{ viewer { accounts(filter: { accountTag: \\\"$CF_ACCOUNT_ID\\\" }) { workersInvocationsAdaptive(limit: 1) { sum { requests } } } } }\"}" \
+            https://api.cloudflare.com/client/v4/graphql || true)"
+          if [ "$analytics_status" = "200" ] && jq -e '((.errors // []) | length) == 0' "$analytics_body" >/dev/null 2>&1; then
+            echo "PASS | Account Analytics"
+          else
+            echo "FAIL | Account Analytics"
+            rm -f "$analytics_body"
+            exit 1
+          fi
+          rm -f "$analytics_body"
+          probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/durable_objects/namespaces?per_page=1000"
+
+          echo "REQUIRED FOR ISOLATED PROVISION/REMOVAL | Workers Scripts Write, Queues Write"
+          echo "REQUIRED FOR ANALYTICS | Account Analytics, Workers Scripts Read, Queues Read"

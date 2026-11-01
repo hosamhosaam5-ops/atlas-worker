@@ -1,0 +1,107 @@
+name: Delete isolated data-cleaning trial resources
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ops/triggers/trial-cleanup.trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-data-cleaning-trial
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check one-shot deletion marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="$(tr -d '\r\n' < ops/triggers/trial-cleanup.trigger)"
+          if [ "$marker" = "DELETE" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+            echo "ARMED | deletion of allowlisted trial resources only"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP | trial cleanup marker is disarmed"
+          fi
+
+      - name: Delete only the named trial Worker, Queue, and its Durable Objects
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set +x
+          node --input-type=module <<'NODE'
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          if (!token) { console.log('FAIL | CF_TRIAL_API_TOKEN'); process.exit(1); }
+          const api = 'https://api.cloudflare.com/client/v4';
+          const headers = { authorization: 'Bearer ' + token, 'content-type': 'application/json' };
+          const workerName = 'atlas-data-cleaning-trial';
+          const queueName = 'atlas-data-cleaning-trial-queue';
+          async function request(method, path) {
+            const response = await fetch(api + path, { method, headers });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || body.success === false) {
+              const permission = path.includes('/queues') ? 'Queues Write' : 'Workers Admin';
+              console.log('FAIL | ' + (response.status === 403 ? permission : 'Cloudflare cleanup API (HTTP ' + response.status + ')'));
+              process.exit(1);
+            }
+            return body.result;
+          }
+          const scripts = await request('GET', '/accounts/' + account + '/workers/scripts');
+          const queues = await request('GET', '/accounts/' + account + '/queues');
+          const workerExists = (scripts || []).some(x => [x.id, x.name, x.script_name].includes(workerName));
+          const queue = (queues || []).find(x => x.queue_name === queueName);
+          if (queue) {
+            const detail = await request('GET', '/accounts/' + account + '/queues/' + queue.queue_id);
+            const consumers = detail.consumers || [];
+            const unexpected = consumers.filter(x => x.type !== 'worker' || x.script_name !== workerName);
+            if (unexpected.length) {
+              console.log('FAIL | unexpected Queue consumer found; preserving Queue and Worker');
+              process.exit(1);
+            }
+            for (const consumer of consumers) {
+              if (consumer.script_name === workerName && consumer.consumer_id) {
+                await request('DELETE', '/accounts/' + account + '/queues/' + queue.queue_id + '/consumers/' + consumer.consumer_id);
+              }
+            }
+            console.log('PASS | trial Queue consumer detached');
+          }
+          if (workerExists) {
+            await request('DELETE', '/accounts/' + account + '/workers/scripts/' + workerName);
+            console.log('PASS | trial Worker delete requested; Cloudflare removes namespaces implemented by this Worker');
+          } else {
+            console.log('PASS | trial Worker already absent');
+          }
+          if (queue) {
+            await request('DELETE', '/accounts/' + account + '/queues/' + queue.queue_id);
+            console.log('PASS | trial Queue deleted');
+          } else {
+            console.log('PASS | trial Queue already absent');
+          }
+
+          const scriptsAfter = await request('GET', '/accounts/' + account + '/workers/scripts');
+          const queuesAfter = await request('GET', '/accounts/' + account + '/queues');
+          const namespacesAfter = await request('GET', '/accounts/' + account + '/workers/durable_objects/namespaces?per_page=1000');
+          const workerRemaining = (scriptsAfter || []).some(x => [x.id, x.name, x.script_name].includes(workerName));
+          const queueRemaining = (queuesAfter || []).some(x => x.queue_name === queueName);
+          const doRemaining = (namespacesAfter || []).filter(x => x.script === workerName && ['JobState','RateLimitState'].includes(x.class));
+          if (workerRemaining) { console.log('FAIL | trial Worker still exists'); process.exit(1); }
+          if (queueRemaining) { console.log('FAIL | trial Queue still exists'); process.exit(1); }
+          if (doRemaining.length) { console.log('FAIL | trial Durable Object namespaces still exist'); process.exit(1); }
+          console.log('PASS | read-after-delete verification: Worker absent; Queue absent; JobState/RateLimitState namespaces absent');
+          NODE
