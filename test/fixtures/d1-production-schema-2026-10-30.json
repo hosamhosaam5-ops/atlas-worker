@@ -1,7 +1,7 @@
 {
-  "source": "Cloudflare D1 production sqlite_master read-only export",
+  "source": "Schema-only structural fixture derived from sqlite_master DDL; no production rows or values",
   "exported_at": "2026-10-30",
-  "database": "atlas_db",
+  "database": "schema_only_fixture",
   "objects": [
     {
       "type": "table",
