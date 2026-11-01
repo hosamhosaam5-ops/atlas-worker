@@ -34,15 +34,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Install locked dependencies without lifecycle scripts
+      - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       - name: Verify exact repository-locked Wrangler version
         shell: bash
         run: |
           set -euo pipefail
-          version="$(npx --no-install wrangler --version | awk '{print $2}')"
-          echo "WRANGLER_VERSION=$version"
-          test "$version" = "4.152.0"
+          lock_version="$(node --input-type=module -e "import {readFileSync} from 'node:fs'; console.log(JSON.parse(readFileSync('package-lock.json','utf8')).packages['node_modules/wrangler'].version)")"
+          cli_output="$(npx --no-install wrangler --version 2>&1)"
+          printf '%s\n' "$cli_output"
+          echo "WRANGLER_LOCK_VERSION=$lock_version"
+          test "$lock_version" = "4.152.0"
+          grep -Fq "4.152.0" <<<"$cli_output"
       - name: Start isolated Wrangler local Worker and run HTTP integration tests
         shell: bash
         run: |
