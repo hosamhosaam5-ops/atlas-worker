@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   test:
+    if: github.ref == 'refs/heads/main'
     name: Test before production deploy
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -34,6 +35,7 @@ jobs:
         run: npm test
 
   deploy:
+    if: github.ref == 'refs/heads/main'
     name: Deploy tested commit to Cloudflare
     needs: test
     runs-on: ubuntu-24.04
