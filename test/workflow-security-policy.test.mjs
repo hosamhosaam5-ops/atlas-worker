@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 const workflowDir = new URL('../.github/workflows/', import.meta.url);
 const workflowFiles = (await readdir(workflowDir)).filter((name) => /\.ya?ml$/i.test(name));
@@ -33,4 +32,11 @@ test('secret-bearing workflow_dispatch jobs are restricted to main', async () =>
     if (!hasMainGuard) findings.push(name);
   }
   assert.deepEqual(findings, [], 'manual secret-bearing jobs must be main-only');
+});
+
+test('Registry submission cannot be triggered by an ordinary main push', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/atlas-tests.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /registry_submit:\s*\n\s+if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'/);
+  const dedicated = await readFile(new URL('../.github/workflows/atlas-registry-submit.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(dedicated.split('permissions:')[0], /\.github\/workflows\/atlas-registry-submit\.yml/);
 });
