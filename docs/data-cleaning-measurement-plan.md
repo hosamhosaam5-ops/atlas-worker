@@ -55,3 +55,27 @@ The formal 30-day pilot starts only after:
 During the formal measurement window, freeze deployments except for a purely technical incident fix. Do not change the cohort, measurement period, data sources, thresholds, or success criteria during the window without owner approval.
 
 Current status: local technical qualification is being prepared; no production release, public launch, customer intake, paid task, or 30-day measurement window has started.
+
+
+## 4. Authenticated Worker API and abuse controls
+
+- Public upload endpoint: `POST /v1/jobs`.
+- Status and result endpoints: `GET /v1/jobs/{job_id}/status` and `GET /v1/jobs/{job_id}/result`.
+- Every public API request requires `Authorization: Bearer <CLEANING_API_TOKEN>`. The token must be at least 32 characters and is provisioned only as a Cloudflare Worker secret; never commit it or place it in Wrangler vars.
+- Missing server-side token fails closed with HTTP 503; missing or incorrect client token returns HTTP 401. Authentication is checked before request-body processing or Queue submission.
+- Upload rate limit: 10 accepted upload requests per rolling fixed 60-second window per SHA-256(token + client IP), enforced by a dedicated Durable Object. The limit is configurable from 1 to 60 per minute; production default is 10. Rate-limit storage does not retain the raw token or IP.
+- Rate-limit enforcement fails closed with HTTP 503 if its Durable Object binding is unavailable.
+- `TEST_MODE` is unset in the production `wrangler.toml`; test-only health, status, result, and fault-injection routes return HTTP 404 unless an isolated test configuration explicitly sets `TEST_MODE=1`. The local CI configuration uses a clearly non-production fixture token and a 2-request/minute limit only for its synthetic auth test.
+- No secret value is committed. Production release requires separately provisioning `CLEANING_API_TOKEN` as a Worker secret; this PR does not provision it.
+
+## 5. Final package input ceilings
+
+The engine-wide hard ceiling remains 10,000 data rows and 5 MiB per file. Package-facing limits are:
+
+| Package | Maximum data rows per file | Maximum upload size |
+|---|---:|---:|
+| Basic | 2,000 | 1 MiB |
+| Standard | 5,000 | 3 MiB |
+| Advanced | 10,000 | 5 MiB |
+
+These are the approved package ceilings for documentation and offer design. The current Worker enforces the engine-wide ceiling (10,000 rows / 5 MiB); package-specific enforcement is not active until customer entitlements are mapped to separate credentials. Do not represent lower-tier caps as technically enforced before that mapping exists.
