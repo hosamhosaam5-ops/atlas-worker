@@ -381,8 +381,6 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 
-export function canonicalRowKey(value) { return canonical(value); }
-
 function safePath(path) {
   if (typeof path !== 'string' || path.length === 0) throw fault('JSON_PATH_INVALID');
   const segments = path.split('.');
