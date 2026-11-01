@@ -382,7 +382,6 @@ jobs:
           try {
             const doQuery = `{ viewer { ${accounts} {
               durableObjectsInvocationsAdaptiveGroups(limit:10000,filter:{namespaceId_in:${namespaceList},${timestampFilter}}) {
-                count
                 sum { requests errors }
                 quantiles { cpuTimeP50 cpuTimeP95 cpuTimeP99 }
               }
@@ -441,7 +440,6 @@ jobs:
           if (doMetrics) {
             const total = doMetrics.reduce((acc, x) => acc + Number(x.sum?.requests || 0), 0);
             const groups = doMetrics.map(x => ({
-              count:x.count ?? null,
               requests:x.sum?.requests ?? null,
               errors:x.sum?.errors ?? null,
               cpuP50Microseconds:x.quantiles?.cpuTimeP50 ?? null,
