@@ -116,6 +116,7 @@ jobs:
           }
           const url = 'https://' + workerName + '.' + subdomain.subdomain + '.workers.dev';
           await import('node:fs').then(({appendFileSync}) => appendFileSync(process.env.GITHUB_ENV, 'TRIAL_BASE_URL=' + url + '\n'));
+          await import('node:fs').then(({appendFileSync}) => appendFileSync(process.env.GITHUB_OUTPUT, 'url=' + url + '\n'));
           console.log('PASS | exact trial resource names are unused; workers.dev hostname resolved');
           console.log('TRIAL_BASE_URL=' + url);
           NODE
@@ -182,7 +183,6 @@ jobs:
         if: steps.gate.outputs.armed == 'true'
         env:
           CLEANING_API_TOKEN: ${{ secrets.CLEANING_API_TOKEN }}
-          TRIAL_BASE_URL: ${{ env.TRIAL_BASE_URL }}
         shell: bash
         run: |
           set +x
@@ -281,9 +281,6 @@ jobs:
         env:
           CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
-          TRIAL_QUEUE_ID: ${{ env.TRIAL_QUEUE_ID }}
-          TRIAL_WINDOW_START: ${{ env.TRIAL_WINDOW_START }}
-          TRIAL_WINDOW_END: ${{ env.TRIAL_WINDOW_END }}
         shell: bash
         run: |
           set +x
