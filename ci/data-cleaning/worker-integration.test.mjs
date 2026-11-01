@@ -234,3 +234,56 @@ test('30 synthetic files: exact outputs for valid CSV/JSON and fail-closed contr
   assert.equal(invalidResults.length, 4);
   console.log('DATA_CLEANING_30_FILE_CORPUS valid_exact=' + validResults.length + ' invalid_expected=' + invalidResults.length + ' oversized_rejected=1 total=30');
 });
+
+
+test('public upload requires bearer auth and enforces the durable per-client rate limit', async () => {
+  const csv = 'name\\nSynthetic\\n';
+  const options = { inputFormat: 'csv', outputFormat: 'json', operations: [] };
+  const baseHeaders = {
+    'content-type': 'text/csv; charset=utf-8',
+    'x-atlas-cleaning-options': JSON.stringify(options),
+    'cf-connecting-ip': '198.51.100.44',
+  };
+  const unauthenticated = await fetch(BASE + '/v1/jobs', { method: 'POST', headers: baseHeaders, body: csv });
+  assert.equal(unauthenticated.status, 401);
+  assert.deepEqual(await unauthenticated.json(), { error: 'UNAUTHORIZED' });
+
+  const wrongToken = await fetch(BASE + '/v1/jobs', {
+    method: 'POST',
+    headers: { ...baseHeaders, authorization: 'Bearer ' + 'x'.repeat(48) },
+    body: csv,
+  });
+  assert.equal(wrongToken.status, 401);
+
+  const token = 'local-test-token-not-for-production-000000000000';
+  const authorizedHeaders = { ...baseHeaders, authorization: 'Bearer ' + token };
+  const first = await fetch(BASE + '/v1/jobs', { method: 'POST', headers: authorizedHeaders, body: csv });
+  assert.equal(first.status, 202);
+  const firstJob = await first.json();
+
+  const second = await fetch(BASE + '/v1/jobs', { method: 'POST', headers: authorizedHeaders, body: csv });
+  assert.equal(second.status, 202);
+  const secondJob = await second.json();
+
+  const limited = await fetch(BASE + '/v1/jobs', { method: 'POST', headers: authorizedHeaders, body: csv });
+  assert.equal(limited.status, 429);
+  assert.deepEqual(await limited.json(), { error: 'RATE_LIMIT_EXCEEDED' });
+
+  for (const jobId of [firstJob.jobId, secondJob.jobId]) {
+    let state;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const status = await fetch(BASE + '/v1/jobs/' + jobId + '/status', {
+        headers: { authorization: 'Bearer ' + token },
+      });
+      assert.equal(status.status, 200);
+      state = await status.json();
+      if (state.status === 'complete' || state.status === 'failed') break;
+      await delay(100);
+    }
+    assert.equal(state.status, 'complete');
+    const result = await fetch(BASE + '/v1/jobs/' + jobId + '/result', {
+      headers: { authorization: 'Bearer ' + token },
+    });
+    assert.equal(result.status, 200);
+  }
+});
