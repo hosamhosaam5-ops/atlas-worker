@@ -5,6 +5,14 @@ import { DatabaseSync } from 'node:sqlite';
 
 test('0007 demand indexes are correct, unique, idempotent, and rollback without changing rows', async () => {
   const snapshot = JSON.parse(await readFile(new URL('./fixtures/d1-production-schema-2026-10-30.json', import.meta.url), 'utf8'));
+  assert.equal(snapshot.database, 'schema_only_fixture');
+  assert.match(snapshot.source, /schema-only.*no production rows/i);
+  assert.ok(snapshot.objects.length > 0);
+  for (const object of snapshot.objects) {
+    assert.ok(['table', 'index'].includes(object.type));
+    assert.equal(typeof object.sql, 'string');
+    assert.deepEqual(Object.keys(object).sort(), ['name', 'sql', 'table', 'type']);
+  }
   const migration0006 = await readFile(new URL('../migrations/0006_demand_observability.sql', import.meta.url), 'utf8');
   const migration0007 = await readFile(new URL('../migrations/0007_demand_query_indexes.sql', import.meta.url), 'utf8');
   const db = new DatabaseSync(':memory:');
