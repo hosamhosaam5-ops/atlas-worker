@@ -3,7 +3,6 @@ name: ATLAS tests
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -32,7 +31,7 @@ jobs:
   registry_submit:
     # Never submit or mutate the external Registry from pull-request validation.
     # Keep this integration limited to the canonical main branch.
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

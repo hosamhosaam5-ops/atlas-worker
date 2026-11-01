@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   apply-0006:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

@@ -9,7 +9,6 @@ on:
       - "schema-m3.sql"
       - "schema-m4.sql"
       - "schema-m5.sql"
-      - ".github/workflows/atlas-d1-bootstrap.yml"
   workflow_dispatch:
 
 permissions:
@@ -21,6 +20,7 @@ concurrency:
 
 jobs:
   bootstrap:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

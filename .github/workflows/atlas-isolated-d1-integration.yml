@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/atlas-isolated-d1-integration.yml"
       - "test/d1-integration-worker.mjs"
       - "src/orders/**"
       - "src/core/outbox.js"
@@ -21,6 +20,7 @@ concurrency:
 
 jobs:
   integration:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:

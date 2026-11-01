@@ -4,18 +4,21 @@ import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL('../' + path, import.meta.url), 'utf8');
 
-test('0007 workflow is fail-closed on PRs and executes only the explicit SQL allowlist', async () => {
-  const workflow = await read('.github/workflows/d1-apply-0007.yml');
-  assert.match(workflow, /pull_request:/);
-  assert.match(workflow, /validate-pr:\s*\n\s+if: github\.event_name == 'pull_request'/);
-  assert.match(workflow, /apply-0007:\s*\n\s+if: github\.event_name != 'pull_request'/);
-  assert.match(workflow, /SQL_FILE='migrations\/0007_demand_query_indexes\.sql'/);
-  assert.match(workflow, /ALLOWED_SQL_FILE='migrations\/0007_demand_query_indexes\.sql'/);
-  assert.match(workflow, /wrangler d1 execute atlas_db --remote --file="\$SQL_FILE"/);
-  assert.doesNotMatch(workflow, /wrangler d1 migrations apply/i);
-  assert.match(workflow, /node --check ops\/scripts\/d1-apply-0007\.mjs/);
+test('0007 production workflow is main-only while PR validation is secret-free', async () => {
+  const production = await read('.github/workflows/d1-apply-0007.yml');
+  const validation = await read('.github/workflows/d1-apply-0007-pr-validation.yml');
+  assert.doesNotMatch(production, /^  pull_request(?:_target)?:/m);
+  assert.doesNotMatch(production, /validate-pr:/);
+  assert.match(production, /apply-0007:\s*\n\s+if: github\.ref == 'refs\/heads\/main'/);
+  assert.match(production, /SQL_FILE='migrations\/0007_demand_query_indexes\.sql'/);
+  assert.match(production, /ALLOWED_SQL_FILE='migrations\/0007_demand_query_indexes\.sql'/);
+  assert.match(production, /wrangler d1 execute atlas_db --remote --file="\$SQL_FILE"/);
+  assert.doesNotMatch(production, /wrangler d1 migrations apply/i);
+  assert.match(validation, /^  pull_request:/m);
+  assert.match(validation, /node --check ops\/scripts\/d1-apply-0007\.mjs/);
+  assert.match(validation, /node --test test\/d1-apply-0007-static\.test\.mjs/);
+  assert.doesNotMatch(validation, /CLOUDFLARE_API_TOKEN|secrets\.|atlas_db|--remote/i);
 });
-
 test('0007 migration contains exactly six additive CREATE INDEX IF NOT EXISTS statements', async () => {
   const sql = await read('migrations/0007_demand_query_indexes.sql');
   const executableSql = sql.replace(/^\s*--.*$/gm, '').trim();
