@@ -77,13 +77,13 @@ jobs:
               failed=1
             fi
           }
-          probe "Workers Metadata Read-Only" "/accounts/$CF_ACCOUNT_ID/workers/scripts"
-          probe "Workers Metadata Read-Only" "/accounts/$CF_ACCOUNT_ID/workers/subdomain"
+          probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/scripts"
+          probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/subdomain"
           probe "Queues Read" "/accounts/$CF_ACCOUNT_ID/queues"
-          probe "Workers Metadata Read-Only" "/accounts/$CF_ACCOUNT_ID/workers/durable_objects/namespaces?per_page=1000"
+          probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/durable_objects/namespaces?per_page=1000"
 
-          echo "REQUIRED FOR ISOLATED PROVISION/REMOVAL | Workers Admin, Queues Write"
-          echo "REQUIRED FOR ANALYTICS | Workers Metadata Read-Only, Queues Read"
+          echo "REQUIRED FOR ISOLATED PROVISION/REMOVAL | Workers Scripts Write, Queues Write"
+          echo "REQUIRED FOR ANALYTICS | Workers Scripts Read, Queues Read"
           if [ "$failed" -ne 0 ]; then
             exit 1
           fi
