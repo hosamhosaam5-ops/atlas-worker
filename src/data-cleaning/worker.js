@@ -456,7 +456,141 @@ export default {
       if (limited) return limited;
       return handleCreateJob(request, env);
     }
-    const publicMatch = /^\\/v1\\/jobs\\/([0-9a-f-]{36})\\/(status|result)$/i.exec(url.pathname);
+    const publicMatch = new RegExp('^/v1/jobs/([0-9a-f-]{36})/(status|result)
+    if (publicMatch && request.method === 'GET') {
+      const auth = await authorize(request, env);
+      if (!auth.ok) return auth.response;
+      const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(publicMatch[1]));
+      return stub.fetch(new Request('https://job/' + publicMatch[2], { method: 'GET' }));
+    }
+
+    if (env.TEST_MODE === '1') {
+      if (request.method === 'GET' && url.pathname === '/__test/health') {
+        return json({ ok: true, scope: 'local-test-only' });
+      }
+      if (request.method === 'POST' && url.pathname === '/__test/jobs') return handleCreateJob(request, env);
+      const testMatch = new RegExp('^/__test/jobs/([0-9a-f-]{36})/(status|result)
+      if (testMatch && request.method === 'GET') {
+        const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(testMatch[1]));
+        return stub.fetch(new Request('https://job/' + testMatch[2], { method: 'GET' }));
+      }
+    }
+    return new Response('Not Found', { status: 404 });
+  },
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      try {
+        const body = message.body;
+        if (!body || typeof body.jobId !== 'string') { message.ack(); continue; }
+        const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(body.jobId));
+        const chunkResponse = await stub.fetch(new Request('https://job/chunk', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ index: body.index, totalChunks: body.totalChunks, payload: body.payload }),
+        }));
+        if (chunkResponse.status === 410 || chunkResponse.status === 404) { message.ack(); continue; }
+        if (!chunkResponse.ok) {
+          if (chunkResponse.status >= 500) message.retry({ delaySeconds: 1 });
+          else message.ack();
+          continue;
+        }
+        const chunkResult = await chunkResponse.json();
+        if (chunkResult.ready) {
+          const processResponse = await stub.fetch(new Request('https://job/process', { method: 'POST' }));
+          if (processResponse.status >= 500) message.retry({ delaySeconds: 1 });
+          else message.ack();
+        } else message.ack();
+      } catch {
+        message.retry({ delaySeconds: 1 });
+      }
+    }
+  },
+};
+, 'i').exec(url.pathname);
+    if (publicMatch && request.method === 'GET') {
+      const auth = await authorize(request, env);
+      if (!auth.ok) return auth.response;
+      const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(publicMatch[1]));
+      return stub.fetch(new Request('https://job/' + publicMatch[2], { method: 'GET' }));
+    }
+
+    if (env.TEST_MODE === '1') {
+      if (request.method === 'GET' && url.pathname === '/__test/health') {
+        return json({ ok: true, scope: 'local-test-only' });
+      }
+      if (request.method === 'POST' && url.pathname === '/__test/jobs') return handleCreateJob(request, env);
+      const testMatch = /^\\/__test\\/jobs\\/([0-9a-f-]{36})\\/(status|result)$/i.exec(url.pathname);
+      if (testMatch && request.method === 'GET') {
+        const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(testMatch[1]));
+        return stub.fetch(new Request('https://job/' + testMatch[2], { method: 'GET' }));
+      }
+    }
+    return new Response('Not Found', { status: 404 });
+  },
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      try {
+        const body = message.body;
+        if (!body || typeof body.jobId !== 'string') { message.ack(); continue; }
+        const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(body.jobId));
+        const chunkResponse = await stub.fetch(new Request('https://job/chunk', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ index: body.index, totalChunks: body.totalChunks, payload: body.payload }),
+        }));
+        if (chunkResponse.status === 410 || chunkResponse.status === 404) { message.ack(); continue; }
+        if (!chunkResponse.ok) {
+          if (chunkResponse.status >= 500) message.retry({ delaySeconds: 1 });
+          else message.ack();
+          continue;
+        }
+        const chunkResult = await chunkResponse.json();
+        if (chunkResult.ready) {
+          const processResponse = await stub.fetch(new Request('https://job/process', { method: 'POST' }));
+          if (processResponse.status >= 500) message.retry({ delaySeconds: 1 });
+          else message.ack();
+        } else message.ack();
+      } catch {
+        message.retry({ delaySeconds: 1 });
+      }
+    }
+  },
+};
+, 'i').exec(url.pathname);
+      if (testMatch && request.method === 'GET') {
+        const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(testMatch[1]));
+        return stub.fetch(new Request('https://job/' + testMatch[2], { method: 'GET' }));
+      }
+    }
+    return new Response('Not Found', { status: 404 });
+  },
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      try {
+        const body = message.body;
+        if (!body || typeof body.jobId !== 'string') { message.ack(); continue; }
+        const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(body.jobId));
+        const chunkResponse = await stub.fetch(new Request('https://job/chunk', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ index: body.index, totalChunks: body.totalChunks, payload: body.payload }),
+        }));
+        if (chunkResponse.status === 410 || chunkResponse.status === 404) { message.ack(); continue; }
+        if (!chunkResponse.ok) {
+          if (chunkResponse.status >= 500) message.retry({ delaySeconds: 1 });
+          else message.ack();
+          continue;
+        }
+        const chunkResult = await chunkResponse.json();
+        if (chunkResult.ready) {
+          const processResponse = await stub.fetch(new Request('https://job/process', { method: 'POST' }));
+          if (processResponse.status >= 500) message.retry({ delaySeconds: 1 });
+          else message.ack();
+        } else message.ack();
+      } catch {
+        message.retry({ delaySeconds: 1 });
+      }
+    }
+  },
+};
+, 'i').exec(url.pathname);
     if (publicMatch && request.method === 'GET') {
       const auth = await authorize(request, env);
       if (!auth.ok) return auth.response;
