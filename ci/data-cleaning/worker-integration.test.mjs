@@ -144,3 +144,93 @@ test('oversized synthetic upload is rejected before Queue submission', async () 
   assert.equal(response.status, 413);
   assert.deepEqual(await response.json(), { error: 'FILE_SIZE_LIMIT_EXCEEDED' });
 });
+
+
+test('30 synthetic files: exact outputs for valid CSV/JSON and fail-closed contracts for invalid inputs', async () => {
+  const csvJson = operations => ({
+    inputFormat: 'csv',
+    outputFormat: 'json',
+    operations: [...operations, { type: 'convert_format', to: 'json' }],
+  });
+  const cases = [
+    { name: 'csv-trim', input: 'name,email\n Ada , ADA@EXAMPLE.COM \n', options: csvJson([{ type: 'trim_fields', fields: ['name', 'email'] }]) },
+    { name: 'csv-email-normalize', input: 'email\n USER@EXAMPLE.COM \n', options: csvJson([{ type: 'normalize_email', fields: ['email'] }]) },
+    { name: 'csv-dedupe', input: 'id,name\n1,Ada\n1,Ada\n2,Lin\n', options: csvJson([{ type: 'dedupe_exact' }]) },
+    { name: 'csv-date', input: 'date\n31/01/2026\n', options: csvJson([{ type: 'format_date', fields: ['date'], inputFormat: 'DD/MM/YYYY', outputFormat: 'YYYY-MM-DD' }]) },
+    { name: 'csv-number-de', input: 'amount\n1.234,50\n', options: csvJson([{ type: 'normalize_number', fields: ['amount'], locale: 'de-DE' }]) },
+    { name: 'csv-empty-null', input: 'name,note\nAda,  \n', options: csvJson([{ type: 'empty_to_null', fields: ['note'] }]) },
+    { name: 'csv-rename', input: 'first,last\nAda,Lovelace\n', options: csvJson([{ type: 'rename_fields', mapping: { first: 'given', last: 'family' } }]) },
+    { name: 'csv-semicolon', input: 'name;age\nAda;37\n', options: { inputFormat: 'csv', outputFormat: 'csv', operations: [] } },
+    { name: 'csv-tab', input: 'name\tage\nAda\t37\n', options: { inputFormat: 'csv', outputFormat: 'csv', operations: [] } },
+    { name: 'csv-pipe', input: 'name|age\nAda|37\n', options: { inputFormat: 'csv', outputFormat: 'csv', operations: [] } },
+    { name: 'csv-quoted-delimiter', input: 'name,note\nAda,"a,b"\n', options: csvJson([{ type: 'trim_fields', fields: ['name'] }]) },
+    { name: 'csv-quoted-newline', input: 'name,note\nAda,"line one\nline two"\n', options: csvJson([]) },
+    { name: 'csv-bom', input: '\uFEFFname,email\nAda,ada@example.com\n', options: csvJson([]) },
+    { name: 'csv-blank-lines', input: 'name,age\n\nAda,37\n\nLin,29\n', options: csvJson([]) },
+    { name: 'csv-validate', input: 'email,age\nada@example.com,37\n,not-a-number\n', options: csvJson([{ type: 'validate', requiredFields: ['email'], fieldTypes: { age: 'number' } }]) },
+    { name: 'json-trim', input: '[{"name":" Ada "}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'trim_fields', fields: ['name'] }] } },
+    { name: 'json-email', input: '[{"email":" USER@EXAMPLE.COM "}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'normalize_email', fields: ['email'] }] } },
+    { name: 'json-dedupe', input: '[{"a":1,"b":"x"},{"b":"x","a":1},{"a":2,"b":"y"}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'dedupe_exact' }] } },
+    { name: 'json-extract-path', input: '[{"customer":{"email":"ada@example.com"}}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'extract_json_paths', paths: { email: 'customer.email' } }] } },
+    { name: 'json-empty-null', input: '[{"note":"  ","name":"Ada"}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'empty_to_null', fields: ['note'] }] } },
+    { name: 'json-date', input: '[{"date":"31/01/2026"}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'format_date', fields: ['date'], inputFormat: 'DD/MM/YYYY', outputFormat: 'YYYY-MM-DD' }] } },
+    { name: 'json-number', input: '[{"amount":"1.234,50"}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'normalize_number', fields: ['amount'], locale: 'de-DE' }] } },
+    { name: 'json-rename', input: '[{"first":"Ada","last":"Lovelace"}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'rename_fields', mapping: { first: 'given', last: 'family' } }] } },
+    { name: 'json-validate', input: '[{"email":""},{"email":"ada@example.com"}]', json: true, options: { inputFormat: 'json', outputFormat: 'json', operations: [{ type: 'validate', requiredFields: ['email'] }] } },
+    { name: 'json-to-csv', input: '[{"name":"Ada","age":37}]', json: true, options: { inputFormat: 'json', outputFormat: 'csv', operations: [{ type: 'convert_format', to: 'csv' }] } },
+  ];
+
+  const validJobs = await Promise.all(cases.map(async item => {
+    const inputBytes = encoder.encode(item.input);
+    const baseline = executeCleaningJob(inputBytes, { ...item.options, chunkRows: 10_000 });
+    const response = await upload(inputBytes, item.options, item.json ? 'application/json; charset=utf-8' : 'text/csv; charset=utf-8');
+    assert.equal(response.status, 202, item.name + ' upload');
+    const created = await response.json();
+    return { item, baseline, jobId: created.jobId };
+  }));
+
+  const invalidCases = [
+    { name: 'csv-unclosed-quote', input: 'name,note\nAda,"SYNTHETIC_PRIVATE_MARKER', options: { inputFormat: 'csv', outputFormat: 'json', operations: [] }, expected: 'CSV_UNTERMINATED_QUOTE' },
+    { name: 'csv-width-mismatch', input: 'a,b,c\n1,2\n', options: { inputFormat: 'csv', outputFormat: 'json', operations: [] }, expected: 'CSV_ROW_WIDTH_MISMATCH' },
+    { name: 'json-malformed', input: '[{"name":', options: { inputFormat: 'json', outputFormat: 'json', operations: [] }, expected: 'JSON_PARSE_FAILED' },
+    { name: 'csv-row-limit', input: 'id,value\n' + Array.from({ length: 10_001 }, (_, i) => (i + 1) + ',x').join('\n'), options: { inputFormat: 'csv', outputFormat: 'json', operations: [] }, expected: 'ROW_LIMIT_EXCEEDED' },
+  ];
+  const invalidJobs = await Promise.all(invalidCases.map(async item => {
+    const response = await upload(item.input, item.options);
+    assert.equal(response.status, 202, item.name + ' upload');
+    const created = await response.json();
+    return { item, jobId: created.jobId };
+  }));
+
+  const validResults = await Promise.all(validJobs.map(async ({ item, baseline, jobId }) => {
+    const status = await waitForTerminalState(jobId);
+    assert.equal(status.status, 'complete', item.name + ' terminal status');
+    const response = await fetch(BASE + '/__test/jobs/' + jobId + '/result');
+    assert.equal(response.status, 200, item.name + ' result delivery');
+    const output = new Uint8Array(await response.arrayBuffer());
+    assert.deepEqual(output, baseline.bytes, item.name + ' exact output; no unrequested changes');
+    const deleted = await fetch(BASE + '/__test/jobs/' + jobId + '/status');
+    assert.equal(deleted.status, 404, item.name + ' temporary state deleted after delivery');
+    return true;
+  }));
+
+  const invalidResults = await Promise.all(invalidJobs.map(async ({ item, jobId }) => {
+    const status = await waitForTerminalState(jobId);
+    assert.equal(status.status, 'failed', item.name + ' must fail closed');
+    assert.equal(status.errorCode, item.expected, item.name + ' stable error code');
+    const response = await fetch(BASE + '/__test/jobs/' + jobId + '/result');
+    assert.equal(response.status, 422, item.name + ' no output delivery');
+    const body = await response.text();
+    assert.equal(body.includes('SYNTHETIC_PRIVATE_MARKER'), false, item.name + ' must not expose cell contents');
+    return true;
+  }));
+
+  const oversized = new Uint8Array(5 * 1024 * 1024 + 1);
+  const oversizedResponse = await upload(oversized, { inputFormat: 'csv', outputFormat: 'json', operations: [] });
+  assert.equal(oversizedResponse.status, 413, 'oversized file must be rejected before Queue submission');
+  assert.deepEqual(await oversizedResponse.json(), { error: 'FILE_SIZE_LIMIT_EXCEEDED' });
+
+  assert.equal(validResults.length, 25);
+  assert.equal(invalidResults.length, 4);
+  console.log('DATA_CLEANING_30_FILE_CORPUS valid_exact=' + validResults.length + ' invalid_expected=' + invalidResults.length + ' oversized_rejected=1 total=30');
+});
