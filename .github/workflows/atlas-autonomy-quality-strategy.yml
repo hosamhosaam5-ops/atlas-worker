@@ -2,24 +2,8 @@ name: atlas-autonomy-quality-strategy
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "test/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/atlas-autonomy-quality-strategy.yml"
   schedule:
     - cron: "0 10 * * *"
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "test/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/atlas-autonomy-quality-strategy.yml"
 
 permissions:
   contents: read
