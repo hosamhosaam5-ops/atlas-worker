@@ -81,10 +81,24 @@ jobs:
           probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/subdomain"
           probe "Queues Read" "/accounts/$CF_ACCOUNT_ID/queues"
           probe "Billing Read" "/accounts/$CF_ACCOUNT_ID/subscriptions"
+
+          analytics_body="$(mktemp)"
+          analytics_status="$(curl --silent --show-error --max-time 15 -X POST -o "$analytics_body" -w '%{http_code}' \
+            -H "Authorization: Bearer $CF_TRIAL_API_TOKEN" \
+            -H 'content-type: application/json' \
+            --data "{\"query\":\"{ viewer { accounts(filter: { accountTag: \\\"$CF_ACCOUNT_ID\\\" }) { workersInvocationsAdaptive(limit: 1) { sum { requests } } } } }\"}" \
+            https://api.cloudflare.com/client/v4/graphql || true)"
+          if [ "$analytics_status" = "200" ] && jq -e '((.errors // []) | length) == 0' "$analytics_body" >/dev/null 2>&1; then
+            echo "PASS | Account Analytics"
+          else
+            echo "FAIL | Account Analytics"
+            failed=1
+          fi
+          rm -f "$analytics_body"
           probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/durable_objects/namespaces?per_page=1000"
 
           echo "REQUIRED FOR ISOLATED PROVISION/REMOVAL | Workers Scripts Write, Queues Write"
-          echo "REQUIRED FOR ANALYTICS | Workers Scripts Read, Queues Read"
+          echo "REQUIRED FOR ANALYTICS | Account Analytics, Workers Scripts Read, Queues Read"
           if [ "$failed" -ne 0 ]; then
             exit 1
           fi
