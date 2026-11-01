@@ -99,6 +99,22 @@ jobs:
           }
           const scripts = await get('/accounts/' + account + '/workers/scripts', 'Workers Metadata Read-Only');
           const queues = await get('/accounts/' + account + '/queues', 'Queues Read');
+          const subscriptions = await get('/accounts/' + account + '/subscriptions', 'Billing Read');
+          if (!Array.isArray(subscriptions)) {
+            console.log('FAIL | Billing Read (cannot verify Workers Free plan)');
+            process.exit(1);
+          }
+          const activePaidWorkers = subscriptions.filter(item => {
+            const plan = String(item.rate_plan?.public_name || item.rate_plan?.id || '').toLowerCase();
+            const state = String(item.state || '').toLowerCase();
+            return /worker/.test(plan) && !/free/.test(plan) && !['cancelled','failed','expired'].includes(state);
+          });
+          if (activePaidWorkers.length) {
+            console.log('FAIL | Workers Free plan precondition (active non-free Workers subscription detected)');
+            process.exit(1);
+          }
+          console.log('PASS | Billing Read; no active non-free Workers subscription returned');
+
           const subdomain = await get('/accounts/' + account + '/workers/subdomain', 'Workers Metadata Read-Only');
           const workerName = 'atlas-data-cleaning-trial';
           const queueName = 'atlas-data-cleaning-trial-queue';
