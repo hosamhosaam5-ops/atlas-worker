@@ -57,7 +57,6 @@ jobs:
             exit 1
           fi
 
-          failed=0
           probe() {
             permission="$1"
             path="$2"
@@ -68,13 +67,13 @@ jobs:
               echo "PASS | $permission"
             elif [ "$code" = "401" ]; then
               echo "FAIL | CF_TRIAL_API_TOKEN authentication"
-              failed=1
+              exit 1
             elif [ "$code" = "403" ]; then
               echo "FAIL | $permission"
-              failed=1
+              exit 1
             else
               echo "FAIL | $permission (HTTP $code)"
-              failed=1
+              exit 1
             fi
           }
           probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/scripts"
@@ -92,13 +91,9 @@ jobs:
             echo "PASS | Account Analytics"
           else
             echo "FAIL | Account Analytics"
-            failed=1
           fi
           rm -f "$analytics_body"
           probe "Workers Scripts Read" "/accounts/$CF_ACCOUNT_ID/workers/durable_objects/namespaces?per_page=1000"
 
           echo "REQUIRED FOR ISOLATED PROVISION/REMOVAL | Workers Scripts Write, Queues Write"
           echo "REQUIRED FOR ANALYTICS | Account Analytics, Workers Scripts Read, Queues Read"
-          if [ "$failed" -ne 0 ]; then
-            exit 1
-          fi
