@@ -1,0 +1,33 @@
+name: Cloudflare trial token check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-trial-token:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify Cloudflare authentication without exposing credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+        shell: bash
+        run: |
+          set +x
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "FAIL — CF_TRIAL_API_TOKEN is not available to this workflow." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if npx --yes wrangler@4 whoami >/dev/null 2>&1; then
+            echo "PASS — wrangler whoami authenticated successfully; no credential values were emitted." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "FAIL — wrangler whoami failed; check token validity and Cloudflare permissions. No credential values were emitted." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
