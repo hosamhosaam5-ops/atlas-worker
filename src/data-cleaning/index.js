@@ -9,4 +9,7 @@ export {
   validateRows,
   convertFormat,
   executeCleaningJob,
+  createCleaningSession,
+  processCleaningChunk,
+  finalizeCleaningSession,
 } from './engine.js';
