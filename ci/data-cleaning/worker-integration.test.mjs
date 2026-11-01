@@ -157,7 +157,7 @@ test('30 synthetic files: exact outputs for valid CSV/JSON and fail-closed contr
     { name: 'csv-email-normalize', input: 'email\n USER@EXAMPLE.COM \n', options: { ...csvJson([{ type: 'normalize_email', fields: ['email'] }]), delimiter: ',' } },
     { name: 'csv-dedupe', input: 'id,name\n1,Ada\n1,Ada\n2,Lin\n', options: csvJson([{ type: 'dedupe_exact' }]) },
     { name: 'csv-date', input: 'date\n31/01/2026\n', options: { ...csvJson([{ type: 'format_date', fields: ['date'], inputFormat: 'DD/MM/YYYY', outputFormat: 'YYYY-MM-DD' }]), delimiter: ',' } },
-    { name: 'csv-number-de', input: 'amount\n1.234,50\n', options: { ...csvJson([{ type: 'normalize_number', fields: ['amount'], locale: 'de-DE' }]), delimiter: ',' } },
+    { name: 'csv-number-de', input: 'amount\n1.234,50\n', options: { ...csvJson([{ type: 'normalize_number', fields: ['amount'], locale: 'de-DE' }]), delimiter: ';' } },
     { name: 'csv-empty-null', input: 'name,note\nAda,  \n', options: csvJson([{ type: 'empty_to_null', fields: ['note'] }]) },
     { name: 'csv-rename', input: 'first,last\nAda,Lovelace\n', options: csvJson([{ type: 'rename_fields', mapping: { first: 'given', last: 'family' } }]) },
     { name: 'csv-semicolon', input: 'name;age\nAda;37\n', options: { inputFormat: 'csv', outputFormat: 'csv', operations: [] } },
