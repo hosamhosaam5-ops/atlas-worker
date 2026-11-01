@@ -354,25 +354,58 @@ jobs:
           const accounts = 'accounts(filter:{accountTag:"' + account + '"})';
           const script = 'atlas-data-cleaning-trial';
           const timestampFilter = 'datetime_geq:"' + qTime(start) + '",datetime_leq:"' + qTime(end) + '"';
-          const cpuQuery = `{ viewer { ${accounts} {
-            workersInvocationsAdaptive(limit:10000,filter:{scriptName:"${script}",${timestampFilter}}) {
-              sum { requests errors subrequests cpuTime }
-              quantiles { cpuTimeP50 cpuTimeP95 cpuTimeP99 }
-            }
-            durableObjectsInvocationsAdaptiveGroups(limit:10000,filter:{scriptName:"${script}",${timestampFilter}}) {
-              count
-              sum { requests errors }
-              quantiles { cpuTimeP50 cpuTimeP95 cpuTimeP99 }
-            }
-          } } }`;
-          let invocation = null;
+          const namespaceIds = [
+            process.env.TRIAL_JOB_STATE_NAMESPACE_ID,
+            process.env.TRIAL_RATE_LIMIT_NAMESPACE_ID,
+          ].filter(Boolean);
+          if (namespaceIds.length !== 2) {
+            throw new Error('trial Durable Object namespace IDs missing; refusing to report incomplete analytics');
+          }
+          const namespaceList = '[' + namespaceIds.map(id => '"' + id.replace(/"/g, '') + '"').join(',') + ']';
+
+          let workerMetrics = null;
+          try {
+            const workerQuery = `{ viewer { ${accounts} {
+              workersInvocationsAdaptive(limit:10000,filter:{scriptName:"${script}",${timestampFilter}}) {
+                sum { requests errors subrequests cpuTimeUs }
+                quantiles { cpuTimeP50 cpuTimeP95 cpuTimeP99 }
+                max { cpuTime }
+              }
+            } } }`;
+            const result = await gql(workerQuery);
+            workerMetrics = result.workersInvocationsAdaptive?.[0] ?? null;
+          } catch {
+            console.log('WORKER_CPU_METRICS_UNAVAILABLE | no Cloudflare Worker CPU values estimated');
+          }
+
           let doMetrics = null;
           try {
-            const result = await gql(cpuQuery);
-            invocation = result.workersInvocationsAdaptive?.[0] ?? null;
+            const doQuery = `{ viewer { ${accounts} {
+              durableObjectsInvocationsAdaptiveGroups(limit:10000,filter:{namespaceId_in:${namespaceList},${timestampFilter}}) {
+                count
+                sum { requests errors }
+                quantiles { cpuTimeP50 cpuTimeP95 cpuTimeP99 }
+              }
+            } } }`;
+            const result = await gql(doQuery);
             doMetrics = result.durableObjectsInvocationsAdaptiveGroups ?? [];
           } catch {
-            console.log('CPU_METRICS_UNAVAILABLE | Cloudflare GraphQL did not return the requested CPU fields; no CPU values estimated');
+            console.log('DURABLE_OBJECT_INVOCATION_METRICS_UNAVAILABLE | no DO invocation values estimated');
+          }
+
+          let doPeriodic = null;
+          try {
+            const periodicQuery = `{ viewer { ${accounts} {
+              durableObjectsPeriodicGroups(limit:10000,filter:{namespaceId_in:${namespaceList},${timestampFilter}}) {
+                count
+                sum { cpuTime exceededCpuErrors }
+                dimensions { namespaceId datetime }
+              }
+            } } }`;
+            const result = await gql(periodicQuery);
+            doPeriodic = result.durableObjectsPeriodicGroups ?? [];
+          } catch {
+            console.log('DURABLE_OBJECT_PERIODIC_CPU_UNAVAILABLE | no DO periodic CPU value estimated');
           }
 
           let queueGroups = null;
@@ -390,23 +423,46 @@ jobs:
             console.log('QUEUE_METRICS_UNAVAILABLE | Queue analytics query was not accepted or data is not yet available');
           }
 
-          if (invocation) {
-            const cpu = invocation.quantiles || {};
-            const sum = invocation.sum || {};
+          if (workerMetrics) {
+            const sum = workerMetrics.sum || {};
+            const q = workerMetrics.quantiles || {};
             console.log('WORKER_ANALYTICS | ' + JSON.stringify({
               requests: sum.requests ?? null,
               errors: sum.errors ?? null,
               subrequests: sum.subrequests ?? null,
-              cpuTimeSumMicroseconds: sum.cpuTime ?? null,
-              cpuTimeP50Microseconds: cpu.cpuTimeP50 ?? null,
-              cpuTimeP95Microseconds: cpu.cpuTimeP95 ?? null,
-              cpuTimeP99Microseconds: cpu.cpuTimeP99 ?? null,
+              cpuTimeSumMicroseconds: sum.cpuTimeUs ?? null,
+              cpuTimeP50Microseconds: q.cpuTimeP50 ?? null,
+              cpuTimeP95Microseconds: q.cpuTimeP95 ?? null,
+              cpuTimeP99Microseconds: q.cpuTimeP99 ?? null,
+              cpuTimeMaxMicroseconds: workerMetrics.max?.cpuTime ?? null,
+              cpuTimeScope: 'front-end Worker invocations; not per processing slice',
             }));
           }
           if (doMetrics) {
             const total = doMetrics.reduce((acc, x) => acc + Number(x.sum?.requests || 0), 0);
-            const groups = doMetrics.map(x => ({requests:x.sum?.requests ?? null,errors:x.sum?.errors ?? null,cpuP50Microseconds:x.quantiles?.cpuTimeP50 ?? null,cpuP95Microseconds:x.quantiles?.cpuTimeP95 ?? null,cpuP99Microseconds:x.quantiles?.cpuTimeP99 ?? null}));
-            console.log('DURABLE_OBJECT_ANALYTICS | ' + JSON.stringify({requests:total,groups}));
+            const groups = doMetrics.map(x => ({
+              count:x.count ?? null,
+              requests:x.sum?.requests ?? null,
+              errors:x.sum?.errors ?? null,
+              cpuP50Microseconds:x.quantiles?.cpuTimeP50 ?? null,
+              cpuP95Microseconds:x.quantiles?.cpuTimeP95 ?? null,
+              cpuP99Microseconds:x.quantiles?.cpuTimeP99 ?? null,
+              cpuMaxMicroseconds:null,
+            }));
+            console.log('DURABLE_OBJECT_ANALYTICS | ' + JSON.stringify({
+              requests:total,
+              groups,
+              cpuMax: 'unavailable in this Cloudflare Durable Object dataset',
+              scope: 'Durable Object invocations across JobState and RateLimitState, not individual processing slices',
+            }));
+          }
+          if (doPeriodic) {
+            console.log('DURABLE_OBJECT_PERIODIC_CPU | ' + JSON.stringify(doPeriodic.map(x => ({
+              namespaceId:x.dimensions?.namespaceId ?? null,
+              datetime:x.dimensions?.datetime ?? null,
+              cpuTimeMicroseconds:x.sum?.cpuTime ?? null,
+              exceededCpuErrors:x.sum?.exceededCpuErrors ?? null,
+            }))));
           }
           if (queueGroups) {
             const operations = queueGroups.reduce((acc, x) => acc + Number(x.sum?.billableOperations || 0), 0);
@@ -417,8 +473,9 @@ jobs:
             '',
             '## Cloudflare analytics',
             '',
-            invocation ? 'Worker invocations / CPU quantiles are reported per invocation, not per processing chunk.' : 'Cloudflare Worker CPU metrics: unavailable; no value estimated.',
-            doMetrics?.length ? 'Durable Object invocation counts and CPU quantiles returned by Cloudflare GraphQL are in the job log.' : 'Durable Object analytics: unavailable or not ingested in the query window.',
+            workerMetrics ? 'Worker CPU quantiles and maximum are for front-end Worker invocations, not per processing chunk.' : 'Cloudflare front-end Worker CPU metrics: unavailable; no value estimated.',
+            doMetrics?.length ? 'Durable Object CPU quantiles are per DO invocation; the dataset does not expose DO max CPU. These are not per processing chunk.' : 'Durable Object invocation CPU metrics: unavailable or not ingested in the query window.',
+            doPeriodic?.length ? 'Durable Object periodic CPU totals by trial namespace and time bucket are in the job log.' : 'Durable Object periodic CPU totals: unavailable or not ingested in the query window.',
             queueGroups?.length ? 'Queue billable operation aggregates returned by Cloudflare GraphQL are in the job log.' : 'Queue operation aggregates: unavailable or not ingested in the query window.',
             '',
           ].join('\n') + '\n'));
