@@ -1,26 +1,28 @@
-name: Data cleaning Worker isolated integration
+name: Data cleaning Worker local Queue + DO integration
 
 on:
   pull_request:
     branches: [main]
     paths:
       - "src/data-cleaning/**"
-      - "test/worker/**"
+      - "ci/data-cleaning/**"
+      - "wrangler.data-cleaning-test.toml"
       - ".github/workflows/data-cleaning-worker-test.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: data-cleaning-worker-pr
+  group: data-cleaning-wrangler-local
   cancel-in-progress: true
 
 jobs:
-  miniflare-integration:
+  wrangler-local-integration:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
+      CI: "true"
       WRANGLER_SEND_METRICS: "false"
     steps:
       - name: Checkout
@@ -30,7 +32,47 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Install existing locked dependencies
+      - name: Install locked dependencies without lifecycle scripts
         run: npm ci --no-audit --no-fund
-      - name: Run isolated Queue + Durable Object tests in Miniflare
-        run: node --test --test-concurrency=1 test/worker/*.test.mjs
+      - name: Verify exact repository-locked Wrangler version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(npx --no-install wrangler --version | awk '{print $2}')"
+          echo "WRANGLER_VERSION=$version"
+          test "$version" = "4.152.0"
+      - name: Start isolated Wrangler local Worker and run HTTP integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="http://127.0.0.1:8791"
+          STATE_DIR="$RUNNER_TEMP/atlas-data-cleaning-state"
+          LOG_FILE="$RUNNER_TEMP/atlas-data-cleaning-wrangler.log"
+          mkdir -p "$STATE_DIR"
+          npx --no-install wrangler dev --local --config wrangler.data-cleaning-test.toml --ip 127.0.0.1 --port 8791 --inspector-port 9239 --persist-to "$STATE_DIR" >"$LOG_FILE" 2>&1 &
+          WRANGLER_PID=$!
+          cleanup() {
+            status=$?
+            kill "$WRANGLER_PID" 2>/dev/null || true
+            wait "$WRANGLER_PID" 2>/dev/null || true
+            if [ "$status" -ne 0 ]; then
+              echo "WRANGLER_LOCAL_LOG_BEGIN"
+              cat "$LOG_FILE"
+              echo "WRANGLER_LOCAL_LOG_END"
+            fi
+            rm -rf "$STATE_DIR"
+            rm -f "$LOG_FILE"
+            exit "$status"
+          }
+          trap cleanup EXIT
+          ready=false
+          for attempt in $(seq 1 60); do
+            status="$(curl --silent --output $RUNNER_TEMP/atlas-cleaning-ready.json --write-out '%{http_code}' "$BASE/__test/health" || true)"
+            if [ "$status" = "200" ]; then ready=true; break; fi
+            if ! kill -0 "$WRANGLER_PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          test "$ready" = "true"
+          echo "WRANGLER_LOCAL_HEALTH=PASS"
+          ATLAS_TEST_BASE_URL="$BASE" node --test --test-concurrency=1 ci/data-cleaning/worker-integration.test.mjs
+          rm -f "$RUNNER_TEMP/atlas-cleaning-ready.json"

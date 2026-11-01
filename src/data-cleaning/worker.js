@@ -285,6 +285,9 @@ export default {
   async fetch(request, env) {
     if (env.TEST_MODE !== '1') return new Response('Not Found', { status: 404 });
     const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/__test/health') {
+      return json({ ok: true, scope: 'local-test-only' });
+    }
     if (request.method === 'POST' && url.pathname === '/__test/jobs') return handleCreateJob(request, env);
     const match = /^\/__test\/jobs\/([0-9a-f-]{36})\/(status|result)$/i.exec(url.pathname);
     if (match && request.method === 'GET') {
