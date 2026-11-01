@@ -243,3 +243,47 @@ test('30 - 10,000-row CI benchmark records elapsed time and heap delta without f
     ' heap_delta_bytes=' + (heapAfter - heapBefore)
   );
 });
+
+
+test('31 - chunked cleaning is byte-identical to unchunked output across duplicate boundaries', () => {
+  const rows = ['id,email,name'];
+  for (let i = 1; i <= 1_000; i++) {
+    const id = i > 1 && i % 100 === 1 ? i - 1 : i;
+    rows.push(' ' + id + ' , USER' + id + '@EXAMPLE.COM , Name ' + id + ' ');
+  }
+  const input = rows.join('\n');
+  const options = {
+    inputFormat: 'csv',
+    outputFormat: 'json',
+    operations: [
+      { type: 'trim_fields', fields: ['id', 'email', 'name'] },
+      { type: 'normalize_email', fields: ['email'] },
+      { type: 'dedupe_exact' },
+      { type: 'convert_format', to: 'json' },
+    ],
+  };
+  const whole = executeCleaningJob(input, options);
+  const chunked = executeCleaningJob(input, { ...options, chunkRows: 100 });
+  assert.equal(chunked.rowCount, whole.rowCount);
+  assert.deepEqual(chunked.bytes, whole.bytes);
+  assert.equal(chunked.rowCount, 991);
+});
+
+test('32 - validation row indexes and totals remain global across chunks', () => {
+  const input = 'id,email\n' + Array.from({ length: 600 }, (_, index) =>
+    (index + 1) + ',' + (index === 501 ? '' : 'user' + (index + 1) + '@example.com')
+  ).join('\n');
+  const options = {
+    inputFormat: 'csv',
+    outputFormat: 'json',
+    operations: [
+      { type: 'validate', requiredFields: ['email'] },
+      { type: 'convert_format', to: 'json' },
+    ],
+  };
+  const whole = executeCleaningJob(input, options);
+  const chunked = executeCleaningJob(input, { ...options, chunkRows: 75 });
+  assert.deepEqual(chunked.validation, whole.validation);
+  assert.equal(chunked.validation.totalRows, 600);
+  assert.deepEqual(chunked.validation.errors, [{ row: 502, field: 'email', code: 'REQUIRED' }]);
+});
