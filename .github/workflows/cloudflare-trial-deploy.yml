@@ -196,12 +196,19 @@ jobs:
             console.log('FAIL | Workers Scripts Read (trial Durable Object namespace verification)');
             process.exit(1);
           }
-          const classes = new Set((body.result || []).filter(x => x.script === 'atlas-data-cleaning-trial').map(x => x.class));
-          const missing = ['JobState', 'RateLimitState'].filter(x => !classes.has(x));
-          if (missing.length) {
-            console.log('FAIL | trial Durable Object namespace missing: ' + missing.join(', '));
+          const namespaces = (body.result || []).filter(x => x.script === 'atlas-data-cleaning-trial');
+          const jobState = namespaces.find(x => x.class === 'JobState');
+          const rateLimitState = namespaces.find(x => x.class === 'RateLimitState');
+          if (!jobState?.id || !rateLimitState?.id) {
+            console.log('FAIL | trial Durable Object namespace missing: ' + [
+              !jobState?.id ? 'JobState' : '',
+              !rateLimitState?.id ? 'RateLimitState' : '',
+            ].filter(Boolean).join(', '));
             process.exit(1);
           }
+          const { appendFileSync } = await import('node:fs');
+          appendFileSync(process.env.GITHUB_ENV, 'TRIAL_JOB_STATE_NAMESPACE_ID=' + jobState.id + '\\n');
+          appendFileSync(process.env.GITHUB_ENV, 'TRIAL_RATE_LIMIT_NAMESPACE_ID=' + rateLimitState.id + '\\n');
           console.log('PASS | trial JobState and RateLimitState namespaces confirmed');
           NODE
       - name: Provision CLEANING_API_TOKEN as a Worker secret
