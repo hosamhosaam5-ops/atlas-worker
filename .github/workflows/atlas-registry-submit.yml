@@ -1,8 +1,5 @@
 name: atlas-registry-submit
 on:
-  push:
-    branches: [main]
-    paths:
   workflow_dispatch:
 
 permissions:
