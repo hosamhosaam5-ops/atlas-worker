@@ -5,7 +5,7 @@
   "dependencies": {
     "@cloudflare/workers-types": "^5.20260926.1",
     "typescript": "^5.5.0",
-    "wrangler": "^4.0.0",
+    "wrangler": "4.152.0",
     "xlsx": "npm:@stackline/xlsx@1.0.9",
     "ethers": "^6.15.0",
     "@cloudflare/workers-oauth-provider": "^1.0.0",
