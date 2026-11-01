@@ -96,8 +96,13 @@ class RateLimitState {
       }
       bucket.count += 1;
       await this.ctx.storage.put('bucket', bucket);
+      await this.ctx.storage.setAlarm(bucket.windowStartedAt + windowMs);
       return json({ allowed: true, remaining: limit - bucket.count, resetAt: bucket.windowStartedAt + windowMs });
     });
+  }
+
+  async alarm() {
+    await this.ctx.storage.deleteAll();
   }
 }
 
