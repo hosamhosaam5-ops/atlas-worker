@@ -237,7 +237,7 @@ test('30 synthetic files: exact outputs for valid CSV/JSON and fail-closed contr
 
 
 test('public upload requires bearer auth and enforces the durable per-client rate limit', async () => {
-  const csv = 'name\\nSynthetic\\n';
+  const csv = 'name\nSynthetic\n';
   const options = { inputFormat: 'csv', outputFormat: 'json', operations: [] };
   const baseHeaders = {
     'content-type': 'text/csv; charset=utf-8',
