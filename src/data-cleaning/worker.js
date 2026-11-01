@@ -456,7 +456,7 @@ export default {
       if (limited) return limited;
       return handleCreateJob(request, env);
     }
-    const publicMatch = new RegExp('^/v1/jobs/([0-9a-f-]{36})/(status|result)
+    const publicMatch = new RegExp('^/v1/jobs/([0-9a-f-]{36})/(status|result)$', 'i').exec(url.pathname);
     if (publicMatch && request.method === 'GET') {
       const auth = await authorize(request, env);
       if (!auth.ok) return auth.response;
@@ -469,7 +469,7 @@ export default {
         return json({ ok: true, scope: 'local-test-only' });
       }
       if (request.method === 'POST' && url.pathname === '/__test/jobs') return handleCreateJob(request, env);
-      const testMatch = new RegExp('^/__test/jobs/([0-9a-f-]{36})/(status|result)
+      const testMatch = new RegExp('^/__test/jobs/([0-9a-f-]{36})/(status|result)$', 'i').exec(url.pathname);
       if (testMatch && request.method === 'GET') {
         const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(testMatch[1]));
         return stub.fetch(new Request('https://job/' + testMatch[2], { method: 'GET' }));
