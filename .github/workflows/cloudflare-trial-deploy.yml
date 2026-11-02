@@ -77,6 +77,11 @@ jobs:
           ! grep -Eiq 'atlas_db|d1_databases|CLOUDFLARE_API_TOKEN|CLEANING_API_TOKEN\s*=' wrangler.data-cleaning-trial.toml
           echo "PASS | isolated Worker config: no D1, atlas_db, or literal secret binding"
 
+
+      - name: Test Wrangler output redaction before provisioning
+        if: steps.gate.outputs.armed == 'true'
+        run: node --test test/redact-wrangler-output.test.mjs
+
       - name: Preflight exact resource names and resolve workers.dev hostname
         id: preflight
         if: steps.gate.outputs.armed == 'true'
@@ -170,11 +175,33 @@ jobs:
         shell: bash
         run: |
           set +x
-          if npx --yes wrangler@4 deploy --config wrangler.data-cleaning-trial.toml >/tmp/atlas-trial-deploy.log 2>&1; then
+          set +e
+          npx --yes wrangler@4 deploy --config wrangler.data-cleaning-trial.toml >/tmp/atlas-trial-deploy.log 2>&1
+          deploy_status=$?
+          set -e
+
+          if ! node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { redactWranglerOutput } from './ops/scripts/redact-wrangler-output.mjs';
+          const raw = readFileSync('/tmp/atlas-trial-deploy.log', 'utf8');
+          const safe = redactWranglerOutput(raw, [
+            process.env.CLOUDFLARE_API_TOKEN,
+            process.env.CLOUDFLARE_ACCOUNT_ID,
+          ]);
+          console.log('----- sanitized full Wrangler deploy output -----');
+          process.stdout.write(safe.endsWith('\\n') ? safe : safe + '\\n');
+          console.log('----- end sanitized Wrangler deploy output -----');
+          NODE
+          then
+            echo "FAIL | Wrangler output sanitizer failed; raw output withheld"
+            exit 1
+          fi
+
+          if [ "$deploy_status" -eq 0 ]; then
             echo "PASS | isolated Worker deployed with trial-only Queue and Durable Objects"
           else
-            echo "FAIL | Workers Admin / Workers Scripts Write (isolated Worker deployment)"
-            exit 1
+            echo "FAIL | Wrangler deploy exited with status $deploy_status; see sanitized full output above"
+            exit "$deploy_status"
           fi
 
 
