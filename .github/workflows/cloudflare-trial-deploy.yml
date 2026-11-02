@@ -189,7 +189,7 @@ jobs:
             process.env.CLOUDFLARE_ACCOUNT_ID,
           ]);
           console.log('----- sanitized full Wrangler deploy output -----');
-          process.stdout.write(safe.endsWith('\\n') ? safe : safe + '\\n');
+          process.stdout.write(safe.endsWith('\n') ? safe : safe + '\n');
           console.log('----- end sanitized Wrangler deploy output -----');
           NODE
           then
