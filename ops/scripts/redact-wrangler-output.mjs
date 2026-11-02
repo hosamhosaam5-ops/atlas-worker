@@ -1,7 +1,7 @@
-const TOKENISH_VALUE = /\\b[A-Za-z0-9_-]{40,}\\b/g;
-const ACCOUNT_ID = /\\b[0-9a-f]{32}\\b/gi;
-const BEARER = /\\bBearer\\s+[^\\s"'\x60]+/gi;
-const KEY_VALUE = /\\b((?:api[_-]?key|token|secret|account[_-]?id)\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|[^\\s,;]+)/gi;
+const TOKENISH_VALUE = /\b[A-Za-z0-9_-]{40,}\b/g;
+const ACCOUNT_ID = /\b[0-9a-f]{32}\b/gi;
+const BEARER = /\bBearer\s+[^\s"'<>]+/gi;
+const KEY_VALUE = /\b((?:api[_-]?key|token|secret|account[_-]?id)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 
 export function redactWranglerOutput(input, knownSecrets = []) {
   let output = String(input ?? '');
