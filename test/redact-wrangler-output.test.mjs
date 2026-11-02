@@ -14,7 +14,7 @@ test('redacts known credentials, bearer values, account IDs and token-shaped str
     'account=' + accountId,
     'opaque=' + opaqueToken,
     'Error code: insufficient_permissions',
-  ].join('\\n');
+  ].join('\n');
 
   const safe = redactWranglerOutput(raw, [apiToken, cleaningToken, accountId]);
   for (const secret of [apiToken, cleaningToken, accountId, opaqueToken]) {
@@ -22,7 +22,7 @@ test('redacts known credentials, bearer values, account IDs and token-shaped str
   }
   assert.match(safe, /Error: Authentication failed/);
   assert.match(safe, /Error code: insufficient_permissions/);
-  assert.ok((safe.match(/\\*\\*\\*/g) || []).length >= 4);
+  assert.ok((safe.match(/\*\*\*/g) || []).length >= 4);
 });
 
 test('preserves ordinary Wrangler diagnostics while masking 32-character hex identifiers', () => {
