@@ -111,8 +111,6 @@ jobs:
               'workers_dev = true',
               'preview_urls = false',
               '',
-              '[limits]',
-              'cpu_ms = 10',
               '',
               '[[migrations]]',
               'tag = "trial-v1"',

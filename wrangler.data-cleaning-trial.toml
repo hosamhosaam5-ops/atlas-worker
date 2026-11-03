@@ -4,8 +4,7 @@ compatibility_date = "2026-10-26"
 workers_dev = true
 preview_urls = false
 
-[limits]
-cpu_ms = 10
+# Workers Free uses its platform default CPU allowance; custom cpu_ms is unsupported.
 
 [vars]
 CLEANING_RATE_LIMIT_PER_MINUTE = "10"
