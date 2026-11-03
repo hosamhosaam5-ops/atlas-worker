@@ -77,6 +77,11 @@ jobs:
           ! grep -Eiq 'atlas_db|d1_databases|CLOUDFLARE_API_TOKEN|CLEANING_API_TOKEN\s*=' wrangler.data-cleaning-trial.toml
           echo "PASS | isolated Worker config: no D1, atlas_db, or literal secret binding"
 
+
+      - name: Test Wrangler output redaction before provisioning
+        if: steps.gate.outputs.armed == 'true'
+        run: node --test test/redact-wrangler-output.test.mjs
+
       - name: Preflight exact resource names and resolve workers.dev hostname
         id: preflight
         if: steps.gate.outputs.armed == 'true'
@@ -170,11 +175,33 @@ jobs:
         shell: bash
         run: |
           set +x
-          if npx --yes wrangler@4 deploy --config wrangler.data-cleaning-trial.toml >/tmp/atlas-trial-deploy.log 2>&1; then
+          set +e
+          npx --yes wrangler@4 deploy --config wrangler.data-cleaning-trial.toml >/tmp/atlas-trial-deploy.log 2>&1
+          deploy_status=$?
+          set -e
+
+          if ! node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { redactWranglerOutput } from './ops/scripts/redact-wrangler-output.mjs';
+          const raw = readFileSync('/tmp/atlas-trial-deploy.log', 'utf8');
+          const safe = redactWranglerOutput(raw, [
+            process.env.CLOUDFLARE_API_TOKEN,
+            process.env.CLOUDFLARE_ACCOUNT_ID,
+          ]);
+          console.log('----- sanitized full Wrangler deploy output -----');
+          process.stdout.write(safe.endsWith('\n') ? safe : safe + '\n');
+          console.log('----- end sanitized Wrangler deploy output -----');
+          NODE
+          then
+            echo "FAIL | Wrangler output sanitizer failed; raw output withheld"
+            exit 1
+          fi
+
+          if [ "$deploy_status" -eq 0 ]; then
             echo "PASS | isolated Worker deployed with trial-only Queue and Durable Objects"
           else
-            echo "FAIL | Workers Admin / Workers Scripts Write (isolated Worker deployment)"
-            exit 1
+            echo "FAIL | Wrangler deploy exited with status $deploy_status; see sanitized full output above"
+            exit "$deploy_status"
           fi
 
 
@@ -250,6 +277,7 @@ jobs:
             const csv = rows.join('\n') + '\n';
             const options = { inputFormat: 'csv', outputFormat: 'json', delimiter: ',', chunkRows, operations: [{ type: 'convert_format', to: 'json' }] };
             const started = performance.now();
+            const submissionStarted = performance.now();
             let requests = 1;
             const created = await fetch(base + '/v1/jobs', {
               method: 'POST',
@@ -259,13 +287,17 @@ jobs:
             if (created.status !== 202) throw new Error('synthetic upload rejected: HTTP ' + created.status);
             const job = await created.json();
             let state;
+            let submissionToReadyObservedMs = null;
             for (let attempt = 0; attempt < 180; attempt++) {
               await sleep(500);
               const response = await fetch(base + '/v1/jobs/' + job.jobId + '/status', { headers: auth });
               requests++;
               if (!response.ok) throw new Error('status request failed: HTTP ' + response.status);
               state = await response.json();
-              if (state.status === 'complete' || state.status === 'failed') break;
+              if (state.status === 'complete' || state.status === 'failed') {
+                submissionToReadyObservedMs = Number((performance.now() - submissionStarted).toFixed(3));
+                break;
+              }
             }
             if (state?.status !== 'complete') throw new Error('synthetic job did not complete: ' + (state?.errorCode || state?.status || 'timeout'));
             if (state.inputRowCount !== rowCount || state.outputRowCount !== rowCount) {
@@ -284,9 +316,10 @@ jobs:
               rows: rowCount,
               inputBytes: Buffer.byteLength(csv),
               chunkRows,
-              processingChunks: state.processingChunkCount ?? chunks.length,
+              totalProcessingSlices: state.processingChunkCount ?? chunks.length,
               chunkComputeMs: { p50: percentile(chunks, .50), p95: percentile(chunks, .95), max: chunks.length ? Math.max(...chunks) : null },
-              endToEndMs: elapsedMs,
+              submissionToReadyObservedMs,
+              resultDeliveryEndToEndMs: elapsedMs,
               httpRequests: requests,
               queueMessagesSubmitted: job.chunks ?? null,
               outputBytes: Buffer.byteLength(output),
@@ -310,9 +343,9 @@ jobs:
           await import('node:fs').then(({appendFileSync}) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
             '## Synthetic data-cleaning measurements',
             '',
-            '| Rows | Input bytes | Chunk rows | Chunks | Chunk compute P50/P95/max (ms; performance.now proxy) | End-to-end (ms) | HTTP requests |',
-            '|---:|---:|---:|---:|---:|---:|---:|',
-            ...results.map(x => '| ' + x.rows + ' | ' + x.inputBytes + ' | ' + x.chunkRows + ' | ' + x.processingChunks + ' | ' + [x.chunkComputeMs.p50,x.chunkComputeMs.p95,x.chunkComputeMs.max].join(' / ') + ' | ' + x.endToEndMs + ' | ' + x.httpRequests + ' |'),
+            '| Rows | Input bytes | Chunk rows | Processing slices | Queue messages | Chunk compute P50/P95/max (ms; elapsed-time proxy) | Submission-to-ready observed (ms) | Result-delivery end-to-end (ms) | HTTP requests |',
+            '|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
+            ...results.map(x => '| ' + x.rows + ' | ' + x.inputBytes + ' | ' + x.chunkRows + ' | ' + x.totalProcessingSlices + ' | ' + x.queueMessagesSubmitted + ' | ' + [x.chunkComputeMs.p50,x.chunkComputeMs.p95,x.chunkComputeMs.max].join(' / ') + ' | ' + x.submissionToReadyObservedMs + ' | ' + x.resultDeliveryEndToEndMs + ' | ' + x.httpRequests + ' |'),
             '',
             'Chunk compute is a synchronous elapsed-time proxy from the Worker; it is not Cloudflare billed CPU time.',
             thresholdExceeded && results.some(x => x.chunkComputeMs.max > 10)
