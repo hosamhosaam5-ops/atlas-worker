@@ -299,7 +299,9 @@ jobs:
               .replace(/\bBearer\s+[A-Za-z0-9._~+/-]{16,512}\b/gi, 'Bearer [REDACTED]')
               .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_JWT]')
               .replace(/\b[a-f0-9]{32}\b/gi, '[REDACTED_ID_OR_TOKEN]')
-              .replace(/(["']?(?:access[_-]?token|refresh[_-]?token|api[_-]?key|secret|password|authorization)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi, '$1[REDACTED]');
+              .replace(/("(?:[^"]*(?:token|secret|password|authorization|account|customer|email|phone|address|name|payload|content|data|file|csv|input|output)[^"]*)"\s*:\s*")(?:(?:\\.|[^"\\])*)"/gi, '$1[REDACTED]')
+              .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_EMAIL]')
+              .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '[REDACTED_UUID]');
           }
           async function measure(rowCount, chunkRows) {
             const rows = ['id,name,value'];
@@ -318,10 +320,10 @@ jobs:
                 body: csv,
               });
               if (created.status !== 202) {
-                const responseBody = await created.text().catch(error => '[response body read failed: ' + String(error?.message || error) + ']');
                 const safeSecrets = [token];
                 console.error('UPLOAD_RESPONSE | status=' + created.status + ' statusText=' + redactDiagnosticText(created.statusText, safeSecrets));
                 console.error('UPLOAD_HEADERS | cf-ray=' + redactDiagnosticText(created.headers.get('cf-ray') || '', safeSecrets) + ' content-type=' + redactDiagnosticText(created.headers.get('content-type') || '', safeSecrets));
+                const responseBody = await created.text();
                 let parsedBody;
                 try { parsedBody = JSON.parse(responseBody); } catch {}
                 if (parsedBody && typeof parsedBody === 'object') {
