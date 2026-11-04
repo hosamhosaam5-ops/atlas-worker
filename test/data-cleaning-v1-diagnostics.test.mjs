@@ -122,24 +122,14 @@ test('POST /v1/jobs returns stable 503 codes and accepts healthy synthetic sizes
     evidence.cases.push({ name, status: response.status, body });
   }
 
-  async function recordUnhandledException(name, envOptions) {
+  async function checkExceptionResponse(name, envOptions, expectedCode) {
     const { env } = makeEnv(envOptions);
-    let thrown;
-    try {
-      await worker.fetch(makeRequest(), env);
-    } catch (error) {
-      thrown = error;
-    }
-    assert.ok(thrown instanceof Error, name + ' should surface a rejected DO fetch');
-    const observation = {
-      name,
-      outcome: 'uncaught_exception_without_http_response',
-      status: null,
-      body: null,
-      errorName: thrown.name,
-    };
-    assertNoSecrets(observation, capturedLogs);
-    evidence.exceptionPaths.push(observation);
+    const response = await worker.fetch(makeRequest(), env);
+    const body = await response.json();
+    assert.equal(response.status, 503, name + ' status');
+    assert.equal(body.error, expectedCode, name + ' error code');
+    assertNoSecrets(body, capturedLogs);
+    evidence.exceptionPaths.push({ name, status: response.status, body });
   }
 
   try {
@@ -180,8 +170,16 @@ test('POST /v1/jobs returns stable 503 codes and accepts healthy synthetic sizes
       'QUEUE_SUBMISSION_FAILED',
     );
 
-    await recordUnhandledException('RateLimit DO fetch rejects instead of returning an HTTP response', { rateThrows: true });
-    await recordUnhandledException('JobState init fetch rejects instead of returning an HTTP response', { jobInitThrows: true });
+    await checkExceptionResponse(
+      'RateLimit DO fetch rejects',
+      { rateThrows: true },
+      'RATE_LIMIT_CHECK_FAILED',
+    );
+    await checkExceptionResponse(
+      'JobState init fetch rejects',
+      { jobInitThrows: true },
+      'JOB_INITIALIZATION_FAILED',
+    );
 
     for (const rowCount of [100, 2000, 10000]) {
       const { env, sentBatches } = makeEnv();
