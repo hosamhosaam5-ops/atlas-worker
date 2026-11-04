@@ -1,0 +1,38 @@
+name: Local data-cleaning 503 diagnostics
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cloudflare-trial-deploy.yml"
+      - ".github/workflows/data-cleaning-v1-diagnostics.yml"
+      - "test/data-cleaning-v1-diagnostics.test.mjs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-data-cleaning-diagnostics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnostic-local:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Run local POST /v1/jobs diagnostic tests
+        run: node --test test/data-cleaning-v1-diagnostics.test.mjs
+      - name: Upload local diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: data-cleaning-v1-diagnostics-${{ github.run_id }}
+          path: artifacts/data-cleaning-v1-diagnostics.json
+          if-no-files-found: warn
