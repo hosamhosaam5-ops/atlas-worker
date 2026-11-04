@@ -12,6 +12,7 @@ const evidence = {
   suite: 'local POST /v1/jobs diagnostics',
   cloudflareNetworkAccess: false,
   cases: [],
+  exceptionPaths: [],
   healthyRuns: [],
 };
 
@@ -58,7 +59,10 @@ function makeEnv(options = {}) {
         return {
           async fetch(request) {
             const path = new URL(request.url).pathname;
-            if (path === '/init') return new Response('{}', { status: options.jobInitStatus ?? 200 });
+            if (path === '/init') {
+              if (options.jobInitThrows) throw new Error('mock JobState transport failure token=' + TOKEN + ' account=' + ACCOUNT_ID);
+              return new Response('{}', { status: options.jobInitStatus ?? 200 });
+            }
             if (path === '/fail') return new Response('{}', { status: 200 });
             return new Response('{}', { status: 200 });
           },
@@ -80,6 +84,7 @@ function makeEnv(options = {}) {
       get() {
         return {
           async fetch() {
+            if (options.rateThrows) throw new Error('mock RateLimit DO transport failure token=' + TOKEN + ' account=' + ACCOUNT_ID);
             return new Response('{"allowed":true}', { status: options.rateStatus ?? 200 });
           },
         };
@@ -115,6 +120,26 @@ test('POST /v1/jobs returns stable 503 codes and accepts healthy synthetic sizes
     assert.equal(body.error, expectedCode, name + ' error code');
     assertNoSecrets(body, capturedLogs);
     evidence.cases.push({ name, status: response.status, body });
+  }
+
+  async function recordUnhandledException(name, envOptions) {
+    const { env } = makeEnv(envOptions);
+    let thrown;
+    try {
+      await worker.fetch(makeRequest(), env);
+    } catch (error) {
+      thrown = error;
+    }
+    assert.ok(thrown instanceof Error, name + ' should surface a rejected DO fetch');
+    const observation = {
+      name,
+      outcome: 'uncaught_exception_without_http_response',
+      status: null,
+      body: null,
+      errorName: thrown.name,
+    };
+    assertNoSecrets(observation, capturedLogs);
+    evidence.exceptionPaths.push(observation);
   }
 
   try {
@@ -154,6 +179,9 @@ test('POST /v1/jobs returns stable 503 codes and accepts healthy synthetic sizes
       {},
       'QUEUE_SUBMISSION_FAILED',
     );
+
+    await recordUnhandledException('RateLimit DO fetch rejects instead of returning an HTTP response', { rateThrows: true });
+    await recordUnhandledException('JobState init fetch rejects instead of returning an HTTP response', { jobInitThrows: true });
 
     for (const rowCount of [100, 2000, 10000]) {
       const { env, sentBatches } = makeEnv();
