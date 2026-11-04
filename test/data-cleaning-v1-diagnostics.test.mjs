@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import worker from '../src/data-cleaning/worker.js';
 
 const TOKEN = 'diagnostic-only-secret-value-0123456789-abcdef';
@@ -186,6 +187,23 @@ test('POST /v1/jobs returns stable 503 codes and accepts healthy synthetic sizes
     assert.match(workflow, /UPLOAD_ERROR_FIELD/);
     assert.match(workflow, /Preflight CLEANING_API_TOKEN length before synthetic upload/);
     assert.match(workflow, /-ge 32/);
+    const helperStart = workflow.indexOf('function redactDiagnosticText(');
+    const helperEnd = workflow.indexOf('async function measure(', helperStart);
+    assert.ok(helperStart >= 0 && helperEnd > helperStart, 'workflow redaction helper must be present');
+    const redactDiagnosticText = runInNewContext('(' + workflow.slice(helperStart, helperEnd).trim() + ')');
+    const redactionFixture = JSON.stringify({
+      error: 'QUEUE_SUBMISSION_FAILED',
+      token: TOKEN,
+      account_id: ACCOUNT_ID,
+      email: 'synthetic@example.test',
+      authorization: 'Bearer abcdefghijklmnopqrstuvwxyz0123456789',
+    });
+    const redactedFixture = redactDiagnosticText(redactionFixture, [TOKEN]);
+    assert.equal(redactedFixture.includes(TOKEN), false);
+    assert.equal(redactedFixture.includes(ACCOUNT_ID), false);
+    assert.equal(redactedFixture.includes('synthetic@example.test'), false);
+    assert.equal(redactedFixture.includes('abcdefghijklmnopqrstuvwxyz0123456789'), false);
+    assert.ok(redactedFixture.includes('QUEUE_SUBMISSION_FAILED'), 'stable error code must remain visible');
     evidence.workflowChecks = {
       responseStatusAndText: true,
       allowedHeadersOnly: ['cf-ray', 'content-type'],
