@@ -137,14 +137,19 @@ async function enforceRateLimit(request, env, token) {
   const material = new TextEncoder().encode(token + '\n' + ip);
   const digest = await crypto.subtle.digest('SHA-256', material);
   const key = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
-  const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(key));
   const limitValue = Number(env.CLEANING_RATE_LIMIT_PER_MINUTE);
   const limit = Number.isInteger(limitValue) && limitValue >= 1 && limitValue <= 60 ? limitValue : 10;
-  const response = await stub.fetch(new Request('https://rate-limit/consume', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ limit, windowMs: 60_000 }),
-  }));
+  let response;
+  try {
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(key));
+    response = await stub.fetch(new Request('https://rate-limit/consume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ limit, windowMs: 60_000 }),
+    }));
+  } catch {
+    return json({ error: 'RATE_LIMIT_CHECK_FAILED' }, 503);
+  }
   if (response.status === 429) return json({ error: 'RATE_LIMIT_EXCEEDED' }, 429);
   if (!response.ok) return json({ error: 'RATE_LIMIT_CHECK_FAILED' }, 503);
   return null;
@@ -422,11 +427,17 @@ async function handleCreateJob(request, env) {
     if (!/^\d+$/.test(failHeader)) return json({ error: 'TEST_FAILURE_CHUNK_INVALID' }, 400);
     failAtChunk = Number(failHeader);
   }
-  const stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(jobId));
-  const init = await stub.fetch(new Request('https://job/init', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jobId, totalChunks, options, failAtChunk, expiresAt: Date.now() + JOB_TTL_MS }),
-  }));
+  let stub;
+  let init;
+  try {
+    stub = env.JOB_STATE.get(env.JOB_STATE.idFromName(jobId));
+    init = await stub.fetch(new Request('https://job/init', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jobId, totalChunks, options, failAtChunk, expiresAt: Date.now() + JOB_TTL_MS }),
+    }));
+  } catch {
+    return json({ error: 'JOB_INITIALIZATION_FAILED' }, 503);
+  }
   if (!init.ok) return json({ error: 'JOB_INITIALIZATION_FAILED' }, 503);
 
   const messages = [];
