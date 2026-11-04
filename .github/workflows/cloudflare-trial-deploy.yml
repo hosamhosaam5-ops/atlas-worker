@@ -6,6 +6,10 @@ on:
     branches: [main]
     paths:
       - "ops/triggers/trial-deploy.trigger"
+  pull_request:
+    paths:
+      - ".github/workflows/cloudflare-trial-deploy.yml"
+      - "test/data-cleaning-v1-diagnostics.test.mjs"
 
 permissions:
   contents: read
@@ -254,6 +258,20 @@ jobs:
             exit 1
           fi
 
+      - name: Preflight CLEANING_API_TOKEN length before synthetic upload
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CLEANING_API_TOKEN: ${{ secrets.CLEANING_API_TOKEN }}
+        shell: bash
+        run: |
+          set +x
+          if [ "${#CLEANING_API_TOKEN}" -ge 32 ]; then
+            echo "PASS"
+          else
+            echo "FAIL"
+            exit 1
+          fi
+
       - name: Run synthetic 10,000-row and 2,000-row measurements
         id: measurement
         if: steps.gate.outputs.armed == 'true'
@@ -272,6 +290,17 @@ jobs:
             const sorted = [...values].sort((a, b) => a - b);
             return sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)] ?? null;
           };
+          function redactDiagnosticText(value, knownSecrets = []) {
+            let output = String(value ?? '');
+            for (const secret of knownSecrets) {
+              if (typeof secret === 'string' && secret.length >= 8) output = output.split(secret).join('[REDACTED]');
+            }
+            return output
+              .replace(/\\bBearer\\s+[A-Za-z0-9._~+/-]{16,512}\\b/gi, 'Bearer [REDACTED]')
+              .replace(/\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\b/g, '[REDACTED_JWT]')
+              .replace(/\\b[a-f0-9]{32}\\b/gi, '[REDACTED_ID_OR_TOKEN]')
+              .replace(/(["']?(?:access[_-]?token|refresh[_-]?token|api[_-]?key|secret|password|authorization)["']?\\s*[:=]\\s*["']?)[^"',\\s}]+/gi, '$1[REDACTED]');
+          }
           async function measure(rowCount, chunkRows) {
             const rows = ['id,name,value'];
             for (let i = 1; i <= rowCount; i++) rows.push(i + ',Synthetic_' + i + ',' + (i % 97));
@@ -280,13 +309,36 @@ jobs:
             const started = performance.now();
             const submissionStarted = performance.now();
             let requests = 1;
-            const created = await fetch(base + '/v1/jobs', {
-              method: 'POST',
-              headers: { ...auth, 'content-type': 'text/csv; charset=utf-8', 'x-atlas-cleaning-options': JSON.stringify(options) },
-              body: csv,
-            });
-            if (created.status !== 202) throw new Error('synthetic upload rejected: HTTP ' + created.status);
-            const job = await created.json();
+            let created;
+            let job;
+            try {
+              created = await fetch(base + '/v1/jobs', {
+                method: 'POST',
+                headers: { ...auth, 'content-type': 'text/csv; charset=utf-8', 'x-atlas-cleaning-options': JSON.stringify(options) },
+                body: csv,
+              });
+              if (created.status !== 202) {
+                const responseBody = await created.text().catch(error => '[response body read failed: ' + String(error?.message || error) + ']');
+                const safeSecrets = [token];
+                console.error('UPLOAD_RESPONSE | status=' + created.status + ' statusText=' + redactDiagnosticText(created.statusText, safeSecrets));
+                console.error('UPLOAD_HEADERS | cf-ray=' + redactDiagnosticText(created.headers.get('cf-ray') || '', safeSecrets) + ' content-type=' + redactDiagnosticText(created.headers.get('content-type') || '', safeSecrets));
+                let parsedBody;
+                try { parsedBody = JSON.parse(responseBody); } catch {}
+                if (parsedBody && typeof parsedBody === 'object') {
+                  for (const key of ['error', 'code']) {
+                    if (Object.prototype.hasOwnProperty.call(parsedBody, key)) {
+                      console.error('UPLOAD_ERROR_FIELD | ' + key + '=' + redactDiagnosticText(JSON.stringify(parsedBody[key]), safeSecrets));
+                    }
+                  }
+                }
+                console.error('UPLOAD_BODY_REDACTED | ' + redactDiagnosticText(responseBody, safeSecrets));
+                throw new Error('synthetic upload rejected: HTTP ' + created.status);
+              }
+              job = await created.json();
+            } catch (error) {
+              console.error('UPLOAD_EXCEPTION_STACK | ' + redactDiagnosticText(error?.stack || String(error), [token]));
+              throw new Error(redactDiagnosticText(error?.message || 'synthetic upload failed', [token]));
+            }
             let state;
             let submissionToReadyObservedMs = null;
             for (let attempt = 0; attempt < 180; attempt++) {
@@ -511,3 +563,26 @@ jobs:
             '',
           ].join('\n') + '\n'));
           NODE
+
+  diagnostic-local:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Run local POST /v1/jobs diagnostic tests (no Cloudflare access)
+        run: node --test test/data-cleaning-v1-diagnostics.test.mjs
+      - name: Upload local diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: data-cleaning-v1-diagnostics-${{ github.run_id }}
+          path: artifacts/data-cleaning-v1-diagnostics.json
+          if-no-files-found: warn
