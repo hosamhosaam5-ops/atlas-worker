@@ -254,6 +254,20 @@ jobs:
             exit 1
           fi
 
+      - name: Preflight CLEANING_API_TOKEN length before synthetic upload
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CLEANING_API_TOKEN: ${{ secrets.CLEANING_API_TOKEN }}
+        shell: bash
+        run: |
+          set +x
+          if [ "${#CLEANING_API_TOKEN}" -ge 32 ]; then
+            echo "PASS"
+          else
+            echo "FAIL"
+            exit 1
+          fi
+
       - name: Run synthetic 10,000-row and 2,000-row measurements
         id: measurement
         if: steps.gate.outputs.armed == 'true'
@@ -272,6 +286,19 @@ jobs:
             const sorted = [...values].sort((a, b) => a - b);
             return sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)] ?? null;
           };
+          function redactDiagnosticText(value, knownSecrets = []) {
+            let output = String(value ?? '');
+            for (const secret of knownSecrets) {
+              if (typeof secret === 'string' && secret.length >= 8) output = output.split(secret).join('[REDACTED]');
+            }
+            return output
+              .replace(/\bBearer\s+[A-Za-z0-9._~+/-]{16,512}\b/gi, 'Bearer [REDACTED]')
+              .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_JWT]')
+              .replace(/\b[a-f0-9]{32}\b/gi, '[REDACTED_ID_OR_TOKEN]')
+              .replace(/("(?:[^"]*(?:token|secret|password|authorization|account|customer|email|phone|address|name|payload|content|data|file|csv|input|output)[^"]*)"\s*:\s*")(?:(?:\\.|[^"\\])*)"/gi, '$1[REDACTED]')
+              .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_EMAIL]')
+              .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, '[REDACTED_UUID]');
+          }
           async function measure(rowCount, chunkRows) {
             const rows = ['id,name,value'];
             for (let i = 1; i <= rowCount; i++) rows.push(i + ',Synthetic_' + i + ',' + (i % 97));
@@ -280,13 +307,36 @@ jobs:
             const started = performance.now();
             const submissionStarted = performance.now();
             let requests = 1;
-            const created = await fetch(base + '/v1/jobs', {
-              method: 'POST',
-              headers: { ...auth, 'content-type': 'text/csv; charset=utf-8', 'x-atlas-cleaning-options': JSON.stringify(options) },
-              body: csv,
-            });
-            if (created.status !== 202) throw new Error('synthetic upload rejected: HTTP ' + created.status);
-            const job = await created.json();
+            let created;
+            let job;
+            try {
+              created = await fetch(base + '/v1/jobs', {
+                method: 'POST',
+                headers: { ...auth, 'content-type': 'text/csv; charset=utf-8', 'x-atlas-cleaning-options': JSON.stringify(options) },
+                body: csv,
+              });
+              if (created.status !== 202) {
+                const safeSecrets = [token];
+                console.error('UPLOAD_RESPONSE | status=' + created.status + ' statusText=' + redactDiagnosticText(created.statusText, safeSecrets));
+                console.error('UPLOAD_HEADERS | cf-ray=' + redactDiagnosticText(created.headers.get('cf-ray') || '', safeSecrets) + ' content-type=' + redactDiagnosticText(created.headers.get('content-type') || '', safeSecrets));
+                const responseBody = await created.text();
+                let parsedBody;
+                try { parsedBody = JSON.parse(responseBody); } catch {}
+                if (parsedBody && typeof parsedBody === 'object') {
+                  for (const key of ['error', 'code']) {
+                    if (Object.prototype.hasOwnProperty.call(parsedBody, key)) {
+                      console.error('UPLOAD_ERROR_FIELD | ' + key + '=' + redactDiagnosticText(JSON.stringify(parsedBody[key]), safeSecrets));
+                    }
+                  }
+                }
+                console.error('UPLOAD_BODY_REDACTED | ' + redactDiagnosticText(responseBody, safeSecrets));
+                throw new Error('synthetic upload rejected: HTTP ' + created.status);
+              }
+              job = await created.json();
+            } catch (error) {
+              console.error('UPLOAD_EXCEPTION_STACK | ' + redactDiagnosticText(error?.stack || String(error), [token]));
+              throw new Error(redactDiagnosticText(error?.message || 'synthetic upload failed', [token]));
+            }
             let state;
             let submissionToReadyObservedMs = null;
             for (let attempt = 0; attempt < 180; attempt++) {
