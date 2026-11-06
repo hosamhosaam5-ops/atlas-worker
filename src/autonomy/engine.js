@@ -1,5 +1,5 @@
 // ATLAS Autonomous Company Engine — P0/P1/P2 execution layer. Verified build: source + audit tests must remain green.
-// External discovery is read-only by default. Commercial actions remain policy-gated.
+// External discovery uses public GETs and persists capability/health metadata. Commercial actions remain policy-gated.
 // No provider result is treated as trusted instruction.
 
 import { registerCapability, listCapabilities, checkBudget, ensureAutonomySchema } from './registry.js';
@@ -28,18 +28,50 @@ async function fetchJson(url, init={}) {
   } finally { clearTimeout(timer); }
 }
 
-export async function discoverCapabilities(db) {
+export async function discoverCapabilities(db,{fetcher=fetchJson,sources=PUBLIC_SOURCES,now=Date.now()}={}) {
   const results=[];
-  for(const s of PUBLIC_SOURCES){
-    try {
-      const r=await fetchJson(s.endpoint,{method:'GET'});
-      const status=r.ok ? 'DISCOVERY' : (r.status===401||r.status===403 ? 'AVAILABLE_AUTH_REQUIRED' : 'DEGRADED');
-      const out=await registerCapability(db,{...s,capability_id:s.id,status,last_tested_at:new Date().toISOString(),metadata:{http_status:r.status,discovered:'public_probe'}});
-      results.push({id:s.id,status,score:out.score,http_status:r.status});
-    } catch(e) {
-      const out=await registerCapability(db,{...s,capability_id:s.id,status:'UNREACHABLE',last_tested_at:new Date().toISOString(),metadata:{error:String(e?.message||e),discovered:'public_probe'}});
-      results.push({id:s.id,status:'UNREACHABLE',score:out.score});
+  for(const s of sources){
+    const circuit=await sourceCircuitState(db,s.id,now);
+    if(circuit.blocked){
+      results.push({id:s.id,status:circuit.state==='UNAVAILABLE'?'HEALTH_STORE_UNAVAILABLE':'CIRCUIT_OPEN',
+        state:circuit.state,next_probe_at:circuit.next_probe_at||null});
+      continue;
     }
+    if(circuit.probe_due){
+      const claimed=await claimHalfOpenProbe(db,s.id,now);
+      if(!claimed){
+        results.push({id:s.id,status:'CIRCUIT_OPEN',state:'HALF_OPEN',reason:'half_open_probe_already_claimed'});
+        continue;
+      }
+    }
+
+    let response;
+    try {
+      response=await fetcher(s.endpoint,{method:'GET'});
+    } catch(e) {
+      const message=String(e?.message||e);
+      const timedOut=e?.name==='AbortError'||/timeout|timed out|aborted/i.test(message);
+      const outcome=await recordSourceOutcome(db,s.id,{
+        ok:false,status:timedOut?'TIMEOUT':null,error:timedOut?'TIMEOUT':'NETWORK_ERROR',now
+      });
+      const out=await registerCapability(db,{...s,capability_id:s.id,status:'UNREACHABLE',
+        last_tested_at:new Date(now).toISOString(),
+        metadata:{error:message,discovered:'public_probe',breaker_state:outcome.state}});
+      results.push({id:s.id,status:'UNREACHABLE',score:out.score,breaker_state:outcome.state});
+      continue;
+    }
+
+    const outcome=await recordSourceOutcome(db,s.id,{
+      ok:response.ok===true,status:response.status,
+      retryAfter:response.headers?.['retry-after']||null,
+      responseMs:response.responseMs??null,now
+    });
+    const status=response.ok ? 'DISCOVERY' :
+      (response.status===401||response.status===403 ? 'AVAILABLE_AUTH_REQUIRED' : 'DEGRADED');
+    const out=await registerCapability(db,{...s,capability_id:s.id,status,
+      last_tested_at:new Date(now).toISOString(),
+      metadata:{http_status:response.status,discovered:'public_probe',breaker_state:outcome.state}});
+    results.push({id:s.id,status,score:out.score,http_status:response.status,breaker_state:outcome.state});
   }
   return {ok:true,results};
 }
@@ -316,9 +348,10 @@ export async function recordSourceOutcome(db, sourceId, {
   ok,status=null,error=null,retryAfter=null,responseMs=null,now=Date.now()
 }) {
   const previous=await readSourceHealth(db,sourceId);
-  const numericStatus=Number(status);
+  const numericStatus=status===null||status===undefined||status===''?NaN:Number(status);
   const httpStatus=Number.isFinite(numericStatus)?numericStatus:null;
   const timeout=String(status||'').toUpperCase()==='TIMEOUT'||String(error||'').toUpperCase()==='TIMEOUT';
+  const networkError=String(error||'').toUpperCase()==='NETWORK_ERROR';
   const rateLimited=httpStatus===429;
   const authRequired=httpStatus===401||httpStatus===403;
   let state='CLOSED';
@@ -341,9 +374,9 @@ export async function recordSourceOutcome(db, sourceId, {
     lastErrorCode='RATE_LIMITED';
   } else if(authRequired) {
     lastErrorCode='AUTH_REQUIRED';
-  } else if((httpStatus!==null&&httpStatus>=500)||timeout) {
+  } else if((httpStatus!==null&&httpStatus>=500)||timeout||networkError) {
     failures=Math.min(100,Number(previous?.consecutive_failures||0)+1);
-    lastErrorCode=timeout?'TIMEOUT':(error==='PRIMARY_HTTP_ERROR'?'PRIMARY_HTTP_ERROR':'HTTP_'+httpStatus);
+    lastErrorCode=timeout?'TIMEOUT':(networkError?'NETWORK_ERROR':(error==='PRIMARY_HTTP_ERROR'?'PRIMARY_HTTP_ERROR':'HTTP_'+httpStatus));
     if(failures>=SOURCE_FAILURE_THRESHOLD) {
       state='OPEN';
       const priorCooldown=Math.max(SOURCE_COOLDOWN_INITIAL_MS,Number(previous?.cooldown_ms||SOURCE_COOLDOWN_INITIAL_MS));
