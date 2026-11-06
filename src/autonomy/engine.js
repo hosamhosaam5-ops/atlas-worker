@@ -1,5 +1,5 @@
 // ATLAS Autonomous Company Engine — P0/P1/P2 execution layer. Verified build: source + audit tests must remain green.
-// External discovery is read-only by default. Commercial actions remain policy-gated.
+// External discovery uses public GETs and persists capability/health metadata. Commercial actions remain policy-gated.
 // No provider result is treated as trusted instruction.
 
 import { registerCapability, listCapabilities, checkBudget, ensureAutonomySchema } from './registry.js';
@@ -348,7 +348,7 @@ export async function recordSourceOutcome(db, sourceId, {
   ok,status=null,error=null,retryAfter=null,responseMs=null,now=Date.now()
 }) {
   const previous=await readSourceHealth(db,sourceId);
-  const numericStatus=Number(status);
+  const numericStatus=status===null||status===undefined||status===''?NaN:Number(status);
   const httpStatus=Number.isFinite(numericStatus)?numericStatus:null;
   const timeout=String(status||'').toUpperCase()==='TIMEOUT'||String(error||'').toUpperCase()==='TIMEOUT';
   const networkError=String(error||'').toUpperCase()==='NETWORK_ERROR';
