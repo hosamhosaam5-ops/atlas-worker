@@ -123,5 +123,6 @@ test('a failed HALF_OPEN discovery probe reopens the circuit with backoff', asyn
   assert.equal(row.consecutive_failures, 4);
   assert.equal(row.cooldown_ms, 30 * 60 * 1000);
   assert.equal(row.last_error_code, 'NETWORK_ERROR');
+  assert.equal(row.last_http_status, null);
   db.close();
 });
