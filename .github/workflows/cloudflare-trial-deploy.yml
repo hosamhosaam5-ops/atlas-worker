@@ -379,16 +379,10 @@ jobs:
             return resultStats;
           }
           const startedIso = new Date().toISOString();
-          let chunkRows = 250;
-          let results = [await measure(10000, chunkRows), await measure(2000, chunkRows)];
-          const thresholdExceeded = results.some(x => x.chunkComputeMs.max !== null && x.chunkComputeMs.max > 10);
-          if (thresholdExceeded) {
-            console.log('REMEASURE | at least one synchronous chunk-compute sample exceeded 10 ms; reducing chunkRows to 125 exactly once');
-            chunkRows = 125;
-            results = [await measure(10000, chunkRows), await measure(2000, chunkRows)];
-          }
+          const chunkRows = 250;
+          const results = [await measure(10000, chunkRows), await measure(2000, chunkRows)];
           const endedIso = new Date().toISOString();
-          const data = { startedIso, endedIso, initialChunkRows: 250, finalChunkRows: chunkRows, remeasured: thresholdExceeded, results };
+          const data = { startedIso, endedIso, initialChunkRows: 250, finalChunkRows: chunkRows, remeasured: false, results };
           await import('node:fs').then(({appendFileSync}) => appendFileSync(process.env.GITHUB_OUTPUT, 'measurement_json=' + JSON.stringify(data) + '\n'));
           await import('node:fs').then(({appendFileSync}) => appendFileSync(process.env.GITHUB_ENV, 'TRIAL_WINDOW_START=' + startedIso + '\nTRIAL_WINDOW_END=' + endedIso + '\nTRIAL_FINAL_CHUNK_ROWS=' + chunkRows + '\n'));
           await import('node:fs').then(({appendFileSync}) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
@@ -399,9 +393,9 @@ jobs:
             ...results.map(x => '| ' + x.rows + ' | ' + x.inputBytes + ' | ' + x.chunkRows + ' | ' + x.totalProcessingSlices + ' | ' + x.queueMessagesSubmitted + ' | ' + [x.chunkComputeMs.p50,x.chunkComputeMs.p95,x.chunkComputeMs.max].join(' / ') + ' | ' + x.submissionToReadyObservedMs + ' | ' + x.resultDeliveryEndToEndMs + ' | ' + x.httpRequests + ' |'),
             '',
             'Chunk compute is a synchronous elapsed-time proxy from the Worker; it is not Cloudflare billed CPU time.',
-            thresholdExceeded && results.some(x => x.chunkComputeMs.max > 10)
-              ? 'Chunk gate remains above 10 ms after the one permitted remeasurement.'
-              : 'No chunk compute sample exceeded 10 ms after the performed measurement.',
+            results.some(x => x.chunkComputeMs.max !== null && x.chunkComputeMs.max > 10)
+              ? 'At least one chunk compute sample exceeded 10 ms; no automatic remeasurement was performed.'
+              : 'No chunk compute sample exceeded 10 ms; no automatic remeasurement was performed.',
             '',
           ].join('\n') + '\n'));
           console.log('TRIAL_WINDOW_START=' + startedIso);
