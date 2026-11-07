@@ -1,0 +1,103 @@
+name: MCP authenticated handshake probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/mcp-authenticated-handshake-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authenticated-readonly-handshake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      MCP_TOKEN_ATLAS: ${{ secrets.ATLAS_MCP_ACCESS_TOKEN }}
+      MCP_TOKEN_GENERIC: ${{ secrets.MCP_ACCESS_TOKEN }}
+      MCP_TOKEN_BEARER: ${{ secrets.MCP_BEARER_TOKEN }}
+    steps:
+      - name: Initialize MCP and call read-only tools/list when a test token is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          BASE="https://atlas-worker.hosamhosaam5.workers.dev"
+          TOKEN="${MCP_TOKEN_ATLAS:-}"
+          TOKEN_NAME="ATLAS_MCP_ACCESS_TOKEN"
+          if [ -z "$TOKEN" ]; then TOKEN="${MCP_TOKEN_GENERIC:-}"; TOKEN_NAME="MCP_ACCESS_TOKEN"; fi
+          if [ -z "$TOKEN" ]; then TOKEN="${MCP_TOKEN_BEARER:-}"; TOKEN_NAME="MCP_BEARER_TOKEN"; fi
+          if [ -z "$TOKEN" ]; then
+            echo "BLOCKED: no test access token found under the three candidate secret names."
+            echo "No OAuth login was attempted and no credential was created or changed."
+            exit 0
+          fi
+
+          mkdir -p evidence
+          printf 'Using configured test token secret name: %s\n' "$TOKEN_NAME"
+
+          init_status="$(curl --silent --show-error --max-time 20 -D evidence/init-headers.txt -o evidence/init-response.json -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'Content-Type: application/json' \
+            --data-binary '{"jsonrpc":"2.0","id":"atlas-mcp-init-readonly","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"atlas-authenticated-probe","version":"1.0.0"}}}' "$BASE/mcp")"
+          echo "Authenticated MCP initialize HTTP=$init_status"
+          if [ "$init_status" != "200" ]; then
+            unset TOKEN
+            echo "FAIL: authenticated initialize did not return HTTP 200; token may be expired, invalid, or lack required audience/scope."
+            exit 1
+          fi
+          jq -e '.jsonrpc == "2.0" and .id == "atlas-mcp-init-readonly" and (.result.protocolVersion | type == "string") and (.result.serverInfo.name | type == "string")' evidence/init-response.json >/dev/null
+          echo "PASS: authenticated initialize returned a valid JSON-RPC result."
+
+          session_id="$(awk 'BEGIN{IGNORECASE=1} /^Mcp-Session-Id:/ {sub(/^[^:]*:[[:space:]]*/, ""); gsub("\r",""); print}' evidence/init-headers.txt | tail -n 1)"
+          SESSION_ARGS=()
+          if [ -n "$session_id" ]; then
+            SESSION_ARGS=(-H "Mcp-Session-Id: $session_id")
+            echo "MCP session identifier received (value suppressed)."
+          else
+            echo "No MCP session identifier returned; continuing with stateless Streamable HTTP."
+          fi
+
+          notif_status="$(curl --silent --show-error --max-time 20 -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" "${SESSION_ARGS[@]}" \
+            -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' \
+            --data-binary '{"jsonrpc":"2.0","method":"notifications/initialized"}' "$BASE/mcp")"
+          echo "Initialized notification HTTP=$notif_status"
+          if [ "$notif_status" != "200" ] && [ "$notif_status" != "202" ]; then
+            unset TOKEN
+            echo "FAIL: MCP initialized notification was not accepted."
+            exit 1
+          fi
+
+          list_status="$(curl --silent --show-error --max-time 20 -D evidence/list-headers.txt -o evidence/tools-list.json -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" "${SESSION_ARGS[@]}" \
+            -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' \
+            --data-binary '{"jsonrpc":"2.0","id":"atlas-mcp-tools-list-readonly","method":"tools/list","params":{}}' "$BASE/mcp")"
+          echo "MCP tools/list HTTP=$list_status"
+          if [ "$list_status" != "200" ]; then
+            unset TOKEN
+            echo "FAIL: tools/list did not return HTTP 200."
+            exit 1
+          fi
+          jq -e '.jsonrpc == "2.0" and .id == "atlas-mcp-tools-list-readonly" and (.result.tools | type == "array")' evidence/tools-list.json >/dev/null
+          count="$(jq '.result.tools | length' evidence/tools-list.json)"
+          echo "PASS: authenticated MCP tools/list returned a valid JSON-RPC result; tool_count=$count."
+
+          if jq -e '.result.tools | any(.name == "health")' evidence/tools-list.json >/dev/null; then
+            health_status="$(curl --silent --show-error --max-time 20 -o evidence/health-tool.json -w '%{http_code}' \
+              -H "Authorization: Bearer $TOKEN" "${SESSION_ARGS[@]}" \
+              -H 'Accept: application/json, text/event-stream' -H 'Content-Type: application/json' \
+              --data-binary '{"jsonrpc":"2.0","id":"atlas-mcp-health-readonly","method":"tools/call","params":{"name":"health","arguments":{}}}' "$BASE/mcp")"
+            echo "MCP read-only health call HTTP=$health_status"
+            if [ "$health_status" = "200" ]; then
+              jq -e '.jsonrpc == "2.0" and .id == "atlas-mcp-health-readonly" and (.result | type == "object") and (.result.isError != true)' evidence/health-tool.json >/dev/null
+              echo "PASS: MCP health tool returned a non-error JSON-RPC result."
+            else
+              echo "FAIL: MCP health tool did not return HTTP 200."
+              exit 1
+            fi
+          else
+            echo "INFO: no tool named health was advertised; tools/list still verifies authenticated MCP protocol access."
+          fi
