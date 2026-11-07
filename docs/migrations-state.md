@@ -133,3 +133,48 @@ A read-only D1 query after deployment found four per-source scan metric rows. Th
 - Last verified demand baseline remains 23 `STALE_UNVERIFIED` signals, 0 qualified signals, and 0 new accepted items. No source, scoring rule, original-source verification requirement, or 30-day age limit has changed.
 
 No Time Travel restore was performed.
+
+## 0007 — demand query indexes
+
+**Status: APPLIED AND VERIFIED**
+
+- **Migration file:** `migrations/0007_demand_query_indexes.sql`
+- **SQL SHA-256:** `2a3b41f9c5ec31c4ff381f5d4ef8983a6a8d2ca87a5dada6ff6adceeadb4908b`
+- **Execution workflow:** [ATLAS D1 apply migration 0007 — run #41045330713](https://github.com/hosamhosaam5-ops/atlas-worker/actions/runs/41045330713)
+- **Workflow commit / main SHA:** `19c0c000c37bcad50009114aed6cf49f41d2797a`
+- **Production deploy:** [ATLAS Production Deploy — run #41045330722](https://github.com/hosamhosaam5-ops/atlas-worker/actions/runs/41045330722)
+- **Production /health:** HTTP 200; `ok=true`; `db=ok`; Worker `git_sha` exactly matches main SHA `19c0c000c37bcad50009114aed6cf49f41d2797a`.
+
+### Pre-write controls
+
+- Exact allowlist: production account `c46718094ced1f5f75492f4c67c7d390`, database `atlas_db`, UUID `a5a75faa-e800-4112-b67a-3c53d7b0d8d4`.
+- Read-only preflight passed: `signal_key NULL = 0`; duplicate groups = `0`; `demand_signals` = 23 rows; all six target index names absent and no equivalent indexes found.
+- **Same-run Time Travel bookmark:** `0000290e-00000018-00005114-f723fd10e1042e4b48d0a1a44078a97b`
+- **Captured:** 2026-10-30 11:19:12.651 UTC (2026-10-30 14:19:12.651 Asia/Riyadh).
+- **Workflow run identity:** `41045330713`; bookmark age and same-run identity guards passed twice, including immediately before execution.
+
+### Execution and postflight
+
+- The workflow executed only `migrations/0007_demand_query_indexes.sql` with `wrangler d1 execute atlas_db --remote --file=...`.
+- Wrangler reported 6 SQL queries executed; the operation added the six approved indexes. No `migrations apply` command was run and no `d1_migrations` entry was written.
+- Workflow postflight completed successfully: all six expected index definitions and columns verified; every table row count matched the preflight baseline; production /health matched the workflow SHA.
+- Independent read-only D1 confirmation after completion:
+  - `idx_capabilities_kind_status` → `capabilities(kind,status)`
+  - `idx_reputation_identity` → `reputation_events(identity_id,created_at)`
+  - `idx_demand_status_score` → `demand_signals(status,score)`
+  - `idx_growth_actions_status` → `growth_actions(status,created_at)`
+  - `idx_engineering_jobs_status` → `engineering_jobs(status,created_at)`
+  - `idx_demand_signal_key` → UNIQUE `demand_signals(signal_key)`; independent `PRAGMA index_list` returned `unique=1`.
+  - `demand_signals`: 23 rows, 0 NULL signal keys, 0 duplicate groups.
+  - Read-only verification queries: `rows_written=0`; `changed_db=false`.
+- No row deletion, direct SQL outside the approved workflow, or Time Travel restore occurred.
+
+## 0008 — per-scan circuit-breaker observability
+
+**Status: IMPLEMENTATION PR OPEN; NOT MERGED OR APPLIED**
+
+- **PR:** [#192 — Add per-scan circuit-breaker observability](https://github.com/hosamhosaam5-ops/atlas-worker/pull/192)
+- Adds exactly three nullable columns to `demand_scan_source_runs`: `breaker_state`, `consecutive_failures`, and `cooldown_ms`.
+- PR CI and manual technical review passed at the reviewed head; any subsequent commit requires fresh checks/review.
+- Production schema remains pre-0008: the three columns are absent (0/3). No 0008 SQL has run in production.
+- Migration and Worker deployment remain separate ordered steps. Do not deploy code that writes these columns before the migration is applied and verified.
