@@ -4,14 +4,6 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 10 * * *"
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "test/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/atlas-autonomy-quality-strategy.yml"
 
 permissions:
   contents: read
