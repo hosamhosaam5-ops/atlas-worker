@@ -253,7 +253,7 @@ export function cleanInput(input, format) {
   return { ...cleanRows(parsed.rows, parsed.malformedRows, changes, parsed.rowNumbers), source_rows: sourceCount };
 }
 
-export function cleanInputPreview(input, format) {
+function cleanInputPreview(input, format) {
   const result = cleanInput(input, format);
   return {
     ...result,
@@ -266,9 +266,12 @@ export function cleanInputPreview(input, format) {
   };
 }
 
-export function publicError(error) {
+function publicError(error) {
   const candidate = error && typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
   const code = /^[A-Z0-9_]{3,64}$/.test(candidate) ? candidate : 'INTERNAL_ERROR';
   const status = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? error.status : 500;
   return { code, status };
 }
+
+// Internal API exposed as a frozen object for the Worker entry point.
+export default Object.freeze({ cleanInputPreview, publicError });

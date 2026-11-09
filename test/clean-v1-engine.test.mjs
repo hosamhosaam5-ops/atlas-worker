@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanInput, cleanInputPreview, MAX_FILE_BYTES, MAX_ROWS } from '../src/clean-v1/engine.js';
+import cleanV1Utilities, { cleanInput, MAX_FILE_BYTES, MAX_ROWS } from '../src/clean-v1/engine.js';
+const { cleanInputPreview, publicError } = cleanV1Utilities;
 
 const csvRows = count => ['Full Name,Phone Number,Created Date,Note', ...Array.from({ length: count }, (_, i) => ` User ${i + 1} , +966 (50) 123-${String(i + 1).padStart(4,'0')} ,25/10/2025, hello   world `)].join('\n');
 
@@ -82,7 +83,6 @@ test('rejects invalid UTF-8, invalid format, oversized input and malformed JSON 
 });
 
 test('uses stable codes and never propagates exception messages to public output', async () => {
-  const { publicError } = await import('../src/clean-v1/engine.js');
   const result = publicError(new Error('private row content: alice@example.com'));
   assert.deepEqual(result, { code: 'INTERNAL_ERROR', status: 500 });
   assert.equal(JSON.stringify(result).includes('alice@example.com'), false);
