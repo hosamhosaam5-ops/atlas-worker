@@ -80,7 +80,7 @@ export function decodePaymentSignature(headerValue) {
 
 export function matchesPaymentRequirements(paymentPayload, resourceUrl) {
   if (!paymentPayload || typeof paymentPayload !== 'object' || paymentPayload.x402Version !== 2) return false;
-  if (paymentPayload.resource?.url && paymentPayload.resource.url !== resourceUrl) return false;
+  if (paymentPayload.resource?.url !== resourceUrl) return false;
 
   const accepted = paymentPayload.accepted;
   const extra = accepted?.extra;
