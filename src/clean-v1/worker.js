@@ -1,4 +1,11 @@
-import cleanV1Utilities, { MAX_FILE_BYTES } from './engine.js';
+import cleanV1Utilities, { MAX_FILE_BYTES, cleanInput } from './engine.js';
+import {
+  decodePaymentSignature,
+  encodePaymentHeader,
+  matchesPaymentRequirements,
+  paymentRequired,
+  settleUpfrontPayment,
+} from './payment.js';
 
 const { cleanInputPreview, publicError } = cleanV1Utilities;
 const PREVIEW_WINDOW_MS = 60_000;
@@ -103,27 +110,78 @@ async function preview(request, url) {
   return json(cleanInputPreview(input, format));
 }
 
-export default {
-  async fetch(request) {
-    const url = new URL(request.url);
-    try {
-      if (url.pathname === '/health' && request.method === 'GET') {
-        return json({ ok: true, service: 'atlas-clean-v1', mode: 'isolated' });
+function paymentChallenge(url, code = 'PAYMENT_REQUIRED') {
+  const message = code === 'PAYMENT_REQUIRED'
+    ? 'PAYMENT-SIGNATURE header is required'
+    : 'A valid payment authorization is required';
+  return json(
+    { code },
+    402,
+    { 'PAYMENT-REQUIRED': encodePaymentHeader(paymentRequired(url.href, message)) },
+  );
+}
+
+async function paidClean(request, url, env, facilitatorFetch) {
+  const signature = request.headers.get('PAYMENT-SIGNATURE');
+  if (!signature) return paymentChallenge(url);
+
+  const paymentPayload = decodePaymentSignature(signature);
+  if (!matchesPaymentRequirements(paymentPayload, url.href)) {
+    return paymentChallenge(url, 'PAYMENT_PAYLOAD_INVALID');
+  }
+
+  // Prepare the result in memory, but never return it until upfront settlement succeeds.
+  // Only the x402 payment payload and fixed requirements are sent to the facilitator.
+  const format = getFormat(request, url);
+  const input = await readBodyLimited(request);
+  const cleaned = cleanInput(input, format);
+
+  const settlement = await settleUpfrontPayment({
+    paymentPayload,
+    facilitatorUrl: env?.FACILITATOR_URL,
+    facilitatorFetch,
+  });
+  if (!settlement.ok) {
+    return json(
+      { code: settlement.code },
+      settlement.status,
+      {
+        'PAYMENT-REQUIRED': encodePaymentHeader(
+          paymentRequired(url.href, 'Payment settlement was not confirmed; use a fresh authorization'),
+        ),
+      },
+    );
+  }
+
+  return json(cleaned, 200, {
+    'PAYMENT-RESPONSE': encodePaymentHeader(settlement.settlement),
+  });
+}
+
+export function createCleanV1Worker({ facilitatorFetch = (...args) => fetch(...args) } = {}) {
+  return {
+    async fetch(request, env = {}) {
+      const url = new URL(request.url);
+      try {
+        if (url.pathname === '/health' && request.method === 'GET') {
+          return json({ ok: true, service: 'atlas-clean-v1', mode: 'isolated' });
+        }
+        if (url.pathname === '/x402/clean_v1/preview' && (request.method === 'GET' || request.method === 'POST')) {
+          return await preview(request, url);
+        }
+        if (url.pathname === '/x402/clean_v1' && request.method === 'POST') {
+          return await paidClean(request, url, env, facilitatorFetch);
+        }
+        if (url.pathname === '/x402/clean_v1/preview' || url.pathname === '/x402/clean_v1') {
+          return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET, POST' });
+        }
+        return json({ code: 'NOT_FOUND' }, 404);
+      } catch (error) {
+        const safe = publicError(error);
+        return json({ code: safe.code }, safe.status);
       }
-      if (url.pathname === '/x402/clean_v1/preview' && (request.method === 'GET' || request.method === 'POST')) {
-        return await preview(request, url);
-      }
-      if (url.pathname === '/x402/clean_v1' && request.method === 'POST') {
-        // Payment is deliberately added in the separate payment PR. Never process a paid request here.
-        return json({ code: 'PAYMENT_ROUTE_NOT_READY' }, 503);
-      }
-      if (url.pathname === '/x402/clean_v1/preview' || url.pathname === '/x402/clean_v1') {
-        return json({ code: 'METHOD_NOT_ALLOWED' }, 405, { allow: 'GET, POST' });
-      }
-      return json({ code: 'NOT_FOUND' }, 404);
-    } catch (error) {
-      const safe = publicError(error);
-      return json({ code: safe.code }, safe.status);
-    }
-  },
-};
+    },
+  };
+}
+
+export default createCleanV1Worker();
