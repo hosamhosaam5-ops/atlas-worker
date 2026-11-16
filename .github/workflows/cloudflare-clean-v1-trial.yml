@@ -136,8 +136,6 @@ jobs:
 
       - name: Upload one 10-row CSV and one 200-row CSV; verify preview and no-payment 402
         if: steps.gate.outputs.armed == 'true'
-        env:
-          TRIAL_BASE_URL: ${{ env.TRIAL_BASE_URL }}
         shell: bash
         run: |
           set -euo pipefail
