@@ -113,7 +113,7 @@ jobs:
           import { redactWranglerOutput } from './ops/scripts/redact-wrangler-output.mjs';
           const token = process.env.CF_TRIAL_API_TOKEN;
           const account = process.env.CF_ACCOUNT_ID;
-          const result = spawnSync('npx', ['--no-install', 'wrangler', 'deploy', '--config', 'wrangler.clean-v1-trial.toml'], {
+          const result = spawnSync('./node_modules/.bin/wrangler', ['deploy', '--config', 'wrangler.clean-v1-trial.toml'], {
             encoding: 'utf8',
             maxBuffer: 8 * 1024 * 1024,
             env: {
