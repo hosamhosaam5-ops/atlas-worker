@@ -129,7 +129,7 @@ test('valid payment is settled before cleaned data is returned', async () => {
   assert.deepEqual(await response.json(), {
     data: [{ name: 'Ada' }],
     malformed_rows: [],
-    changes: [{ type: 'text_normalized', row: 1, field: 'name' }],
+    changes: [{ type: 'text_normalized', row: 2, field: 'name' }],
     source_rows: 1,
   });
   const paymentResponse = decodeHeader(response.headers.get('PAYMENT-RESPONSE'));
