@@ -7,3 +7,6 @@ preview_urls = false
 [observability]
 enabled = true
 head_sampling_rate = 1.0
+
+[vars]
+FACILITATOR_URL = "https://facilitator.openx402.ai"
