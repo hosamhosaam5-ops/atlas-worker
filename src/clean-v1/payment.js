@@ -195,4 +195,3 @@ export async function settleUpfrontPayment({
   };
 }
 
-export const DEFAULT_CLEAN_V1_FACILITATOR_URL = DEFAULT_FACILITATOR_URL;
