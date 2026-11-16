@@ -93,7 +93,7 @@ test('the free preview has a per-isolate best-effort request rate limit', async 
 
 test('paid route returns an x402 payment challenge when no payment signature is supplied', async () => {
   const response = await worker.fetch(request('POST', '/x402/clean_v1', {
-    body: 'name\\nAda', contentType: 'text/csv', ip: '192.0.2.28',
+    body: 'name\nAda', contentType: 'text/csv', ip: '192.0.2.28',
   }));
   assert.equal(response.status, 402);
   assert.deepEqual(await response.json(), { code: 'PAYMENT_REQUIRED' });
