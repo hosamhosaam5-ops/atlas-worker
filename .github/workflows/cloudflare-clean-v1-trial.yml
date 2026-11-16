@@ -1,0 +1,292 @@
+name: ATLAS Clean v1 isolated trial
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ops/triggers/clean-v1-trial.trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-clean-v1-trial
+  cancel-in-progress: false
+
+jobs:
+  trial:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Check one-shot trial marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="$(tr -d '\r\n' < ops/triggers/clean-v1-trial.trigger)"
+          if [ "$marker" = "RUN" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+            echo "ARMED | isolated Clean v1 trial"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP | Clean v1 trial marker is disarmed"
+          fi
+
+      - name: Set up Node.js
+        if: steps.gate.outputs.armed == 'true'
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install locked Wrangler dependencies
+        if: steps.gate.outputs.armed == 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate isolated config and preflight exact trial resources
+        id: preflight
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          test -f wrangler.clean-v1-trial.toml
+          grep -q '^name = "atlas-clean-v1-trial"$' wrangler.clean-v1-trial.toml
+          grep -q '^main = "src/clean-v1/worker.js"$' wrangler.clean-v1-trial.toml
+          ! grep -Eiq 'atlas_db|d1_databases|queue|durable_object|CLOUDFLARE_API_TOKEN|CF_TRIAL_API_TOKEN' wrangler.clean-v1-trial.toml
+          [ -n "${CF_TRIAL_API_TOKEN:-}" ] || { echo "FAIL | CF_TRIAL_API_TOKEN missing"; exit 1; }
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          const api = 'https://api.cloudflare.com/client/v4';
+          async function get(path) {
+            const response = await fetch(api + path, {
+              headers: { authorization: 'Bearer ' + token, accept: 'application/json' },
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok || body.success !== true) {
+              console.log('FAIL | Cloudflare read preflight (HTTP ' + response.status + ')');
+              process.exit(1);
+            }
+            return body.result;
+          }
+          const [scripts, namespaces, subdomain] = await Promise.all([
+            get('/accounts/' + account + '/workers/scripts'),
+            get('/accounts/' + account + '/workers/durable_objects/namespaces?per_page=1000'),
+            get('/accounts/' + account + '/workers/subdomain'),
+          ]);
+          const name = 'atlas-clean-v1-trial';
+          const exists = (scripts || []).some(x => [x.id, x.name, x.script_name].includes(name));
+          const hasNamespaces = (namespaces || []).some(x => x.script === name);
+          if (exists || hasNamespaces) {
+            console.log('FAIL | trial resource name already exists; refusing overwrite or reuse');
+            process.exit(1);
+          }
+          if (!subdomain?.subdomain) {
+            console.log('FAIL | Workers Scripts Read: workers.dev subdomain unavailable');
+            process.exit(1);
+          }
+          const baseUrl = 'https://' + name + '.' + subdomain.subdomain + '.workers.dev';
+          appendFileSync(process.env.GITHUB_ENV, 'TRIAL_BASE_URL=' + baseUrl + '\n');
+          appendFileSync(process.env.GITHUB_OUTPUT, 'base_url=' + baseUrl + '\n');
+          console.log('PASS | isolated config verified; Worker and namespace names unused');
+          console.log('TRIAL_BASE_URL=' + baseUrl);
+          NODE
+
+      - name: Deploy atlas-clean-v1-trial exactly once
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set +x
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import { redactWranglerOutput } from './ops/scripts/redact-wrangler-output.mjs';
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          const result = spawnSync('./node_modules/.bin/wrangler', ['deploy', '--config', 'wrangler.clean-v1-trial.toml'], {
+            encoding: 'utf8',
+            maxBuffer: 8 * 1024 * 1024,
+            env: {
+              ...process.env,
+              CLOUDFLARE_API_TOKEN: token,
+              CLOUDFLARE_ACCOUNT_ID: account,
+            },
+          });
+          const raw = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join('\n');
+          const safe = redactWranglerOutput(raw, [token, account]);
+          console.log('----- sanitized Wrangler deploy output -----');
+          process.stdout.write(safe.endsWith('\n') ? safe : safe + '\n');
+          console.log('----- end sanitized Wrangler output -----');
+          if (result.error || result.status !== 0) {
+            console.log('FAIL | single Wrangler deploy attempt did not complete');
+            process.exit(1);
+          }
+          console.log('PASS | one isolated Worker deploy completed');
+          NODE
+
+      - name: Upload one 10-row CSV and one 200-row CSV; verify preview and no-payment 402
+        if: steps.gate.outputs.armed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base = process.env.TRIAL_BASE_URL;
+          if (!base || !base.startsWith('https://atlas-clean-v1-trial.')) {
+            console.log('FAIL | trial hostname missing or outside the exact Worker name');
+            process.exit(1);
+          }
+          function csv(count) {
+            return ['name,value', ...Array.from({ length: count }, (_, i) => 'row-' + (i + 1) + ',' + (i + 1))].join('\n');
+          }
+          async function postPreview(count) {
+            const body = csv(count);
+            const response = await fetch(base + '/x402/clean_v1/preview', {
+              method: 'POST',
+              headers: { 'content-type': 'text/csv' },
+              body,
+            });
+            const text = await response.text();
+            let result;
+            try { result = JSON.parse(text); } catch { result = null; }
+            const expectedReturned = Math.min(count, 10);
+            const checks = response.status === 200 &&
+              result?.preview === true &&
+              result?.source_rows === count &&
+              result?.preview_rows === 10 &&
+              result?.data?.length === expectedReturned &&
+              result?.truncated === (count > 10);
+            if (!checks) {
+              console.log('FAIL | preview ' + count + ' rows | HTTP ' + response.status + ' | stable response contract mismatch');
+              process.exit(1);
+            }
+            console.log('PASS | one preview upload | source_rows=' + count + ' | returned_rows=' + result.data.length + ' | truncated=' + result.truncated);
+          }
+          await postPreview(10);
+          await postPreview(200);
+
+          const paid = await fetch(base + '/x402/clean_v1', { method: 'POST' });
+          const paidText = await paid.text();
+          let paidBody;
+          try { paidBody = JSON.parse(paidText); } catch { paidBody = null; }
+          if (paid.status !== 402 || paidBody?.code !== 'PAYMENT_REQUIRED' || paid.headers.has('PAYMENT-RESPONSE')) {
+            console.log('FAIL | unpaid paid-route probe did not fail closed with HTTP 402');
+            process.exit(1);
+          }
+          const requiredHeader = paid.headers.get('PAYMENT-REQUIRED');
+          let requirements;
+          try { requirements = JSON.parse(Buffer.from(requiredHeader || '', 'base64').toString('utf8')); } catch { requirements = null; }
+          const accepted = requirements?.accepts?.[0];
+          const validChallenge = requirements?.x402Version === 2 &&
+            accepted?.scheme === 'exact' &&
+            accepted?.network === 'eip155:8453' &&
+            accepted?.amount === '10000' &&
+            String(accepted?.asset || '').toLowerCase() === '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' &&
+            String(accepted?.payTo || '').toLowerCase() === '0x59ea688b36464133e71873d8bee8fcb3bc369383' &&
+            accepted?.extra?.paymentFlow === 'upfront' &&
+            accepted?.extra?.assetTransferMethod === 'eip3009';
+          if (!validChallenge) {
+            console.log('FAIL | unpaid 402 challenge did not contain exact payment requirements');
+            process.exit(1);
+          }
+          console.log('PASS | paid route returned HTTP 402 without PAYMENT-RESPONSE and advertised exact x402 requirements');
+          NODE
+
+      - name: Read CPU and request metrics from Cloudflare Analytics
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set +x
+          node --input-type=module <<'NODE'
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          const query = `query CleanV1TrialMetrics {
+            viewer {
+              accounts(filter: { accountTag: "${account}" }) {
+                workersInvocationsAdaptive(limit: 100, filter: {
+                  scriptName: "atlas-clean-v1-trial",
+                  datetime_geq: "${new Date(Date.now() - 30 * 60 * 1000).toISOString()}",
+                  datetime_leq: "${new Date(Date.now() + 60 * 1000).toISOString()}"
+                }) {
+                  dimensions { datetime scriptName status }
+                  sum { requests errors }
+                  quantiles { cpuTimeP50 cpuTimeP99 }
+                }
+              }
+            }
+          }`;
+          let rows = [];
+          let analyticsUnknown = false;
+          for (let attempt = 1; attempt <= 6; attempt++) {
+            let response;
+            try {
+              response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+                method: 'POST',
+                headers: {
+                  authorization: 'Bearer ' + token,
+                  'content-type': 'application/json',
+                  accept: 'application/json',
+                },
+                body: JSON.stringify({ query }),
+              });
+            } catch {
+              analyticsUnknown = true;
+              break;
+            }
+            if (!response.ok) {
+              console.log('UNKNOWN | Cloudflare Analytics API unavailable (HTTP ' + response.status + ')');
+              analyticsUnknown = true;
+              break;
+            }
+            const payload = await response.json().catch(() => null);
+            if (!payload || payload.errors?.length || !payload.data) {
+              console.log('UNKNOWN | Cloudflare Analytics response did not contain a valid metrics result');
+              analyticsUnknown = true;
+              break;
+            }
+            rows = payload.data.viewer?.accounts?.[0]?.workersInvocationsAdaptive || [];
+            const total = rows.reduce((sum, item) => sum + Number(item.sum?.requests || 0), 0);
+            if (rows.length && total >= 3) break;
+            if (attempt < 6) await new Promise(resolve => setTimeout(resolve, 20_000));
+          }
+          if (analyticsUnknown || !rows.length) {
+            console.log('UNKNOWN | CPU metrics not proven from Cloudflare Analytics');
+            process.exit(0);
+          }
+          const summary = rows.map(item => ({
+            datetime: item.dimensions?.datetime,
+            status: item.dimensions?.status,
+            requests: Number(item.sum?.requests || 0),
+            errors: Number(item.sum?.errors || 0),
+            cpuTimeP50: item.quantiles?.cpuTimeP50 ?? null,
+            cpuTimeP99: item.quantiles?.cpuTimeP99 ?? null,
+          }));
+          console.log('CLOUDFLARE_ANALYTICS=' + JSON.stringify(summary));
+          // Cloudflare's Workers invocation dataset exposes CPU quantiles in microseconds (cpuTimeUs).
+          // Workers Free CPU limit is 10 ms = 10,000 microseconds per HTTP request.
+          const observedP99 = summary.map(item => item.cpuTimeP99).filter(Number.isFinite);
+          if (!observedP99.length) {
+            console.log('UNKNOWN | Analytics returned no cpuTimeP99 value');
+            process.exit(0);
+          }
+          const maxP99 = Math.max(...observedP99);
+          console.log('CPU_P99_MAX_US=' + maxP99);
+          console.log('CPU_FREE_LIMIT_US=10000');
+          if (maxP99 > 10_000) {
+            console.log('OVER_FREE_LIMIT | observed CPU p99 is above 10 ms; row cap must be reduced in a separate reviewed PR; no plan upgrade');
+          } else {
+            console.log('PASS | observed CPU p99 is at or below the 10 ms Workers Free limit');
+          }
+          NODE

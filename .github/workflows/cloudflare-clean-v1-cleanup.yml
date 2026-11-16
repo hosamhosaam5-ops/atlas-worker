@@ -1,0 +1,106 @@
+name: ATLAS Clean v1 isolated trial cleanup
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ops/triggers/clean-v1-cleanup.trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-clean-v1-trial
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Check one-shot cleanup marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="$(tr -d '\r\n' < ops/triggers/clean-v1-cleanup.trigger)"
+          if [ "$marker" = "CLEAN" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+            echo "ARMED | cleanup restricted to atlas-clean-v1-trial"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP | Clean v1 cleanup marker is disarmed"
+          fi
+
+      - name: Delete only atlas-clean-v1-trial and verify independently
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          [ -n "${CF_TRIAL_API_TOKEN:-}" ] || { echo "FAIL | CF_TRIAL_API_TOKEN missing"; exit 1; }
+          node --input-type=module <<'NODE'
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          const api = 'https://api.cloudflare.com/client/v4';
+          const name = 'atlas-clean-v1-trial';
+          async function request(method, path) {
+            const response = await fetch(api + path, {
+              method,
+              headers: {
+                authorization: 'Bearer ' + token,
+                accept: 'application/json',
+                'content-type': 'application/json',
+              },
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.success !== true) {
+              console.log('FAIL | Cloudflare cleanup request ' + method + ' (HTTP ' + response.status + ')');
+              process.exit(1);
+            }
+            return payload.result;
+          }
+          const path = '/accounts/' + account;
+          const [scriptsBefore, namespacesBefore] = await Promise.all([
+            request('GET', path + '/workers/scripts'),
+            request('GET', path + '/workers/durable_objects/namespaces?per_page=1000'),
+          ]);
+          const exists = (scriptsBefore || []).some(item => [item.id, item.name, item.script_name].includes(name));
+          const namespaces = (namespacesBefore || []).filter(item => item.script === name);
+          if (namespaces.length) {
+            console.log('FAIL | unexpected Durable Object namespace associated with trial Worker; refusing delete outside allowlist');
+            process.exit(1);
+          }
+          if (exists) {
+            await request('DELETE', path + '/workers/scripts/' + name);
+            console.log('PASS | deleted exact allowlisted Worker script atlas-clean-v1-trial');
+          } else {
+            console.log('PASS | allowlisted trial Worker already absent; no delete request issued');
+          }
+
+          // Independent read-after-delete, not reused preflight state.
+          const [scriptsAfter, namespacesAfter] = await Promise.all([
+            request('GET', path + '/workers/scripts'),
+            request('GET', path + '/workers/durable_objects/namespaces?per_page=1000'),
+          ]);
+          const workerRemains = (scriptsAfter || []).some(item => [item.id, item.name, item.script_name].includes(name));
+          const doRemains = (namespacesAfter || []).filter(item => item.script === name);
+          console.log('CLEANUP_READBACK=' + JSON.stringify({
+            target: name,
+            workerPresent: workerRemains,
+            associatedDurableObjectNamespaces: doRemains.length,
+            totalWorkerScriptsRead: (scriptsAfter || []).length,
+          }));
+          if (workerRemains || doRemains.length) {
+            console.log('FAIL | independent read-after-delete verification found trial resources');
+            process.exit(1);
+          }
+          console.log('PASS | independent read-after-delete: atlas-clean-v1-trial Worker and associated Durable Object namespaces absent');
+          NODE
