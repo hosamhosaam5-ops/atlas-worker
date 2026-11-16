@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCleanV1Worker } from '../src/clean-v1/worker.js';
 import {
-  decodePaymentSignature,
   encodePaymentHeader,
   paymentRequired,
 } from '../src/clean-v1/payment.js';
@@ -234,15 +233,20 @@ test('file content is not sent to the facilitator, logged, or exposed on facilit
   }
 });
 
-test('payment payload with changed price or recipient is rejected before facilitator access', async () => {
+test('payment payload with changed price or resource is rejected before facilitator access', async () => {
   let calls = 0;
   const worker = createCleanV1Worker({
     facilitatorFetch: async () => { calls++; return settlementResponse(); },
   });
-  const payload = makePaymentPayload();
-  payload.accepted.amount = '100000';
-  const response = await worker.fetch(paidRequest(payload));
-  assert.equal(response.status, 402);
-  assert.deepEqual(await response.json(), { code: 'PAYMENT_PAYLOAD_INVALID' });
+  const wrongPrice = makePaymentPayload();
+  wrongPrice.accepted.amount = '100000';
+  const priceResponse = await worker.fetch(paidRequest(wrongPrice));
+  assert.equal(priceResponse.status, 402);
+  assert.deepEqual(await priceResponse.json(), { code: 'PAYMENT_PAYLOAD_INVALID' });
+
+  const wrongResource = makePaymentPayload('https://attacker.example/x402/clean_v1');
+  const resourceResponse = await worker.fetch(paidRequest(wrongResource));
+  assert.equal(resourceResponse.status, 402);
+  assert.deepEqual(await resourceResponse.json(), { code: 'PAYMENT_PAYLOAD_INVALID' });
   assert.equal(calls, 0);
 });
