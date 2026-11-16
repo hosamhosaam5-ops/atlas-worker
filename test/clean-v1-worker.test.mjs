@@ -91,13 +91,15 @@ test('the free preview has a per-isolate best-effort request rate limit', async 
   assert.ok(Number(blocked.headers.get('retry-after')) >= 1);
 });
 
-test('paid route remains fail-closed until the separate payment implementation', async () => {
+test('paid route returns an x402 payment challenge when no payment signature is supplied', async () => {
   const response = await worker.fetch(request('POST', '/x402/clean_v1', {
-    body: 'name\nAda', contentType: 'text/csv', ip: '192.0.2.28',
+    body: 'name\\nAda', contentType: 'text/csv', ip: '192.0.2.28',
   }));
-  assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), { code: 'PAYMENT_ROUTE_NOT_READY' });
-});
+  assert.equal(response.status, 402);
+  assert.deepEqual(await response.json(), { code: 'PAYMENT_REQUIRED' });
+  assert.ok(response.headers.get('PAYMENT-REQUIRED'));
+  assert.equal(response.headers.has('PAYMENT-RESPONSE'), false);
+});;
 
 test('no request file content is written to application logs', async () => {
   const sentinel = 'sensitive-client-content-never-log-8b1d45';
