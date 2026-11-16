@@ -99,7 +99,7 @@ test('paid route returns an x402 payment challenge when no payment signature is 
   assert.deepEqual(await response.json(), { code: 'PAYMENT_REQUIRED' });
   assert.ok(response.headers.get('PAYMENT-REQUIRED'));
   assert.equal(response.headers.has('PAYMENT-RESPONSE'), false);
-});;
+});
 
 test('no request file content is written to application logs', async () => {
   const sentinel = 'sensitive-client-content-never-log-8b1d45';
