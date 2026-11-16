@@ -175,8 +175,9 @@ test('a second use of the same EIP-3009 authorization is rejected by settlement'
   );
   assert.equal(calls, 2);
   assert.equal(second.status, 402);
-  assert.deepEqual(await second.json(), { code: 'PAYMENT_SETTLEMENT_FAILED' });
-  assert.equal((await second.text()).includes(SENTINEL), false);
+  const secondBody = await second.text();
+  assert.equal(secondBody, JSON.stringify({ code: 'PAYMENT_SETTLEMENT_FAILED' }));
+  assert.equal(secondBody.includes(SENTINEL), false);
 });
 
 test('facilitator rejection never returns the cleaned file', async () => {
