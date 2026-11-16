@@ -8,7 +8,7 @@
 
 - `POST /x402/clean_v1/preview`: accepts raw CSV (`text/csv`) or JSON array (`application/json`) and returns a cleaned preview of up to 10 rows.
 - `GET /x402/clean_v1/preview?format=csv&data=...` (or `format=json`): query-based preview for small inputs. GET is limited to an 8,000-character URL by design; use POST for the full 100 KiB allowance.
-- `POST /x402/clean_v1`: intentionally returns `503 PAYMENT_ROUTE_NOT_READY` in this PR. Payment and settlement are implemented only in the next PR; this endpoint must not return a cleaned paid result yet.
+- `POST /x402/clean_v1`: requires an x402 v2 payment authorization and upfront settlement before returning cleaned rows. Without a valid payment authorization it returns HTTP 402; settlement or facilitator failures fail closed. See the paid-route section below.
 - `GET /health`: returns a minimal service identity and status.
 
 ## Bounds and response behavior
@@ -21,9 +21,9 @@ Responses set `Cache-Control: no-store`. The Worker does not call `console.*`, p
 
 A small in-memory per-isolate limiter allows 10 preview requests per client IP per rolling minute. It is deliberately not represented as a global quota: Workers run in multiple isolates/locations and this implementation does not coordinate them. Global rate-limit enforcement on Workers Free is therefore **UNKNOWN**. No rate-limiting binding, Durable Object, KV, Queue, or paid service was added for preview rate limiting.
 
-## Payment readiness
+## Payment verification status
 
-The paid route remains fail-closed until the separate x402 payment PR. It must return a payment challenge only after the new payment path has tests proving the exact Base USDC contract, chain ID, payee wallet, facilitator verification/settlement ordering, and replay rejection. No live facilitator is assumed available.
+The paid route and its mocked settlement tests are implemented. No genuine payment or live facilitator request has been made. Live Base support and live replay rejection by the configured facilitator remain **UNKNOWN**; this PR does not claim the facilitator is operationally ready.
 
 ## Paid route: x402 v2 upfront settlement
 
