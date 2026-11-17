@@ -7,7 +7,7 @@ const csvRows = count => ['Full Name,Phone Number,Created Date,Note', ...Array.f
 
 test('accepts exactly 10 and 100 CSV rows and rejects 101', () => {
   assert.equal(cleanInput(csvRows(10), 'csv').source_rows, 10);
-  assert.equal(cleanInput(csvRows(100), 'csv').source_rows, 200);
+  assert.equal(cleanInput(csvRows(100), 'csv').source_rows, 100);
   assert.throws(() => cleanInput(csvRows(101), 'csv'), e => e.code === 'ROW_LIMIT_EXCEEDED' && e.status === 413);
 });
 
