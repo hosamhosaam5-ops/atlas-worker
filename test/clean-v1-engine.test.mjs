@@ -5,15 +5,15 @@ const { cleanInputPreview, publicError } = cleanV1Utilities;
 
 const csvRows = count => ['Full Name,Phone Number,Created Date,Note', ...Array.from({ length: count }, (_, i) => ` User ${i + 1} , +966 (50) 123-${String(i + 1).padStart(4,'0')} ,25/10/2025, hello   world `)].join('\n');
 
-test('accepts exactly 10 and 200 CSV rows and rejects 201', () => {
+test('accepts exactly 10 and 100 CSV rows and rejects 101', () => {
   assert.equal(cleanInput(csvRows(10), 'csv').source_rows, 10);
-  assert.equal(cleanInput(csvRows(200), 'csv').source_rows, 200);
-  assert.throws(() => cleanInput(csvRows(201), 'csv'), e => e.code === 'ROW_LIMIT_EXCEEDED' && e.status === 413);
+  assert.equal(cleanInput(csvRows(100), 'csv').source_rows, 200);
+  assert.throws(() => cleanInput(csvRows(101), 'csv'), e => e.code === 'ROW_LIMIT_EXCEEDED' && e.status === 413);
 });
 
 test('enforces the 100 KiB byte boundary', () => {
   assert.equal(MAX_FILE_BYTES, 102400);
-  assert.equal(MAX_ROWS, 200);
+  assert.equal(MAX_ROWS, 100);
   assert.throws(() => cleanInput(new Uint8Array(102401), 'csv'), e => e.code === 'FILE_SIZE_LIMIT_EXCEEDED' && e.status === 413);
 });
 
@@ -63,9 +63,9 @@ test('keeps colliding normalized JSON keys as unique columns', () => {
 });
 
 test('preview returns at most 10 cleaned rows while retaining source row total', () => {
-  const preview = cleanInputPreview(csvRows(200), 'csv');
+  const preview = cleanInputPreview(csvRows(100), 'csv');
   assert.equal(preview.data.length, 10);
-  assert.equal(preview.source_rows, 200);
+  assert.equal(preview.source_rows, 100);
   assert.equal(preview.truncated, true);
   assert.equal(preview.preview, true);
 });
