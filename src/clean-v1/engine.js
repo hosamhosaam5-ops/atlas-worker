@@ -1,5 +1,5 @@
 export const MAX_FILE_BYTES = 100 * 1024;
-export const MAX_ROWS = 200;
+export const MAX_ROWS = 100;
 export const PREVIEW_ROWS = 10;
 
 const encoder = new TextEncoder();
