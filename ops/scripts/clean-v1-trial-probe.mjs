@@ -52,25 +52,31 @@ export async function waitForCleanV1PreviewRoute(baseUrl, {
 
   while (Date.now() - startedAt <= timeoutMs) {
     attempt += 1;
+    let response;
     try {
       // Readiness-only GET: deliberately no data, body, or content-type.
       // The Worker returns 415 for this known route; a 404 means the route is not ready yet.
-      const response = await fetchImpl(baseUrl + CLEAN_V1_PREVIEW_PATH, { method: 'GET' });
-      lastResponse = response;
-      lastError = null;
-      if (response.status !== 404) {
-        if (response.status !== 415) {
-          await logUnexpectedResponse('PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE', response);
-          throw Object.assign(new Error('PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE'), {
-            code: 'PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE',
-          });
-        }
-        console.log('PASS | preview route readiness | attempt=' + attempt +
-          ' | status=' + response.status + ' | elapsed_ms=' + (Date.now() - startedAt));
-        return response.status;
-      }
+      response = await fetchImpl(baseUrl + CLEAN_V1_PREVIEW_PATH, { method: 'GET' });
     } catch (error) {
       lastError = error;
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= timeoutMs) break;
+      await sleep(Math.min(pollMs, timeoutMs - elapsed));
+      continue;
+    }
+
+    lastResponse = response;
+    lastError = null;
+    if (response.status !== 404) {
+      if (response.status !== 415) {
+        await logUnexpectedResponse('PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE', response);
+        throw Object.assign(new Error('PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE'), {
+          code: 'PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE',
+        });
+      }
+      console.log('PASS | preview route readiness | attempt=' + attempt +
+        ' | status=' + response.status + ' | elapsed_ms=' + (Date.now() - startedAt));
+      return response.status;
     }
 
     const elapsed = Date.now() - startedAt;
