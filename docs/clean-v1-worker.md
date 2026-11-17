@@ -25,6 +25,24 @@ A small in-memory per-isolate limiter allows 10 preview requests per client IP p
 
 The paid route and its mocked settlement tests are implemented. No genuine payment or live facilitator request has been made. Live Base support and live replay rejection by the configured facilitator remain **UNKNOWN**; this PR does not claim the facilitator is operationally ready.
 
+## Measurement and operational unknowns
+
+### Local CPU approximation
+
+CI runs the cleaning engine on 200-row CSV and JSON inputs 50 times per format using Node.js `process.cpuUsage()`. It prints the median and maximum measured process CPU time in milliseconds for each format. This is a local Node.js approximation around the synchronous engine call only. It can include runtime and garbage-collection noise and is **not** a Cloudflare Workers CPU measurement, a billing measurement, or a production performance guarantee.
+
+Cloudflare Analytics identifies `cpuTimeP50` and `cpuTimeP99` in microseconds in the GraphQL schema. The observed Cloudflare p50/p99 values for this trial remain **UNKNOWN** because Analytics returned no invocation rows. Do not convert the local Node benchmark into Cloudflare CPU usage or use it as proof of free-plan compliance.
+
+### Live settlement and fees
+
+Live x402 settlement behavior, live facilitator availability and response behavior, and live EIP-3009 replay rejection remain **UNKNOWN**. No live facilitator settlement or genuine payment has been performed.
+
+Facilitator fees, network/gas charges, any processor deductions, and the net amount received are **UNKNOWN**. The configured x402 amount of 10,000 USDC base units (0.01 USDC) is the advertised request amount only; it is not evidence of actual charges, fees, or net proceeds.
+
+### Global preview limits
+
+The Worker code caps each preview response at 10 rows and implements a best-effort limit of 10 preview requests per client IP per rolling minute per isolate. A global or platform-wide preview quota/rate limit across isolates, locations, or deployments is **UNKNOWN**. The in-memory limiter is not a global enforcement mechanism.
+
 ## Paid route: x402 v2 upfront settlement
 
 - `POST /x402/clean_v1` returns HTTP 402 with the base64-encoded `PAYMENT-REQUIRED` header when no acceptable `PAYMENT-SIGNATURE` is supplied.
