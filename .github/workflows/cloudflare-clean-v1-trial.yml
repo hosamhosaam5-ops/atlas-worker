@@ -135,7 +135,7 @@ jobs:
           console.log('PASS | one isolated Worker deploy completed');
           NODE
 
-      - name: Wait for preview route, then run one 10-row and one 200-row upload plus unpaid 402
+      - name: Wait for preview route, then run one 10-row and one 100-row upload plus unpaid 402
         id: probe
         if: steps.gate.outputs.armed == 'true'
         shell: bash
