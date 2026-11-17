@@ -29,9 +29,9 @@ The paid route and its mocked settlement tests are implemented. No genuine payme
 
 ### Local CPU approximation
 
-CI runs the cleaning engine on 200-row CSV and JSON inputs 50 times per format using Node.js \`process.cpuUsage()\`. It prints the median and maximum measured process CPU time in milliseconds for each format. This is a local Node.js approximation around the synchronous engine call only. It can include runtime and garbage-collection noise and is **not** a Cloudflare Workers CPU measurement, a billing measurement, or a production performance guarantee.
+CI runs the cleaning engine on 200-row CSV and JSON inputs 50 times per format using Node.js `process.cpuUsage()`. It prints the median and maximum measured process CPU time in milliseconds for each format. This is a local Node.js approximation around the synchronous engine call only. It can include runtime and garbage-collection noise and is **not** a Cloudflare Workers CPU measurement, a billing measurement, or a production performance guarantee.
 
-Cloudflare Analytics identifies \`cpuTimeP50\` and \`cpuTimeP99\` in microseconds in the GraphQL schema. The observed Cloudflare p50/p99 values for this trial remain **UNKNOWN** because Analytics returned no invocation rows. Do not convert the local Node benchmark into Cloudflare CPU usage or use it as proof of free-plan compliance.
+Cloudflare Analytics identifies `cpuTimeP50` and `cpuTimeP99` in microseconds in the GraphQL schema. The observed Cloudflare p50/p99 values for this trial remain **UNKNOWN** because Analytics returned no invocation rows. Do not convert the local Node benchmark into Cloudflare CPU usage or use it as proof of free-plan compliance.
 
 ### Live settlement and fees
 
