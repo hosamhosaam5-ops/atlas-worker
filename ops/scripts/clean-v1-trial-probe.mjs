@@ -190,12 +190,12 @@ export async function runCleanV1TrialProbe(baseUrl, { fetchImpl = fetch } = {}) 
 
   const readinessStatus = await waitForCleanV1PreviewRoute(baseUrl, { fetchImpl });
   const tenRows = await postPreview(baseUrl, 10, fetchImpl);
-  const twoHundredRows = await postPreview(baseUrl, 200, fetchImpl);
+  const oneHundredRows = await postPreview(baseUrl, 100, fetchImpl);
   const unpaid402 = await postUnpaid402(baseUrl, fetchImpl);
 
   return {
     readinessStatus,
-    previews: [tenRows, twoHundredRows],
+    previews: [tenRows, oneHundredRows],
     unpaid402,
   };
 }
