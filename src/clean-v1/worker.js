@@ -130,12 +130,16 @@ async function paidClean(request, url, env, facilitatorFetch) {
     return paymentChallenge(url, 'PAYMENT_PAYLOAD_INVALID');
   }
 
-  // Prepare the result in memory, but never return it until upfront settlement succeeds.
-  // Only the x402 payment payload and fixed requirements are sent to the facilitator.
+  // Stage 1: validate the declared format and enforce the streaming byte limit.
   const format = getFormat(request, url);
   const input = await readBodyLimited(request);
-  const cleaned = cleanInput(input, format);
 
+  // Stage 2: fully parse, validate row limits, and clean in memory.
+  // Any failure exits before the facilitator can be called.
+  const cleanedResult = cleanInput(input, format);
+
+  // Stage 3: settle the upfront x402 authorization only after cleaning succeeds.
+  // Only the payment payload and fixed requirements are sent to the facilitator.
   const settlement = await settleUpfrontPayment({
     paymentPayload,
     facilitatorUrl: env?.FACILITATOR_URL,
@@ -153,7 +157,8 @@ async function paidClean(request, url, env, facilitatorFetch) {
     );
   }
 
-  return json(cleaned, 200, {
+  // Stage 4: deliver the prepared data only after settlement is positively confirmed.
+  return json(cleanedResult, 200, {
     'PAYMENT-RESPONSE': encodePaymentHeader(settlement.settlement),
   });
 }
