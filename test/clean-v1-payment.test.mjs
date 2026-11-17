@@ -253,7 +253,7 @@ test('format, byte-size, and row-count validation fail before facilitator settle
   assert.equal(oversized.status, 413);
   assert.deepEqual(await oversized.json(), { code: 'FILE_SIZE_LIMIT_EXCEEDED' });
 
-  const tooManyRows = ['name', ...Array.from({ length: 201 }, (_, index) => 'row-' + (index + 1))].join('\n');
+  const tooManyRows = ['name', ...Array.from({ length: 101 }, (_, index) => 'row-' + (index + 1))].join('\n');
   const overRowLimit = await worker.fetch(new Request(RESOURCE_URL, {
     method: 'POST',
     headers: {
