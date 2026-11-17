@@ -5,34 +5,43 @@ export const CLEAN_V1_PAID_PATH = '/x402/clean_v1';
 
 const READY_TIMEOUT_MS = 60_000;
 const READY_POLL_MS = 5_000;
-const MAX_DIAGNOSTIC_BODY_CHARS = 2 * 1024;
+const MAX_DIAGNOSTIC_BODY_BYTES = 2 * 1024;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function sanitizeBody(value) {
-  return String(value ?? '')
-    .replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer [REDACTED]')
-    .replace(/("(?:authorization|token|secret|api[_-]?key)"\s*:\s*)"[^"]*"/gi, '$1"[REDACTED]"')
+export function sanitizeBody(value) {
+  const sanitized = String(value ?? '')
+    .replace(/Bearer\\s+[^\\s"'<>]+/gi, 'Bearer [REDACTED]')
+    .replace(/("(?:authorization|token|secret|api[_-]?key)"\\s*:\\s*)"[^"]*"/gi, '$1"[REDACTED]"')
     .replace(/0x[a-f0-9]{64,}/gi, '0x[REDACTED]')
-    .replace(/[A-Za-z0-9_=-]{96,}/g, '[REDACTED]')
-    .slice(0, MAX_DIAGNOSTIC_BODY_CHARS);
+    .replace(/[A-Za-z0-9_=-]{96,}/g, '[REDACTED]');
+  let bounded = '';
+  let byteLength = 0;
+  const encoder = new TextEncoder();
+  for (const character of sanitized) {
+    const characterBytes = encoder.encode(character).byteLength;
+    if (byteLength + characterBytes > MAX_DIAGNOSTIC_BODY_BYTES) break;
+    bounded += character;
+    byteLength += characterBytes;
+  }
+  return bounded;
 }
-
-async function logUnexpectedResponse(label, response) {
-  let body = '';
-  try {
-    body = await response.clone().text();
-  } catch (error) {
-    body = '[body-read-error: ' + String(error?.message || error) + ']';
+async function logUnexpectedResponse(label, response, alreadyReadBody = undefined) {
+  let body = alreadyReadBody;
+  if (body === undefined) {
+    try {
+      body = await response.clone().text();
+    } catch (error) {
+      body = '[body-read-error: ' + String(error?.message || error) + ']';
+    }
   }
   console.log(label + ' | status=' + response.status);
   console.log(label + ' | cf-ray=' + (response.headers.get('cf-ray') || 'UNKNOWN'));
   console.log(label + ' | content-type=' + (response.headers.get('content-type') || 'UNKNOWN'));
   console.log(label + ' | body-sanitized-2kb=' + sanitizeBody(body));
 }
-
 function logNoResponse(label, error) {
   console.log(label + ' | status=NO_RESPONSE');
   console.log(label + ' | cf-ray=UNKNOWN');
@@ -123,7 +132,7 @@ async function postPreview(baseUrl, rowCount, fetchImpl) {
     result?.truncated === (rowCount > 10);
 
   if (!valid) {
-    await logUnexpectedResponse('PREVIEW_' + rowCount + '_ROWS_FAILED', response);
+    await logUnexpectedResponse('PREVIEW_' + rowCount + '_ROWS_FAILED', response, responseText);
     throw new Error('PREVIEW_' + rowCount + '_ROWS_CONTRACT_FAILED');
   }
 
@@ -166,7 +175,7 @@ async function postUnpaid402(baseUrl, fetchImpl) {
     accepted?.extra?.assetTransferMethod === 'eip3009';
 
   if (!valid) {
-    await logUnexpectedResponse('UNPAID_402_CHALLENGE_FAILED', response);
+    await logUnexpectedResponse('UNPAID_402_CHALLENGE_FAILED', response, responseText);
     throw new Error('UNPAID_402_CHALLENGE_CONTRACT_FAILED');
   }
 
