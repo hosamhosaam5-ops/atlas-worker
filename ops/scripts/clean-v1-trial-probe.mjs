@@ -59,6 +59,12 @@ export async function waitForCleanV1PreviewRoute(baseUrl, {
       lastResponse = response;
       lastError = null;
       if (response.status !== 404) {
+        if (response.status !== 415) {
+          await logUnexpectedResponse('PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE', response);
+          throw Object.assign(new Error('PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE'), {
+            code: 'PREVIEW_ROUTE_READINESS_UNEXPECTED_RESPONSE',
+          });
+        }
         console.log('PASS | preview route readiness | attempt=' + attempt +
           ' | status=' + response.status + ' | elapsed_ms=' + (Date.now() - startedAt));
         return response.status;
