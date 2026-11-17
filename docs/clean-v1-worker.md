@@ -13,7 +13,7 @@
 
 ## Bounds and response behavior
 
-The engine enforces a 100 KiB input ceiling and a maximum of 200 source rows, including malformed rows. The preview returns at most 10 cleaned rows, with row-level changes and malformed-row diagnostics. Dates are normalized only when the supplied day/month order is unambiguous; ambiguous dates remain unchanged with a diagnostic. Duplicate removals are represented explicitly in `changes`.
+The engine enforces a 100 KiB input ceiling and a proposed maximum of 100 source rows, including malformed rows. The preview returns at most 10 cleaned rows, with row-level changes and malformed-row diagnostics. Dates are normalized only when the supplied day/month order is unambiguous; ambiguous dates remain unchanged with a diagnostic. Duplicate removals are represented explicitly in `changes`.
 
 Responses set `Cache-Control: no-store`. The Worker does not call `console.*`, persist request bodies, persist outputs, or bind a database. Error responses expose only a stable `code` and HTTP status; thrown exception messages are not returned.
 
@@ -29,9 +29,9 @@ The paid route and its mocked settlement tests are implemented. No genuine payme
 
 ### Local CPU approximation
 
-CI runs the cleaning engine on 200-row CSV and JSON inputs 50 times per format using Node.js `process.cpuUsage()`. It prints the median and maximum measured process CPU time in milliseconds for each format. This is a local Node.js approximation around the synchronous engine call only. It can include runtime and garbage-collection noise and is **not** a Cloudflare Workers CPU measurement, a billing measurement, or a production performance guarantee.
+The baseline CI run on 200-row inputs (run #44132708683) measured median/max CPU samples of 1.4495/11.272 ms for CSV and 0.9180/3.751 ms for JSON. Both maxima exceeded the 3 ms review threshold. This proposal lowers the engine row cap to 100 and updates the CI benchmark to 100-row CSV and JSON inputs, 50 times per format using Node.js `process.cpuUsage()`. It prints the median and maximum measured process CPU time in milliseconds for each format. This is a local Node.js approximation around the synchronous engine call only. It can include runtime and garbage-collection noise and is **not** a Cloudflare Workers CPU measurement, a billing measurement, or a production performance guarantee.
 
-Cloudflare Analytics identifies `cpuTimeP50` and `cpuTimeP99` in microseconds in the GraphQL schema. The observed Cloudflare p50/p99 values for this trial remain **UNKNOWN** because Analytics returned no invocation rows. Do not convert the local Node benchmark into Cloudflare CPU usage or use it as proof of free-plan compliance.
+The 100-row cap is a conservative proposal for owner review; the new 100-row benchmark must be read independently and does not guarantee a maximum at or below 3 ms. Cloudflare Analytics identifies `cpuTimeP50` and `cpuTimeP99` in microseconds in the GraphQL schema. The observed Cloudflare p50/p99 values for this trial remain **UNKNOWN** because Analytics returned no invocation rows. Do not convert the local Node benchmark into Cloudflare CPU usage or use it as proof of free-plan compliance.
 
 ### Live settlement and fees
 
