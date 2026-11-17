@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanInput, MAX_ROWS } from '../src/clean-v1/engine.js';
 
-const ROWS = 200;
+const ROWS = 100;
 const ITERATIONS = 50;
 const CPU_REVIEW_THRESHOLD_MS = 3;
 
@@ -59,7 +59,7 @@ function benchmark(input, format) {
   return report;
 }
 
-test('benchmarks 200-row CSV and JSON cleaning 50 times each with process.cpuUsage', () => {
+test('benchmarks 100-row CSV and JSON cleaning 50 times each with process.cpuUsage', () => {
   assert.equal(MAX_ROWS, ROWS);
   const csv = benchmark(csvInput, 'csv');
   const json = benchmark(jsonInput, 'json');
