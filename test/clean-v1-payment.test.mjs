@@ -107,7 +107,7 @@ test('402 challenge advertises the exact Base USDC payment requirements', async 
   });
 });
 
-test('valid payment is settled before cleaned data is returned', async () => {
+test('input is cleaned before settlement and delivered only after settlement is confirmed', async () => {
   let settled = false;
   const worker = createCleanV1Worker({
     facilitatorFetch: async (url, init) => {
@@ -200,6 +200,116 @@ test('facilitator rejection never returns the cleaned file', async () => {
   assert.equal(body, JSON.stringify({ code: 'PAYMENT_SETTLEMENT_FAILED' }));
   assert.equal(body.includes(SENTINEL), false);
   assert.equal(response.headers.has('PAYMENT-RESPONSE'), false);
+});
+
+test('cleaning failure never invokes the facilitator or returns submitted content', async () => {
+  let facilitatorCalls = 0;
+  const worker = createCleanV1Worker({
+    facilitatorFetch: async () => {
+      facilitatorCalls++;
+      return settlementResponse();
+    },
+  });
+
+  const response = await worker.fetch(
+    paidRequest(makePaymentPayload(), 'note\n' + SENTINEL + '\n"unterminated'),
+    { FACILITATOR_URL: 'https://facilitator.test' },
+  );
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { code: 'CSV_UNTERMINATED_QUOTE' });
+  assert.equal(facilitatorCalls, 0);
+  assert.equal(response.headers.has('PAYMENT-RESPONSE'), false);
+});
+
+test('format, byte-size, and row-count validation fail before facilitator settlement', async () => {
+  let facilitatorCalls = 0;
+  const worker = createCleanV1Worker({
+    facilitatorFetch: async () => {
+      facilitatorCalls++;
+      return settlementResponse();
+    },
+  });
+  const signature = encodePaymentHeader(makePaymentPayload());
+
+  const invalidFormat = await worker.fetch(new Request(RESOURCE_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/octet-stream',
+      'PAYMENT-SIGNATURE': signature,
+    },
+    body: 'not a supported format',
+  }), { FACILITATOR_URL: 'https://facilitator.test' });
+  assert.equal(invalidFormat.status, 415);
+  assert.deepEqual(await invalidFormat.json(), { code: 'INPUT_FORMAT_UNSUPPORTED' });
+
+  const oversized = await worker.fetch(new Request(RESOURCE_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'text/csv',
+      'PAYMENT-SIGNATURE': signature,
+    },
+    body: 'name\n' + 'x'.repeat(102401),
+  }), { FACILITATOR_URL: 'https://facilitator.test' });
+  assert.equal(oversized.status, 413);
+  assert.deepEqual(await oversized.json(), { code: 'FILE_SIZE_LIMIT_EXCEEDED' });
+
+  const tooManyRows = ['name', ...Array.from({ length: 201 }, (_, index) => 'row-' + (index + 1))].join('\n');
+  const overRowLimit = await worker.fetch(new Request(RESOURCE_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'text/csv',
+      'PAYMENT-SIGNATURE': signature,
+    },
+    body: tooManyRows,
+  }), { FACILITATOR_URL: 'https://facilitator.test' });
+  assert.equal(overRowLimit.status, 413);
+  assert.deepEqual(await overRowLimit.json(), { code: 'ROW_LIMIT_EXCEEDED' });
+
+  assert.equal(facilitatorCalls, 0);
+  for (const response of [invalidFormat, oversized, overRowLimit]) {
+    assert.equal(response.headers.has('PAYMENT-RESPONSE'), false);
+  }
+});
+
+test('malformed or mismatched facilitator settlement confirmation fails closed without result delivery', async () => {
+  const cases = [
+    {
+      name: 'HTTP 500',
+      fetch: async () => new Response('unavailable', { status: 500 }),
+      code: 'PAYMENT_FACILITATOR_UNAVAILABLE',
+    },
+    {
+      name: 'malformed JSON',
+      fetch: async () => new Response('not-json', { status: 200 }),
+      code: 'PAYMENT_FACILITATOR_BAD_RESPONSE',
+    },
+    {
+      name: 'mismatched payer',
+      fetch: async () => settlementResponse({ payer: '0x2222222222222222222222222222222222222222' }),
+      code: 'PAYMENT_SETTLEMENT_UNCONFIRMED',
+    },
+    {
+      name: 'wrong network',
+      fetch: async () => settlementResponse({ network: 'eip155:1' }),
+      code: 'PAYMENT_SETTLEMENT_UNCONFIRMED',
+    },
+    {
+      name: 'missing transaction hash',
+      fetch: async () => settlementResponse({ transaction: '' }),
+      code: 'PAYMENT_SETTLEMENT_UNCONFIRMED',
+    },
+  ];
+
+  for (const scenario of cases) {
+    const worker = createCleanV1Worker({ facilitatorFetch: scenario.fetch });
+    const response = await worker.fetch(
+      paidRequest(makePaymentPayload(), 'note\n' + SENTINEL),
+      { FACILITATOR_URL: 'https://facilitator.test' },
+    );
+    assert.equal(response.status, 503, scenario.name);
+    assert.deepEqual(await response.json(), { code: scenario.code }, scenario.name);
+    assert.equal(response.headers.has('PAYMENT-RESPONSE'), false, scenario.name);
+  }
 });
 
 test('file content is not sent to the facilitator, logged, or exposed on facilitator failure', async () => {
