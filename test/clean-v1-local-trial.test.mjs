@@ -38,6 +38,10 @@ test('same Clean v1 readiness, 10/200-row, and unpaid-402 probe passes on wrangl
     '--local',
     '--config',
     'wrangler.clean-v1-trial.toml',
+    // This pinned Wrangler/workerd binary supports dates through 2026-10-26.
+    // Keep the deployed Worker config (2026-11-01) unchanged; this override is local-test-only.
+    '--compatibility-date',
+    '2026-10-26',
     '--ip',
     '127.0.0.1',
     '--port',
