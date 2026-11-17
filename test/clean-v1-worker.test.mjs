@@ -24,14 +24,14 @@ test('health is isolated and does not reference a database or secret binding', a
   assert.deepEqual(await response.json(), { ok: true, service: 'atlas-clean-v1', mode: 'isolated' });
 });
 
-test('POST preview returns at most 10 cleaned rows for a 200-row CSV', async () => {
-  const response = await previewPost(200, '192.0.2.20');
+test('POST preview returns at most 10 cleaned rows for a 100-row CSV', async () => {
+  const response = await previewPost(100, '192.0.2.20');
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.preview, true);
   assert.equal(body.preview_rows, 10);
   assert.equal(body.data.length, 10);
-  assert.equal(body.source_rows, 200);
+  assert.equal(body.source_rows, 100);
   assert.equal(body.truncated, true);
 });
 
@@ -55,8 +55,8 @@ test('GET preview reads a small format/data query and returns only first 10 rows
   assert.equal(body.truncated, true);
 });
 
-test('preview uses the same 200-row and 100 KiB hard bounds', async () => {
-  const tooMany = await previewPost(201, '192.0.2.23');
+test('preview uses the same 100-row and 100 KiB hard bounds', async () => {
+  const tooMany = await previewPost(101, '192.0.2.23');
   assert.equal(tooMany.status, 413);
   assert.deepEqual(await tooMany.json(), { code: 'ROW_LIMIT_EXCEEDED' });
 
