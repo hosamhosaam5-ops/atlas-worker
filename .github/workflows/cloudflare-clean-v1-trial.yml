@@ -162,7 +162,7 @@ jobs:
                   datetime_leq: "${new Date(Date.now() + 60 * 1000).toISOString()}"
                 }) {
                   dimensions { datetime scriptName status }
-                  sum { requests errors cpuTimeUs }
+                  sum { requests errors }
                   quantiles { cpuTimeP50 cpuTimeP99 }
                 }
               }
@@ -211,26 +211,22 @@ jobs:
             status: item.dimensions?.status,
             requests: Number(item.sum?.requests || 0),
             errors: Number(item.sum?.errors || 0),
-            cpuTimeUs: item.sum?.cpuTimeUs ?? null,
             cpuTimeP50: item.quantiles?.cpuTimeP50 ?? null,
             cpuTimeP99: item.quantiles?.cpuTimeP99 ?? null,
           }));
           console.log('CLOUDFLARE_ANALYTICS=' + JSON.stringify(summary));
-          // Cloudflare's Workers invocation dataset exposes the sum field cpuTimeUs in microseconds;
-          // cpuTimeP50/P99 are quantiles of that same CPU-time measure. Free HTTP limit: 10 ms = 10,000 us.
+          // Cloudflare's documented GraphQL query exposes CPU quantiles but the cited example does not specify their units.
+          // Preserve the raw quantiles; do not compare against the 10 ms Free limit without a verified unit.
           const observedP99 = summary.map(item => item.cpuTimeP99).filter(Number.isFinite);
           if (!observedP99.length) {
             console.log('UNKNOWN | Analytics returned no cpuTimeP99 value');
             process.exit(0);
           }
           const maxP99 = Math.max(...observedP99);
-          console.log('CPU_P99_MAX_US=' + maxP99);
-          console.log('CPU_FREE_LIMIT_US=10000');
-          if (maxP99 > 10_000) {
-            console.log('OVER_FREE_LIMIT | observed CPU p99 is above 10 ms; row cap must be reduced in a separate reviewed PR; no plan upgrade');
-          } else {
-            console.log('PASS | observed CPU p99 is at or below the 10 ms Workers Free limit');
-          }
+          console.log('CPU_P99_MAX_RAW=' + maxP99);
+          console.log('CPU_QUANTILE_UNIT=UNKNOWN');
+          console.log('CPU_FREE_LIMIT_MS=10');
+          console.log('UNKNOWN | GraphQL cpuTimeP99 unit is not explicitly established by the retrieved Cloudflare query documentation; no limit comparison or row-cap change is claimed');
           NODE
       - name: Always clean up only atlas-clean-v1-trial and independently verify absence
         if: always() && steps.gate.outputs.armed == 'true' && steps.preflight.outcome == 'success'
