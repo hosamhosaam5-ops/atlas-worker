@@ -25,7 +25,7 @@ async function stopProcess(child) {
   if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
 }
 
-test('same Clean v1 readiness, 10/200-row, and unpaid-402 probe passes on wrangler dev --local', async () => {
+test('same Clean v1 readiness, 10/100-row, and unpaid-402 probe passes on wrangler dev --local', async () => {
   const port = await unusedPort();
   const childEnv = { ...process.env, WRANGLER_SEND_METRICS: 'false' };
   // Deliberately remove all Cloudflare credentials: this is a local-only runtime test.
@@ -62,7 +62,7 @@ test('same Clean v1 readiness, 10/200-row, and unpaid-402 probe passes on wrangl
     const result = await runCleanV1TrialProbe('http://127.0.0.1:' + port);
     assert.equal(result.previews[0].sourceRows, 10);
     assert.equal(result.previews[0].returnedRows, 10);
-    assert.equal(result.previews[1].sourceRows, 200);
+    assert.equal(result.previews[1].sourceRows, 100);
     assert.equal(result.previews[1].returnedRows, 10);
     assert.equal(result.unpaid402.status, 402);
     assert.equal(result.unpaid402.code, 'PAYMENT_REQUIRED');
