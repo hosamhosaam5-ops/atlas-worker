@@ -5,7 +5,7 @@ export const CLEAN_V1_PAID_PATH = '/x402/clean_v1';
 
 const READY_TIMEOUT_MS = 60_000;
 const READY_POLL_MS = 5_000;
-const MAX_DIAGNOSTIC_BODY_CHARS = 2 * 1024;
+const MAX_DIAGNOSTIC_BODY_BYTES = 2 * 1024;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -17,10 +17,16 @@ export function sanitizeBody(value) {
     .replace(/("(?:authorization|token|secret|api[_-]?key)"\\s*:\\s*)"[^"]*"/gi, '$1"[REDACTED]"')
     .replace(/0x[a-f0-9]{64,}/gi, '0x[REDACTED]')
     .replace(/[A-Za-z0-9_=-]{96,}/g, '[REDACTED]');
-  const bytes = new TextEncoder().encode(sanitized);
-  return bytes.byteLength <= MAX_DIAGNOSTIC_BODY_CHARS
-    ? sanitized
-    : new TextDecoder().decode(bytes.subarray(0, MAX_DIAGNOSTIC_BODY_CHARS));
+  let bounded = '';
+  let byteLength = 0;
+  const encoder = new TextEncoder();
+  for (const character of sanitized) {
+    const characterBytes = encoder.encode(character).byteLength;
+    if (byteLength + characterBytes > MAX_DIAGNOSTIC_BODY_BYTES) break;
+    bounded += character;
+    byteLength += characterBytes;
+  }
+  return bounded;
 }
 async function logUnexpectedResponse(label, response, alreadyReadBody = undefined) {
   let body = alreadyReadBody;
