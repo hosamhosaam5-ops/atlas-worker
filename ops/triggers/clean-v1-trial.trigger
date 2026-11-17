@@ -1,1 +1,1 @@
-RUN
+DISARMED
