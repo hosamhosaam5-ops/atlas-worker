@@ -29,7 +29,7 @@ test('production deployment commands use only the dedicated Clean v1 config', ()
   const deployCommands = deployWorkflow
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.startsWith('run: npx --no-install wrangler deploy'));
+    .filter((line) => /^run: npx --no-install wrangler deploy(?: --|$)/.test(line));
   assert.deepEqual(deployCommands, [
     'run: npx --no-install wrangler deploy --dry-run --config wrangler.clean-v1.toml',
     'run: npx --no-install wrangler deploy --config wrangler.clean-v1.toml',
