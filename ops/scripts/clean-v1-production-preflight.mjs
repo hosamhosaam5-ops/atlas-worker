@@ -30,7 +30,7 @@ if (!verify.ok || verifyBody.success !== true || verifyBody.result?.status !== '
 }
 console.log('CF_TRIAL_TOKEN_AUTH=PASS');
 
-const scripts = await request(api + '/accounts/' + account + '/workers/scripts?per_page=1000');
+const scripts = await request(api + '/accounts/' + account + '/workers/scripts');
 const scriptsBody = await scripts.json().catch(() => ({}));
 console.log('WORKER_SCRIPTS_METADATA_HTTP=' + scripts.status);
 if (!scripts.ok || scriptsBody.success !== true || !Array.isArray(scriptsBody.result)) {
