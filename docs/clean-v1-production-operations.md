@@ -47,25 +47,33 @@ The deploy job also references the GitHub Environment `clean-v1-production`. Bef
 The workflow reuses only the existing GitHub Actions secret `CF_TRIAL_API_TOKEN`. No new secret is created and no secret value is displayed.
 
 On a future manual dispatch, even while the marker is DISARMED, the separate preflight job performs read-only requests:
-- `GET /accounts/{account_id}/workers/scripts?per_page=1` to check Workers Scripts read access.
-- A read-only Cloudflare GraphQL query to verify that Workers Analytics schema/quantiles can be read.
+- `GET /accounts/{account_id}/workers/scripts?per_page=1` to check that the token can read the Workers Scripts list. The Cloudflare OpenAPI spec lists accepted permission groups for this endpoint, including `Workers Scripts Read`, `Workers Scripts Write`, `Workers Admin`, `Workers Editor`, `Workers Content Read-Only`, and `Workers Metadata Read-Only`.
+- A read-only Cloudflare GraphQL query to verify that Workers Analytics schema/quantiles can be read. The Workers role model maps legacy `Workers Observability Read` to `Metadata Read-Only` at Workers product scope.
 
 It prints only the HTTP status and PASS/FAIL markers, not the response body, token, or script list. Deployment requires both read-only checks to pass.
 
-**Important limitation:** a read-only request cannot establish whether the token may create or upload a new Worker. That write capability remains **UNKNOWN** until checked by the account owner in Cloudflare or a separately approved write action is performed. The workflow must not interpret a successful GET as proof of deployment permission. The manual stop workflow also requires delete permission for that exact Worker; Cloudflare documents Workers Scripts Write, Workers Admin, or Individual Workers Admin for the script-delete endpoint.
+**Important limitation:** these checks only prove read access. They do not test whether the token can create/upload/delete a Worker. Whether `CF_TRIAL_API_TOKEN` currently has the required write permissions is **UNKNOWN** because token scopes were not inspected and no write probe is permitted.
 
-Cloudflare's current permission documentation distinguishes:
-- **Workers product-level Admin**: required to create a new Worker; per-Worker roles cannot be assigned to a Worker that does not yet exist.
-- **Workers Scripts Write** (or an applicable Workers Editor/Admin permission): required for uploading/updating Worker script content.
-- **Workers Observability Read**: required for the post-deployment Analytics read.
-- **Workers Routes Write** at the affected zone: required only if the owner separately provisions/changes a Workers Route or Custom Domain.
+### Exact permission requirements
+
+Cloudflare's current Workers authorization model (last updated 2026-09-15) distinguishes creating a new Worker from updating an existing one:
+
+- **Create a Worker that does not yet exist:** requires product-level `Workers Admin`. A per-Worker role cannot authorize a resource that does not yet exist.
+- **Upload/update an existing Worker:** `Workers Editor` at the selected Worker or Workers product scope is the current role for deployment. The upload API's accepted token groups include `Workers Scripts Write`, `Workers Admin`, `Workers Editor`, `Individual Workers Admin`, and `Individual Workers Editor`. However, per-Worker roles only apply after the Worker exists; they do not satisfy first-time creation.
+- **Delete the exact Worker in the manual stop workflow:** the DELETE API accepts `Workers Scripts Write`, `Workers Admin`, or `Individual Workers Admin`. The Editor role does not include deletion.
+- **Read Workers Analytics:** use `Metadata Read-Only` at Workers product scope (legacy permission name: `Workers Observability Read`).
+- **Change a Workers Route or Custom Domain:** requires `Editor` access to the Worker plus `Workers Routes Write` for each affected zone. This PR does not configure or change any route.
+
+The API's accepted permission groups are not proof that this account's token has any of those permissions. A successful read-only preflight must never be interpreted as proof of create, upload, delete, or route-write access.
 
 References:
-- [Workers roles and permissions](https://developers.cloudflare.com/workers/authorization/workers/)
+- [Workers roles, scopes, Wrangler permissions, and API token access](https://developers.cloudflare.com/workers/authorization/workers/)
+- [Workers authorization overview](https://developers.cloudflare.com/workers/authorization/)
 - [Cloudflare API token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)
-- [Upload Worker API and accepted permissions](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/)
+- [Upload Worker API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/)
+- [Workers Scripts API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/)
 
-Therefore, whether `CF_TRIAL_API_TOKEN` is sufficient to create `atlas-clean-v1` is **UNKNOWN**. The specifically required create permission is Workers product-level **Admin**; the upload endpoint also accepts **Workers Scripts Write**. If the token is scoped only to the existing trial Worker, it cannot be assumed to authorize a newly named production Worker. Do not create another token or change permissions without owner approval.
+**Conclusion for this repository:** `CF_TRIAL_API_TOKEN` sufficiency remains **UNKNOWN**. If `atlas-clean-v1` does not already exist, the exact create permission needed is product-level `Workers Admin`. For a Worker that already exists, upload/deploy requires `Workers Editor` (or an upload API token group such as `Workers Scripts Write`). The future manual cleanup requires one of the DELETE permission groups above. Do not create another token or change permissions without owner approval.
 
 ## 4. Deployment sequence after explicit owner approval
 
