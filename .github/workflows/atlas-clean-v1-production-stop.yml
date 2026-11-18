@@ -1,0 +1,75 @@
+name: ATLAS Clean v1 manual production rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_id:
+        description: "Exact previously deployed atlas-clean-v1 version ID to restore"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-clean-v1-production
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+      - name: Enforce separate manual rollback marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const raw = readFileSync('ops/triggers/clean-v1-production-stop.trigger', 'utf8').replace(/\r\n/g, '\n');
+          const content = raw.endsWith('\n') ? raw.slice(0, -1) : raw;
+          const lines = content.split('\n');
+          const armed = lines.length === 3 &&
+            lines[0] === 'ROLLBACK' &&
+            lines[1] === 'OWNER_CONFIRMED_CLEAN_V1_ROLLBACK' &&
+            lines[2] === '';
+          if (!armed) {
+            appendFileSync(process.env.GITHUB_OUTPUT, 'armed=false\n');
+            console.log('SKIP | manual rollback marker is DISARMED');
+            process.exit(0);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, 'armed=true\n');
+          console.log('ARMED | owner-confirmed manual rollback marker verified');
+          NODE
+
+      - name: Validate explicit rollback version ID
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CLEAN_V1_ROLLBACK_VERSION_ID: ${{ inputs.version_id }}
+        run: |
+          node --input-type=module <<'NODE'
+          const id = process.env.CLEAN_V1_ROLLBACK_VERSION_ID || '';
+          if (!/^[A-Za-z0-9-]{8,128}$/.test(id)) throw new Error('version_id is missing or malformed');
+          console.log('ROLLBACK_VERSION_ID_VALID=PASS');
+          NODE
+
+      - name: Roll back only atlas-clean-v1 to the explicitly selected version
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
+          CLEAN_V1_ROLLBACK_VERSION_ID: ${{ inputs.version_id }}
+        run: npx --no-install wrangler rollback "$CLEAN_V1_ROLLBACK_VERSION_ID" --name atlas-clean-v1 --config wrangler.clean-v1.toml --message "Owner-approved Clean v1 manual rollback"
+
+      - name: Verify active deployment after rollback
+        if: steps.gate.outputs.armed == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
+        run: npx --no-install wrangler deployments status --name atlas-clean-v1 --json --config wrangler.clean-v1.toml
