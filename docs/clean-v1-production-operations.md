@@ -12,7 +12,7 @@ This PR adds the workflow code and guardrails only. It does not create or modify
 - The workflow invokes only `npx --no-install wrangler deploy --config wrangler.clean-v1.toml`.
 - It does not use `wrangler.toml`, `src/index.ts`, the primary `atlas-worker` script, D1, or `atlas_db`.
 - `MAX_ROWS` remains 200.
-- The production config currently sets `workers_dev = false`, `preview_urls = false`, and has no `routes` or `custom_domains` entry. Therefore the public production URL and route are **UNKNOWN** until the owner selects and provisions one.
+- The production config currently sets `workers_dev = false`, `preview_urls = false`, and has no `routes` or `custom_domains` entry. Therefore the public production URL and route are **UNKNOWN** until the owner selects and provisions one. The manual stop workflow deletes only the exact Worker script; if a Workers Route or Custom Domain is provisioned separately, its route/domain binding must be checked and detached as a separate owner-approved action. The stop workflow does not guess zone IDs or delete route records.
 
 The deploy job requires the GitHub Environment variables:
 - `CLEAN_V1_PROD_BASE_URL`: HTTPS origin for the owner-approved route, without a path/query.
@@ -52,7 +52,7 @@ On a future manual dispatch, even while the marker is DISARMED, the separate pre
 
 It prints only the HTTP status and PASS/FAIL markers, not the response body, token, or script list. Deployment requires both read-only checks to pass.
 
-**Important limitation:** a read-only request cannot establish whether the token may create or upload a new Worker. That write capability remains **UNKNOWN** until checked by the account owner in Cloudflare or a separately approved write action is performed. The workflow must not interpret a successful GET as proof of deployment permission.
+**Important limitation:** a read-only request cannot establish whether the token may create or upload a new Worker. That write capability remains **UNKNOWN** until checked by the account owner in Cloudflare or a separately approved write action is performed. The workflow must not interpret a successful GET as proof of deployment permission. The manual stop workflow also requires delete permission for that exact Worker; Cloudflare documents Workers Scripts Write, Workers Admin, or Individual Workers Admin for the script-delete endpoint.
 
 Cloudflare's current permission documentation distinguishes:
 - **Workers product-level Admin**: required to create a new Worker; per-Worker roles cannot be assigned to a Worker that does not yet exist.
@@ -118,7 +118,7 @@ To issue a future manual stop, the owner must set exactly three lines:
 2. `OWNER_CONFIRMED_STOP_CLEAN_V1_PRODUCTION`
 3. blank
 
-Then the owner must manually dispatch `ATLAS Clean v1 production stop (manual only)` on `main`. It checks the exact script name, deletes only `atlas-clean-v1`, then performs a fresh GET to verify that exact Worker is absent. It never runs automatically after a deploy or a merge. This future deletion step requires an owner-authorized action; it has not been run and both markers remain DISARMED in this PR.
+Then the owner must manually dispatch `ATLAS Clean v1 production stop (manual only)` on `main`. It checks the exact script name, deletes only `atlas-clean-v1`, then performs a fresh GET to verify that exact Worker is absent. It never runs automatically after a deploy or a merge. It does not delete any separately configured zone Route or Custom Domain; those must be reviewed and detached by the owner if such a route was provisioned. This future deletion step requires an owner-authorized action; it has not been run and both markers remain DISARMED in this PR.
 
 ## 7. Rollback commands
 
