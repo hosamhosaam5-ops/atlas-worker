@@ -166,8 +166,6 @@ jobs:
 
       - name: Verify GET preview, 10-row and 200-row POST preview, and unpaid 402
         if: steps.gate.outputs.armed == 'true'
-        env:
-          CLEAN_V1_PROD_BASE_URL: ${{ env.CLEAN_V1_PROD_BASE_URL }}
         run: node ops/scripts/clean-v1-production-probe.mjs
 
       - name: Wait five minutes for Analytics aggregation
@@ -179,5 +177,4 @@ jobs:
         env:
           CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CF_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
-          CLEAN_V1_METRICS_START: ${{ env.CLEAN_V1_METRICS_START }}
         run: node ops/scripts/clean-v1-production-analytics.mjs
