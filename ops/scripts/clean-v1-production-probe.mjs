@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
+import { waitForCleanV1PreviewRoute } from './clean-v1-trial-probe.mjs';
 
 export const CLEAN_V1_PREVIEW_PATH = '/x402/clean_v1/preview';
 export const CLEAN_V1_PAID_PATH = '/x402/clean_v1';
@@ -93,6 +94,7 @@ export async function runCleanV1ProductionProbe(baseUrl, expectedWallet, {
   assert.match(expectedWallet || '', /^0x[a-fA-F0-9]{40}$/);
   const base = baseUrl.replace(/\/+$/, '');
 
+  await waitForCleanV1PreviewRoute(base, { fetchImpl });
   await checkGetPreview(base, fetchImpl);
   await checkPostPreview(base, 10, fetchImpl);
   await checkPostPreview(base, 200, fetchImpl);
