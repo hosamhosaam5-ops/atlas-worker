@@ -66,9 +66,10 @@ test('post-deploy probe checks GET and 10/200 preview rows plus unpaid 402 witho
   assert.match(probe, /checkPostPreview\(base, 200/);
   assert.match(probe, /status, 402/);
   assert.match(probe, /PAYMENT-REQUIRED/);
-  assert.doesNotMatch(probe, /['"]PAYMENT-SIGNATURE['"]\\s*:/i);
-  assert.doesNotMatch(probe, /['"]authorization['"]\\s*:/i);
-  assert.doesNotMatch(probe, /facilitatorFetch|\\/settle/i);
+  assert.ok(!probe.includes("'PAYMENT-SIGNATURE':"));
+  assert.ok(!probe.includes("'authorization':"));
+  assert.ok(!probe.includes('facilitatorFetch'));
+  assert.ok(!probe.includes('/settle'));
 });
 
 test('Analytics helper queries the exact production Worker and reports CPU unit, statuses, and resource overruns', () => {
