@@ -76,7 +76,7 @@ Cloudflare's documented minimum deployment roles are:
 - Analytics after the five-minute wait requires **Account → Account Analytics → Read**.
 - This workflow does not change a Route or Custom Domain. If the owner separately chooses to create/change one, Cloudflare requires **Workers Routes Write** for every affected zone in addition to the Worker role.
 
-The preflight will report a missing read permission if it receives 401/403. It deliberately reports the deployment write permission as **UNKNOWN**, even when token verification and metadata reads succeed. It must not claim that CF_TRIAL_API_TOKEN is sufficient for production deploy merely because the isolated trial used it successfully in the past.
+The scripts-list API advertises Workers Scripts Read as an accepted legacy API-token group; current Worker-role guidance expresses metadata-only access as Workers Metadata Read-Only. The preflight reports that missing read capability if it receives 401/403. It deliberately reports the deployment write permission as **UNKNOWN**, even when token verification and metadata reads succeed. It must not claim that CF_TRIAL_API_TOKEN is sufficient for production deploy merely because the isolated trial used it successfully in the past.
 
 Cloudflare references:
 - https://developers.cloudflare.com/workers/authorization/workers/
