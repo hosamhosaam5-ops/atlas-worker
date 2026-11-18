@@ -34,7 +34,7 @@ const scripts = await request(api + '/accounts/' + account + '/workers/scripts')
 const scriptsBody = await scripts.json().catch(() => ({}));
 console.log('WORKER_SCRIPTS_METADATA_HTTP=' + scripts.status);
 if (!scripts.ok || scriptsBody.success !== true || !Array.isArray(scriptsBody.result)) {
-  console.log('WORKER_SCRIPTS_METADATA_READ=FAIL | required permission: Workers Metadata Read-Only (or a higher Workers role)');
+  console.log('WORKER_SCRIPTS_METADATA_READ=FAIL | required permission: Workers Scripts Read or Workers Metadata Read-Only (or a higher Workers role)');
   process.exit(1);
 }
 const targetExists = scriptsBody.result.some((item) =>
