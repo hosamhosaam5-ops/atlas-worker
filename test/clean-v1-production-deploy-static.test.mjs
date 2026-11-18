@@ -34,9 +34,10 @@ test('production deploy targets only the isolated Clean v1 Wrangler config', () 
   assert.doesNotMatch(config, /d1_databases|atlas_db|durable_objects|queues|routes\s*=|custom_domains/i);
 
   assert.equal(
-    (deploymentWorkflow.match(/npx --no-install wrangler deploy --config wrangler\.clean-v1\.toml/g) || []).length,
+    deploymentWorkflow.split("'deploy', '--config', 'wrangler.clean-v1.toml'").length - 1,
     1,
   );
+  assert.ok(deploymentWorkflow.includes("spawnSync('./node_modules/.bin/wrangler', ["));
   assert.match(deploymentWorkflow, /wrangler deploy --dry-run --config wrangler\.clean-v1\.toml/);
   assert.doesNotMatch(deploymentWorkflow, /wrangler\.toml|src\/index\.ts|atlas-worker|atlas_db|d1_databases/i);
 });
