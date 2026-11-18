@@ -29,6 +29,13 @@ async function readJson(response, label) {
   return payload;
 }
 
+const healthResponse = await fetch(origin + '/health');
+const healthPayload = await readJson(healthResponse, 'production health');
+assert.equal(healthResponse.status, 200, 'production health must return HTTP 200');
+assert.equal(healthPayload.service, 'atlas-clean-v1', 'route must serve isolated Clean v1');
+console.log('CLEAN_V1_HEALTH_HTTP=' + healthResponse.status);
+console.log('CLEAN_V1_HEALTH_SERVICE=' + healthPayload.service);
+
 const getInput = 'Full Name,Phone Number,Created Date\nCustomer 1,+96650000001,2026-11-18';
 const getUrl =
   origin +
