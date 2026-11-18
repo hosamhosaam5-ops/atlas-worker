@@ -1,0 +1,111 @@
+name: ATLAS Clean v1 production stop (manual only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-clean-v1-production
+  cancel-in-progress: false
+
+jobs:
+  marker-gate:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      armed: ${{ steps.gate.outputs.armed }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Require explicit owner stop marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="ops/triggers/clean-v1-production-cleanup.trigger"
+          line_count="$(wc -l < "$marker" | tr -d ' ')"
+          line1="$(sed -n '1p' "$marker" | tr -d '\r')"
+          line2="$(sed -n '2p' "$marker" | tr -d '\r')"
+          line3="$(sed -n '3p' "$marker" | tr -d '\r')"
+          if [ "$line_count" = "3" ] &&
+             [ "$line1" = "STOP" ] &&
+             [ "$line2" = "OWNER_CONFIRMED_STOP_CLEAN_V1_PRODUCTION" ] &&
+             [ -z "$line3" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+            echo "CLEAN_V1_PRODUCTION_STOP_GATE=ARMED"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "CLEAN_V1_PRODUCTION_STOP_GATE=DISARMED | no Cloudflare delete request"
+          fi
+
+  stop:
+    needs: marker-gate
+    if: needs.marker-gate.outputs.armed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: clean-v1-production
+    env:
+      CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+      CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Delete only atlas-clean-v1 and verify absence independently
+        shell: bash
+        run: |
+          set +x
+          node --input-type=module <<'NODE'
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          const api = 'https://api.cloudflare.com/client/v4';
+          const target = 'atlas-clean-v1';
+
+          if (!token || !account) {
+            console.log('CLEAN_V1_PRODUCTION_STOP=FAIL | existing token/account unavailable');
+            process.exit(1);
+          }
+
+          async function request(method, path) {
+            const response = await fetch(api + path, {
+              method,
+              headers: {
+                authorization: 'Bearer ' + token,
+                accept: 'application/json',
+                'content-type': 'application/json',
+              },
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.success !== true) {
+              console.log('CLEAN_V1_PRODUCTION_STOP=FAIL | Cloudflare ' + method + ' HTTP=' + response.status);
+              process.exit(1);
+            }
+            return payload.result;
+          }
+
+          const base = '/accounts/' + account;
+          const scriptsBefore = await request('GET', base + '/workers/scripts');
+          const exists = (scriptsBefore || []).some(item =>
+            [item.id, item.name, item.script_name].includes(target)
+          );
+
+          if (exists) {
+            await request('DELETE', base + '/workers/scripts/' + target);
+            console.log('CLEAN_V1_PRODUCTION_STOP_DELETE=ISSUED | exact script atlas-clean-v1');
+          } else {
+            console.log('CLEAN_V1_PRODUCTION_STOP_DELETE=NOT_NEEDED | exact script already absent');
+          }
+
+          // Fresh GET after the optional DELETE; never trust the pre-delete snapshot.
+          const scriptsAfter = await request('GET', base + '/workers/scripts');
+          const remains = (scriptsAfter || []).some(item =>
+            [item.id, item.name, item.script_name].includes(target)
+          );
+          console.log('CLEAN_V1_PRODUCTION_STOP_READBACK=' + (remains ? 'PRESENT' : 'ABSENT'));
+          if (remains) {
+            console.log('CLEAN_V1_PRODUCTION_STOP=FAIL | Worker remains after independent readback');
+            process.exit(1);
+          }
+          console.log('CLEAN_V1_PRODUCTION_STOP=PASS | atlas-clean-v1 absent');
+          NODE
