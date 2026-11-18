@@ -29,7 +29,9 @@ The paid route and its mocked settlement tests are implemented. No genuine payme
 
 ### Local CPU approximation
 
-CI runs the cleaning engine on 200-row CSV and JSON inputs 50 times per format using Node.js `process.cpuUsage()`. It prints the median and maximum measured process CPU time in milliseconds for each format. This is a local Node.js approximation around the synchronous engine call only. It can include runtime and garbage-collection noise and is **not** a Cloudflare Workers CPU measurement, a billing measurement, or a production performance guarantee.
+CI warms the Node.js runtime with 10 unmeasured calls, then measures 200 calls for each 200-row CSV and JSON input using `process.cpuUsage()`. It prints the median, p95, p99, and maximum process CPU time in milliseconds. Percentiles use the nearest-rank method. The review target is strictly **p99 < 8 ms**; a p99 at or above 8 ms produces an owner-review recommendation to propose a separate lower-row-cap PR. The benchmark never changes `MAX_ROWS` automatically.
+
+This is only a local Node.js approximation around the synchronous engine call. It can include runtime scheduling, JIT, and garbage-collection noise. It is **not** a Cloudflare Workers CPU measurement, a billing measurement, or a production performance guarantee. The benchmark's `cloudflare_cpu_metric` field is always `false`.
 
 Cloudflare Analytics identifies `cpuTimeP50` and `cpuTimeP99` in microseconds in the GraphQL schema. The observed Cloudflare p50/p99 values for this trial remain **UNKNOWN** because Analytics returned no invocation rows. Do not convert the local Node benchmark into Cloudflare CPU usage or use it as proof of free-plan compliance.
 
