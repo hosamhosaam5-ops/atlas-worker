@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
-      mode: ${{ steps.resolve.outputs.mode ${{
+      mode: ${{ steps.resolve.outputs.mode }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Resolve exact production marker
@@ -35,9 +35,9 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           import { readFileSync, appendFileSync } from 'node:fs';
-          const raw = readFileSync('ops/triggers/clean-v1-production.trigger', 'utf8').replace(/\\r\\n/g, '\\n');
-          const content = raw.endsWith('\\n') ? raw.slice(0, -1) : raw;
-          const lines = content.split('\\n');
+          const raw = readFileSync('ops/triggers/clean-v1-production.trigger', 'utf8').replace(/\r\n/g, '\n');
+          const content = raw.endsWith('\n') ? raw.slice(0, -1) : raw;
+          const lines = content.split('\n');
           let mode = 'skip';
           if (lines.length === 1 && lines[0] === 'PREFLIGHT') {
             mode = 'preflight';
@@ -49,7 +49,7 @@ jobs:
           ) {
             mode = 'deploy';
           }
-          appendFileSync(process.env.GITHUB_OUTPUT, 'mode=' + mode + '\\n');
+          appendFileSync(process.env.GITHUB_OUTPUT, 'mode=' + mode + '\n');
           if (mode === 'preflight') {
             console.log('MARKER_MODE=PREFLIGHT | read-only preflight only');
           } else if (mode === 'deploy') {
@@ -71,7 +71,7 @@ jobs:
           node-version: 22
       - name: Verify existing CF_TRIAL_API_TOKEN with read-only requests only
         env:
-          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN ${{
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CF_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         run: node ops/scripts/clean-v1-production-preflight.mjs
 
@@ -93,10 +93,10 @@ jobs:
           const config = readFileSync('wrangler.clean-v1.toml', 'utf8');
           const worker = readFileSync('src/clean-v1/worker.js', 'utf8');
           if (!/^name = "atlas-clean-v1"$/m.test(config)) throw new Error('unexpected Worker name');
-          if (!/^main = "src\\/clean-v1\\/worker.js"$/m.test(config)) throw new Error('unexpected Worker entrypoint');
+          if (!/^main = "src\/clean-v1\/worker.js"$/m.test(config)) throw new Error('unexpected Worker entrypoint');
           if (!/^workers_dev = false$/m.test(config)) throw new Error('workers_dev must remain false');
           if (!/^preview_urls = false$/m.test(config)) throw new Error('preview_urls must remain false');
-          if (/d1_databases|atlas_db|routes\\s*=|custom_domains/i.test(config)) throw new Error('forbidden binding or route configuration found');
+          if (/d1_databases|atlas_db|routes\s*=|custom_domains/i.test(config)) throw new Error('forbidden binding or route configuration found');
           if (!worker.includes("service: 'atlas-clean-v1'")) throw new Error('unexpected service identity');
           console.log('DEPLOY_TARGET_CONFIG=PASS | atlas-clean-v1 / src/clean-v1/worker.js only');
           console.log('MAIN_WORKER_CONFIG_TOUCHED=false');
@@ -107,7 +107,7 @@ jobs:
       - name: Validate an owner-provided pre-existing HTTPS route
         id: route
         env:
-          CLEAN_V1_PROD_BASE_URL: ${{ inputs.base_url || vars.CLEAN_V1_PROD_BASE_URL ${{
+          CLEAN_V1_PROD_BASE_URL: ${{ inputs.base_url || vars.CLEAN_V1_PROD_BASE_URL }}
         run: |
           node --input-type=module <<'NODE'
           import { appendFileSync } from 'node:fs';
@@ -117,8 +117,8 @@ jobs:
           if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
             throw new Error('CLEAN_V1_PROD_BASE_URL must be HTTPS without credentials, query, or fragment');
           }
-          const base = url.toString().replace(/\\/+$/, '');
-          appendFileSync(process.env.GITHUB_ENV, 'CLEAN_V1_PROD_BASE_URL=' + base + '\\n');
+          const base = url.toString().replace(/\/+$/, '');
+          appendFileSync(process.env.GITHUB_ENV, 'CLEAN_V1_PROD_BASE_URL=' + base + '\n');
           console.log('PRODUCTION_BASE_URL_VALID=PASS');
           console.log('ROUTE_PROVISIONING=OWNER_MANAGED | no route is created or changed by this workflow');
           NODE
@@ -131,7 +131,7 @@ jobs:
 
       - name: Capture pre-deployment version inventory (read-only)
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN ${{
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         shell: bash
         run: |
@@ -148,19 +148,19 @@ jobs:
 
       - name: Validate production bundle without deployment
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN ${{
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         run: npx --no-install wrangler deploy --dry-run --config wrangler.clean-v1.toml
 
       - name: Deploy only atlas-clean-v1 using its dedicated Wrangler config
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN ${{
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         run: npx --no-install wrangler deploy --config wrangler.clean-v1.toml
 
       - name: Read back active deployment version
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN ${{
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         run: npx --no-install wrangler deployments status --name atlas-clean-v1 --json --config wrangler.clean-v1.toml
 
@@ -176,6 +176,6 @@ jobs:
 
       - name: Read CPU quantile unit and invocation status counters
         env:
-          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN ${{
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CF_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         run: node ops/scripts/clean-v1-production-analytics.mjs
