@@ -105,5 +105,6 @@ test('existing automatic cleanup remains restricted to the trial Worker', () => 
 test('row cap remains 200 and receiving wallet source remains payment configuration', () => {
   assert.match(engine, /^export const MAX_ROWS = 200;$/m);
   assert.match(payment, /payTo:\s*'0x[0-9a-fA-F]{40}'/);
+  assert.match(payment, /payTo:\s*'0x59Ea688b36464133E71873d8BeE8Fcb3BC369383'/);
   assert.match(payment, /paymentFlow: 'upfront'/);
 });
