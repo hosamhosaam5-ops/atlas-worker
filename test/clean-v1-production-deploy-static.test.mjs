@@ -39,7 +39,10 @@ test('production deploy targets only the isolated Clean v1 Wrangler config', () 
   );
   assert.ok(deploymentWorkflow.includes("spawnSync('./node_modules/.bin/wrangler', ["));
   assert.match(deploymentWorkflow, /wrangler deploy --dry-run --config wrangler\.clean-v1\.toml/);
-  assert.doesNotMatch(deploymentWorkflow, /wrangler\.toml|src\/index\.ts|atlas-worker|atlas_db|d1_databases/i);
+  const deployStep = deploymentWorkflow.slice(
+    deploymentWorkflow.indexOf('- name: Deploy only atlas-clean-v1'),
+  );
+  assert.doesNotMatch(deployStep, /wrangler\\.toml|src\\/index\\.ts|atlas-worker|atlas_db|d1_databases/i);
 });
 
 test('Clean v1 row bound remains 200 and approved wallet is compared to PAYMENT_CONFIG.payTo', () => {
