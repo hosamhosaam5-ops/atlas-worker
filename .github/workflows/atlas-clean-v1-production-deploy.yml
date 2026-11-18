@@ -1,0 +1,254 @@
+name: ATLAS Clean v1 production deploy (owner-gated)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-clean-v1-production
+  cancel-in-progress: false
+
+jobs:
+  token-verification:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scripts_read: ${{ steps.scripts.outputs.ok }}
+      analytics_read: ${{ steps.analytics.outputs.ok }}
+    steps:
+      - name: Read-only Workers Scripts permission preflight
+        id: scripts
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          if [ -z "${CF_TRIAL_API_TOKEN:-}" ]; then
+            echo "CF_TOKEN_WORKERS_SCRIPTS_READ=FAIL | CF_TRIAL_API_TOKEN unavailable"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $CF_TRIAL_API_TOKEN" \
+            -H 'Accept: application/json' \
+            -o "$response_file" -w '%{http_code}' \
+            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts?per_page=1")"
+          echo "CF_TOKEN_WORKERS_SCRIPTS_READ_HTTP=$status"
+          if [ "$status" = "200" ] && jq -e '.success == true and (.result | type == "array")' "$response_file" >/dev/null; then
+            echo "CF_TOKEN_WORKERS_SCRIPTS_READ=PASS"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "CF_TOKEN_WORKERS_SCRIPTS_READ=FAIL"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Read-only Workers Analytics permission preflight
+        id: analytics
+        if: steps.scripts.outputs.ok == 'true'
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        shell: bash
+        run: |
+          set +x
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          const now = new Date();
+          const from = new Date(now.getTime() - 60_000).toISOString();
+          const to = new Date(now.getTime() + 60_000).toISOString();
+          const query = `query CleanV1AnalyticsPermissionPreflight {
+            cpuQuantileSchema: __type(name: "AccountWorkersInvocationsAdaptiveQuantiles") {
+              fields { name description }
+            }
+            viewer {
+              accounts(filter: { accountTag: "${account}" }) {
+                workersInvocationsAdaptive(limit: 1, filter: {
+                  scriptName: "atlas-clean-v1",
+                  datetime_geq: "${from}",
+                  datetime_leq: "${to}"
+                }) { dimensions { scriptName } }
+              }
+            }
+          }`;
+
+          try {
+            const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+              method: 'POST',
+              headers: {
+                authorization: 'Bearer ' + token,
+                'content-type': 'application/json',
+                accept: 'application/json',
+              },
+              body: JSON.stringify({ query }),
+            });
+            const payload = await response.json().catch(() => null);
+            console.log('CF_TOKEN_WORKERS_ANALYTICS_READ_HTTP=' + response.status);
+            const fields = payload?.data?.cpuQuantileSchema?.fields || [];
+            const schemaAvailable = fields.some(field => field.name === 'cpuTimeP50') &&
+              fields.some(field => field.name === 'cpuTimeP99');
+            const ok = response.ok && !payload?.errors?.length && schemaAvailable;
+            console.log('CF_TOKEN_WORKERS_ANALYTICS_READ=' + (ok ? 'PASS' : 'FAIL'));
+            appendFileSync(process.env.GITHUB_OUTPUT, 'ok=' + String(ok) + '\n');
+            if (!ok) process.exit(1);
+          } catch {
+            console.log('CF_TOKEN_WORKERS_ANALYTICS_READ=UNKNOWN');
+            appendFileSync(process.env.GITHUB_OUTPUT, 'ok=false\n');
+            process.exit(1);
+          }
+          NODE
+
+  marker-gate:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      armed: ${{ steps.gate.outputs.armed }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Require the exact three-line owner activation marker
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker="ops/triggers/clean-v1-production.trigger"
+          line_count="$(wc -l < "$marker" | tr -d ' ')"
+          line1="$(sed -n '1p' "$marker" | tr -d '\r')"
+          line2="$(sed -n '2p' "$marker" | tr -d '\r')"
+          line3="$(sed -n '3p' "$marker" | tr -d '\r')"
+          if [ "$line_count" = "3" ] &&
+             [ "$line1" = "RUN" ] &&
+             [ "$line2" = "OWNER_CONFIRMED_CLEAN_V1_WALLET" ] &&
+             [ -z "$line3" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+            echo "CLEAN_V1_PRODUCTION_GATE=ARMED"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "CLEAN_V1_PRODUCTION_GATE=DISARMED | no deployment"
+          fi
+
+  deploy:
+    needs: [token-verification, marker-gate]
+    if: >-
+      needs.marker-gate.outputs.armed == 'true' &&
+      needs.token-verification.outputs.scripts_read == 'true' &&
+      needs.token-verification.outputs.analytics_read == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment:
+      name: clean-v1-production
+    env:
+      CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+      CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+      CLEAN_V1_PROD_BASE_URL: ${{ vars.CLEAN_V1_PROD_BASE_URL }}
+      CLEAN_V1_APPROVED_WALLET: ${{ vars.CLEAN_V1_APPROVED_WALLET }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify isolation, route variable, and owner-approved receiver
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+
+          const config = readFileSync('wrangler.clean-v1.toml', 'utf8');
+          const payment = readFileSync('src/clean-v1/payment.js', 'utf8');
+          const base = process.env.CLEAN_V1_PROD_BASE_URL;
+          const approved = process.env.CLEAN_V1_APPROVED_WALLET;
+          const actual = payment.match(/payTo:\s*'([^']+)'/)?.[1];
+
+          if (!/^https:\/\//.test(base || '')) throw new Error('CLEAN_V1_PROD_BASE_URL must be a configured HTTPS route');
+          const url = new URL(base);
+          if (url.pathname !== '/' || url.search || url.hash) throw new Error('CLEAN_V1_PROD_BASE_URL must be an origin URL without path/query');
+          if (!/^0x[a-fA-F0-9]{40}$/.test(approved || '') ||
+              !actual || actual.toLowerCase() !== approved.toLowerCase()) {
+            throw new Error('CLEAN_V1_APPROVED_WALLET does not match PAYMENT_CONFIG.payTo');
+          }
+          if (!/^name\s*=\s*"atlas-clean-v1"$/m.test(config) ||
+              !/^main\s*=\s*"src\/clean-v1\/worker\.js"$/m.test(config) ||
+              !/^workers_dev\s*=\s*false$/m.test(config) ||
+              !/^preview_urls\s*=\s*false$/m.test(config)) {
+            throw new Error('Clean v1 deployment config identity or visibility is invalid');
+          }
+          if (/d1_databases|\batlas_db\b|\bqueues\b|durable_objects/i.test(config)) {
+            throw new Error('Unexpected persistent binding in Clean v1 production config');
+          }
+          console.log('CLEAN_V1_PRODUCTION_CONFIG=PASS');
+          console.log('CLEAN_V1_APPROVED_WALLET_MATCH=PASS');
+          console.log('CLEAN_V1_PROD_BASE_URL=CONFIGURED');
+          NODE
+
+      - name: Run the full local test suite
+        run: node --test --test-concurrency=1 test/*.test.mjs
+
+      - name: Build-only Wrangler validation
+        run: npx --no-install wrangler deploy --dry-run --config wrangler.clean-v1.toml
+
+      - name: Deploy only atlas-clean-v1 using wrangler.clean-v1.toml
+        shell: bash
+        run: |
+          set +x
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import { redactWranglerOutput } from './ops/scripts/redact-wrangler-output.mjs';
+
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          if (!token || !account) {
+            console.log('CLEAN_V1_PRODUCTION_DEPLOY=FAIL | required existing token/account unavailable');
+            process.exit(1);
+          }
+          const result = spawnSync('./node_modules/.bin/wrangler', [
+            'deploy', '--config', 'wrangler.clean-v1.toml',
+          ], {
+            encoding: 'utf8',
+            maxBuffer: 8 * 1024 * 1024,
+            env: {
+              ...process.env,
+              CLOUDFLARE_API_TOKEN: token,
+              CLOUDFLARE_ACCOUNT_ID: account,
+            },
+          });
+          const raw = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join('\n');
+          const safe = redactWranglerOutput(raw, [token, account]);
+          console.log('----- sanitized Clean v1 Wrangler output -----');
+          process.stdout.write(safe.endsWith('\n') ? safe : safe + '\n');
+          console.log('----- end sanitized Wrangler output -----');
+          if (result.error || result.status !== 0) {
+            console.log('CLEAN_V1_PRODUCTION_DEPLOY=FAIL | one deploy attempt only; no automatic retry');
+            process.exit(1);
+          }
+          console.log('CLEAN_V1_PRODUCTION_DEPLOY=PASS | exact config atlas-clean-v1');
+          NODE
+
+      - name: Verify GET, 10-row POST, 200-row POST, and unpaid 402 without payment
+        run: node ops/scripts/clean-v1-production-probe.mjs "$CLEAN_V1_PROD_BASE_URL" "$CLEAN_V1_APPROVED_WALLET"
+
+      - name: Wait five minutes for Workers Analytics ingestion
+        run: sleep 300
+
+      - name: Read CPU quantile unit, invocation status counts, and resource overruns
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: c46718094ced1f5f75492f4c67c7d390
+        run: node ops/scripts/clean-v1-production-analytics.mjs
+
+  # This workflow never cleans up automatically. Production stop is a separate,
+  # explicitly dispatched workflow protected by its own two-line owner marker.
