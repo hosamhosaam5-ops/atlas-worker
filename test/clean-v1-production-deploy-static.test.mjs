@@ -13,16 +13,22 @@ const payment = read('src/clean-v1/payment.js');
 const deployMarker = read('ops/triggers/clean-v1-production.trigger');
 const stopMarker = read('ops/triggers/clean-v1-production-stop.trigger');
 
-test('production deploy workflow is manual-only and has a read-only default mode', () => {
-  assert.match(deployWorkflow, /^\s*workflow_dispatch:/m);
-  assert.doesNotMatch(deployWorkflow, /^\s*pull_request\s*:/m);
-  assert.doesNotMatch(deployWorkflow, /^\s*push\s*:/m);
-  assert.doesNotMatch(deployWorkflow, /^\s*schedule\s*:/m);
-  assert.match(deployWorkflow, /default:\s*preflight/);
-  assert.match(deployWorkflow, /- preflight\s*\n\s*- deploy/);
-  assert.match(deployWorkflow, /inputs\.mode == 'deploy'/);
-  assert.match(deployWorkflow, /OWNER_CONFIRMED_CLEAN_V1_WALLET/);
+test('production deploy workflow is manual or exact main trigger-marker push only', () => {
+  assert.match(deployWorkflow, /^  workflow_dispatch:/m);
+  assert.match(deployWorkflow, /^  push:/m);
+  assert.match(deployWorkflow, /branches: \[main\]/);
+  assert.match(deployWorkflow, /paths:\n\s+- "ops\/triggers\/clean-v1-production\.trigger"/);
+  assert.doesNotMatch(deployWorkflow, /^  pull_request\s*:/m);
+  assert.doesNotMatch(deployWorkflow, /^  schedule\s*:/m);
+  assert.match(deployWorkflow, /lines\.length === 1 && lines\[0\] === 'PREFLIGHT'/);
+  assert.match(deployWorkflow, /lines\[0\] === 'RUN'/);
+  assert.match(deployWorkflow, /lines\[1\] === 'OWNER_CONFIRMED_CLEAN_V1_WALLET'/);
   assert.match(deployWorkflow, /lines\[2\] === ''/);
+  assert.match(deployWorkflow, /let mode = 'skip'/);
+  assert.match(deployWorkflow, /outputs:\s*\n\s*mode:/);
+  assert.match(deployWorkflow, /needs\.resolve-trigger\.outputs\.mode == 'preflight'/);
+  assert.match(deployWorkflow, /needs\.resolve-trigger\.outputs\.mode == 'deploy'/);
+  assert.match(deployWorkflow, /needs: \[resolve-trigger, read-only-preflight\]/);
 });
 
 test('production deployment commands use only the dedicated Clean v1 config', () => {
