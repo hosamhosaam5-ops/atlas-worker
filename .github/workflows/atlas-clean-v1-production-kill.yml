@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
-      mode: ${{ steps.resolve.outputs.mode }}
+      mode: \${{ steps.resolve.outputs.mode }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Resolve exact owner-confirmed kill marker
@@ -54,7 +54,7 @@ jobs:
           node-version: 22
       - name: Delete only the allowlisted Worker and independently verify absence
         env:
-          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_TRIAL_API_TOKEN: \${{ secrets.CF_TRIAL_API_TOKEN }}
           CF_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         shell: bash
         run: |
@@ -65,7 +65,6 @@ jobs:
           const api = 'https://api.cloudflare.com/client/v4';
           const targetWorkerName = 'atlas-clean-v1';
           const forbiddenWorkerName = 'atlas-worker';
-          const pageSize = 100;
 
           if (!token || !account) throw new Error('CF_TRIAL_API_TOKEN or CF_ACCOUNT_ID is missing');
 
@@ -79,31 +78,20 @@ jobs:
           console.log('FORBIDDEN_WORKER_NAME=atlas-worker | explicitly rejected');
 
           async function listTargetWorkers() {
-            const matches = [];
-            let page = 1;
-            while (page <= 100) {
-              const url = api + '/accounts/' + account + '/workers/scripts?page=' + page + '&per_page=' + pageSize;
-              const response = await fetch(url, {
-                method: 'GET',
-                headers: { authorization: 'Bearer ' + token, accept: 'application/json' },
-              });
-              const raw = await response.text();
-              let body;
-              try { body = JSON.parse(raw); } catch { body = null; }
-              console.log('WORKER_SCRIPTS_LIST_HTTP_PAGE_' + page + '=' + response.status);
-              if (!response.ok || body?.success !== true || !Array.isArray(body.result)) {
-                console.log('WORKER_SCRIPTS_LIST_RAW_PAGE_' + page + '=' + raw);
-                throw new Error('Cloudflare Worker metadata read failed; no deletion attempted');
-              }
-              matches.push(...body.result.filter((item) =>
-                [item.id, item.name, item.script_name].includes(targetWorkerName)
-              ));
-              const totalPages = Number(body.result_info?.total_pages || 0);
-              if (totalPages > 0 ? page >= totalPages : body.result.length < pageSize) break;
-              page += 1;
+            const url = api + '/accounts/' + account + '/workers/scripts';
+            const response = await fetch(url, {
+              method: 'GET',
+              headers: { authorization: 'Bearer ' + token, accept: 'application/json' },
+            });
+            const raw = await response.text();
+            let body;
+            try { body = JSON.parse(raw); } catch { body = null; }
+            console.log('WORKER_SCRIPTS_LIST_HTTP=' + response.status);
+            console.log('WORKER_SCRIPTS_LIST_RAW=' + raw);
+            if (!response.ok || body?.success !== true || !Array.isArray(body.result)) {
+              throw new Error('Cloudflare Worker metadata read failed; no deletion attempted');
             }
-            if (page > 100) throw new Error('Worker metadata pagination exceeded the 100-page safety limit');
-            return matches;
+            return body.result.filter((item) => item.id === targetWorkerName);
           }
 
           const before = await listTargetWorkers();
@@ -130,7 +118,7 @@ jobs:
             console.log('WORKER_DELETE_ACTION=SKIPPED_ALREADY_ABSENT');
           }
 
-          // A new, independent GET sequence verifies the post-delete state.
+          // A new, independent GET request verifies the post-delete state.
           const after = await listTargetWorkers();
           console.log('WORKER_TARGET_POST_DELETE_RAW=' + JSON.stringify(after));
           const workerPresent = after.length > 0;
