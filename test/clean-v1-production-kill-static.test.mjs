@@ -22,7 +22,8 @@ function assertWorkerAllowlist(name) {
 }
 
 test('kill workflow is push-only on the exact main marker path', () => {
-  const triggers = killWorkflow.slice(0, killWorkflow.indexOf('\npermissions:'));
+  const onStart = killWorkflow.indexOf('\non:\n') + 1;
+  const triggers = killWorkflow.slice(onStart, killWorkflow.indexOf('\npermissions:'));
   assert.match(triggers, /^on:\n  push:\n    branches: \[main\]/);
   assert.match(triggers, /      - "ops\/triggers\/clean-v1-production-kill\.trigger"/);
   assert.doesNotMatch(triggers, /pull_request|schedule|workflow_dispatch/);
