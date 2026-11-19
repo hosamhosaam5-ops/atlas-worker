@@ -27,7 +27,7 @@ npx --no-install wrangler deploy --dry-run --config wrangler.clean-v1.toml
 
 A static test checks that the workflow only invokes these commands against wrangler.clean-v1.toml, the config name is atlas-clean-v1, the entrypoint is src/clean-v1/worker.js, and the config contains no D1, atlas_db, route, or custom-domain binding. The workflow does not read or deploy wrangler.toml, does not invoke the main atlas-worker deployment workflow, and does not change production routes.
 
-The committed Clean v1 config has workers_dev = false and preview_urls = false; it currently has no routes or custom_domains entry. Therefore a reachable production URL is **UNKNOWN**. Before activation, the owner must establish the intended route/custom domain and provide its HTTPS base URL as the base_url dispatch input or the CLEAN_V1_PROD_BASE_URL repository variable. The workflow only validates and uses that URL; it never creates or changes the route. If route setup is needed, the owner must do it separately and approve the zone-level permission.
+The committed Clean v1 config has workers_dev = true and preview_urls = false, with no routes or custom_domains entry. The only public URL is therefore https://atlas-clean-v1.hosamhosaam5.workers.dev, created by the deploy itself; no zone or Workers Routes permission is needed. The owner sets that exact value as the CLEAN_V1_PROD_BASE_URL repository variable (or the base_url dispatch input); the workflow rejects any other value.
 
 ## 2. Owner activation gate
 
@@ -153,14 +153,14 @@ npx --no-install wrangler deployments status --name atlas-clean-v1 --json --conf
 
 Cloudflare documents that wrangler rollback [VERSION_ID] --name atlas-clean-v1 --message ... creates a new deployment with the selected prior version and routes 100% of the Worker's traffic to it. Rollback does not restore or alter connected resources. Keep the failed version, workflow logs, and run IDs; do not delete them.
 
-**First-deployment limitation:** if no prior version exists, there is no known-good version to roll back to. In that case the stop workflow cannot produce a safe rollback. The owner must manually detach/disable the preconfigured route in Cloudflare, which requires Workers Routes Write for the affected zone. Do not delete the Worker as a substitute.
+**First-deployment limitation:** if no prior version exists, there is no known-good version to roll back to. In that case the stop workflow cannot produce a safe rollback. The owner turns off the workers.dev route in the dashboard (Workers & Pages > atlas-clean-v1 > Settings > Domains & Routes > workers.dev > Disable). Do not delete the Worker as a substitute.
 
 ## 7. Owner actions still required
 
 Before saying **«فعّل الإنتاج»**, the owner must:
 
 1. Confirm the current PAYMENT_CONFIG.payTo value matches the approved receiving wallet.
-2. Decide and configure the production HTTPS route/custom domain; set/provide CLEAN_V1_PROD_BASE_URL. The current config itself has no route.
+2. Set the repository variable CLEAN_V1_PROD_BASE_URL to https://atlas-clean-v1.hosamhosaam5.workers.dev (workers.dev only; no custom domain).
 3. Review the read-only token preflight. Confirm the existing CF_TRIAL_API_TOKEN has the required Workers Editor/Admin role and Account Analytics Read. The current deploy write role remains UNKNOWN until an authorized deployment; no new token is created.
 4. Only after those confirmations, set the exact activation marker and manually dispatch mode=deploy.
 5. Keep the production stop marker DISARMED unless a separate owner-authorized rollback is required.
@@ -171,7 +171,7 @@ Before saying **«فعّل الإنتاج»**, the owner must:
 |---|---|
 | Whether the production Worker already exists | **UNKNOWN** until read-only preflight. |
 | Existing Worker deployment/version inventory | **UNKNOWN** until preflight. |
-| Current production URL, route, custom domain, and TLS readiness | **UNKNOWN**; none is configured in wrangler.clean-v1.toml. |
+| Current production URL | https://atlas-clean-v1.hosamhosaam5.workers.dev after the first authorized deploy; reachability **UNKNOWN** until the probe runs. |
 | Whether the current CF_TRIAL_API_TOKEN has Workers Editor/Admin | **UNKNOWN**; the read-only preflight cannot prove write authorization. |
 | Whether it has Account Analytics Read today | **UNKNOWN** until preflight. |
 | Owner-approved receiving wallet matches PAYMENT_CONFIG.payTo | **UNKNOWN** until owner confirmation. |
