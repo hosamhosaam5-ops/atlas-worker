@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
-      mode: \${{ steps.resolve.outputs.mode }}
+      mode: ${{ steps.resolve.outputs.mode }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Resolve exact owner-confirmed kill marker
@@ -54,7 +54,7 @@ jobs:
           node-version: 22
       - name: Delete only the allowlisted Worker and independently verify absence
         env:
-          CF_TRIAL_API_TOKEN: \${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
           CF_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         shell: bash
         run: |
