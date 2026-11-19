@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
-      mode: ${{ steps.resolve.outputs.mode }}
+      mode: \${{ steps.resolve.outputs.mode }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Resolve exact owner-confirmed kill marker
@@ -30,12 +30,12 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFileSync, appendFileSync } from 'node:fs';
           const raw = readFileSync('ops/triggers/clean-v1-production-kill.trigger', 'utf8');
-          const lines = raw.split('\\n');
+          const lines = raw.split('\n');
           const armed = lines.length === 3 &&
             lines[0] === 'KILL' &&
             lines[1] === 'OWNER_CONFIRMED_CLEAN_V1_KILL' &&
             lines[2] === '';
-          appendFileSync(process.env.GITHUB_OUTPUT, 'mode=' + (armed ? 'kill' : 'skip') + '\\n');
+          appendFileSync(process.env.GITHUB_OUTPUT, 'mode=' + (armed ? 'kill' : 'skip') + '\n');
           if (armed) {
             console.log('KILL_MARKER=OWNER_CONFIRMED | exact three-line marker accepted');
           } else {
@@ -54,7 +54,7 @@ jobs:
           node-version: 22
       - name: Delete only the allowlisted Worker and independently verify absence
         env:
-          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_TRIAL_API_TOKEN: \${{ secrets.CF_TRIAL_API_TOKEN }}
           CF_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
         shell: bash
         run: |
