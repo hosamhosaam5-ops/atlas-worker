@@ -49,12 +49,27 @@ test('production deployment commands use only the dedicated Clean v1 config', ()
   assert.doesNotMatch(deployWorkflow, /atlas-worker/);
 });
 
-test('production trigger stays DISARMED and exact wallet confirmation is required', () => {
-  assert.equal(deployMarker, 'DISARMED\n');
+const approvedDeployMarkers = new Set([
+  'DISARMED\n',
+  'PREFLIGHT\n',
+  'RUN\nOWNER_CONFIRMED_CLEAN_V1_WALLET\n',
+]);
+
+test('production trigger matches exactly one approved marker state and RUN requires exact wallet confirmation', () => {
+  assert.equal(approvedDeployMarkers.has(deployMarker), true);
   assert.match(deployWorkflow, /lines\[0\] === 'RUN'/);
   assert.match(deployWorkflow, /lines\[1\] === 'OWNER_CONFIRMED_CLEAN_V1_WALLET'/);
+  assert.match(deployWorkflow, /lines\[2\] === ''/);
   assert.match(deployWorkflow, /lines\.length === 3/);
   assert.match(deployWorkflow, /CLEAN_V1_PROD_BASE_URL/);
+  assert.match(deployWorkflow, /needs: \[resolve-trigger, read-only-preflight\]/);
+  assert.match(deployWorkflow, /needs\.resolve-trigger\.outputs\.mode == 'deploy'/);
+});
+
+test('production trigger rejects incomplete or incorrectly cased marker values', () => {
+  for (const invalidMarker of ['RUN\n', 'preflight\n']) {
+    assert.equal(approvedDeployMarkers.has(invalidMarker), false);
+  }
 });
 
 test('preview and unpaid-payment checks are present without a real payment path', () => {
