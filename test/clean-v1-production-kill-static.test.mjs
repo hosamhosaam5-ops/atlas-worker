@@ -7,7 +7,7 @@ const killWorkflow = read('.github/workflows/atlas-clean-v1-production-kill.yml'
 const killMarker = read('ops/triggers/clean-v1-production-kill.trigger');
 
 function resolveKillMarker(raw) {
-  const lines = raw.split('\\n');
+  const lines = raw.split('\n');
   return lines.length === 3 &&
     lines[0] === 'KILL' &&
     lines[1] === 'OWNER_CONFIRMED_CLEAN_V1_KILL' &&
@@ -22,20 +22,20 @@ function assertWorkerAllowlist(name) {
 }
 
 test('kill workflow is push-only on the exact main marker path', () => {
-  const triggers = killWorkflow.slice(0, killWorkflow.indexOf('\\npermissions:'));
-  assert.match(triggers, /^on:\\npush:\\n\\s+branches: \\[main\\]/);
-  assert.match(triggers, /paths:\\n\\s+- "ops\\/triggers\\/clean-v1-production-kill\\.trigger"/);
+  const triggers = killWorkflow.slice(0, killWorkflow.indexOf('\npermissions:'));
+  assert.match(triggers, /^on:\n  push:\n    branches: \[main\]/);
+  assert.match(triggers, /      - "ops\/triggers\/clean-v1-production-kill\.trigger"/);
   assert.doesNotMatch(triggers, /pull_request|schedule|workflow_dispatch/);
 });
 
 test('only exact owner-confirmed KILL marker arms the action; DISARMED and malformed values skip', () => {
-  assert.equal(killMarker, 'DISARMED\\n');
+  assert.equal(killMarker, 'DISARMED\n');
   assert.match(killWorkflow, /lines\.length === 3/);
   assert.match(killWorkflow, /lines\[0\] === 'KILL'/);
   assert.match(killWorkflow, /lines\[1\] === 'OWNER_CONFIRMED_CLEAN_V1_KILL'/);
   assert.match(killWorkflow, /lines\[2\] === ''/);
-  assert.equal(resolveKillMarker('KILL\\nOWNER_CONFIRMED_CLEAN_V1_KILL\\n'), 'kill');
-  for (const invalid of ['DISARMED\\n', 'KILL\\n', 'KILL\\nOWNER_CONFIRMED_CLEAN_V1_KILL', 'KILL\\nOWNER_CONFIRMED_CLEAN_V1_KILL\\nextra\\n']) {
+  assert.equal(resolveKillMarker('KILL\nOWNER_CONFIRMED_CLEAN_V1_KILL\n'), 'kill');
+  for (const invalid of ['DISARMED\n', 'KILL\n', 'KILL\nOWNER_CONFIRMED_CLEAN_V1_KILL', 'KILL\nOWNER_CONFIRMED_CLEAN_V1_KILL\nextra\n']) {
     assert.equal(resolveKillMarker(invalid), 'skip');
   }
 });
@@ -49,7 +49,7 @@ test('kill operation is restricted to atlas-clean-v1 and explicitly rejects atla
   assert.throws(() => assertWorkerAllowlist('some-other-worker'), /not allowlisted/);
   assert.doesNotThrow(() => assertWorkerAllowlist('atlas-clean-v1'));
   assert.match(killWorkflow, /method: 'DELETE'/);
-  assert.match(killWorkflow, /workers\\/scripts\\/\x27 \+ encodeURIComponent\(targetWorkerName\)/);
+  assert.ok(killWorkflow.includes("'/workers/scripts/' + encodeURIComponent(targetWorkerName)"));
 });
 
 test('kill workflow uses only the existing token and verifies Worker absence through a separate read', () => {
@@ -62,7 +62,7 @@ test('kill workflow uses only the existing token and verifies Worker absence thr
   assert.match(killWorkflow, /WORKER_TARGET_POST_DELETE_RAW=/);
 });
 
-test('kill workflow cannot touch the existing Worker, D1, or the shared Wrangler config', () => {
+test('kill workflow cannot touch D1, atlas_db, or the shared Wrangler config', () => {
   assert.doesNotMatch(killWorkflow, /d1_databases|atlas_db|wrangler\.toml/i);
   assert.match(killWorkflow, /const targetWorkerName = 'atlas-clean-v1'/);
   assert.match(killWorkflow, /Refusing forbidden Worker name atlas-worker/);
