@@ -52,8 +52,17 @@ test('production deployment commands use only the dedicated Clean v1 config', ()
 const approvedDeployMarkers = new Set([
   'DISARMED\n',
   'PREFLIGHT\n',
-  'RUN\nOWNER_CONFIRMED_CLEAN_V1_WALLET\n',
+  'RUN\nOWNER_CONFIRMED_CLEAN_V1_WALLET\n\n',
 ]);
+
+function resolveDeployMarker(rawInput) {
+  const raw = rawInput.replace(/\r\n/g, '\n');
+  const content = raw.endsWith('\n') ? raw.slice(0, -1) : raw;
+  const lines = content.split('\n');
+  if (lines.length === 1 && lines[0] === 'PREFLIGHT') return 'preflight';
+  if (lines.length === 3 && lines[0] === 'RUN' && lines[1] === 'OWNER_CONFIRMED_CLEAN_V1_WALLET' && lines[2] === '') return 'deploy';
+  return 'skip';
+}
 
 test('production trigger matches exactly one approved marker state and RUN requires exact wallet confirmation', () => {
   assert.equal(approvedDeployMarkers.has(deployMarker), true);
@@ -66,8 +75,18 @@ test('production trigger matches exactly one approved marker state and RUN requi
   assert.match(deployWorkflow, /needs\.resolve-trigger\.outputs\.mode == 'deploy'/);
 });
 
+test('production marker parser mirrors the workflow trimming and split logic', () => {
+  assert.ok(deployWorkflow.includes("const content = raw.endsWith('\\n') ? raw.slice(0, -1) : raw;"));
+  assert.equal(resolveDeployMarker('PREFLIGHT\n'), 'preflight');
+  assert.equal(resolveDeployMarker('RUN\nOWNER_CONFIRMED_CLEAN_V1_WALLET\n\n'), 'deploy');
+  assert.equal(resolveDeployMarker('DISARMED\n'), 'skip');
+  assert.equal(resolveDeployMarker('RUN\n'), 'skip');
+  assert.equal(resolveDeployMarker('RUN\nOWNER_CONFIRMED_CLEAN_V1_WALLET\n'), 'skip');
+  assert.equal(resolveDeployMarker('preflight\n'), 'skip');
+});
+
 test('production trigger rejects incomplete or incorrectly cased marker values', () => {
-  for (const invalidMarker of ['RUN\n', 'preflight\n']) {
+  for (const invalidMarker of ['RUN\n', 'RUN\nOWNER_CONFIRMED_CLEAN_V1_WALLET\n', 'preflight\n']) {
     assert.equal(approvedDeployMarkers.has(invalidMarker), false);
   }
 });
