@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       base_url:
-        description: "Existing HTTPS route/custom-domain URL already attached to atlas-clean-v1; required only for deploy mode."
+        description: "Must be exactly https://atlas-clean-v1.hosamhosaam5.workers.dev; required only for deploy mode."
         required: false
         type: string
   push:
@@ -94,17 +94,17 @@ jobs:
           const worker = readFileSync('src/clean-v1/worker.js', 'utf8');
           if (!/^name = "atlas-clean-v1"$/m.test(config)) throw new Error('unexpected Worker name');
           if (!/^main = "src\/clean-v1\/worker.js"$/m.test(config)) throw new Error('unexpected Worker entrypoint');
-          if (!/^workers_dev = false$/m.test(config)) throw new Error('workers_dev must remain false');
+          if (!/^workers_dev = true$/m.test(config)) throw new Error('workers_dev must be true (the only public URL is workers.dev)');
           if (!/^preview_urls = false$/m.test(config)) throw new Error('preview_urls must remain false');
           if (/d1_databases|atlas_db|routes\s*=|custom_domains/i.test(config)) throw new Error('forbidden binding or route configuration found');
           if (!worker.includes("service: 'atlas-clean-v1'")) throw new Error('unexpected service identity');
           console.log('DEPLOY_TARGET_CONFIG=PASS | atlas-clean-v1 / src/clean-v1/worker.js only');
           console.log('MAIN_WORKER_CONFIG_TOUCHED=false');
           console.log('D1_OR_ATLAS_DB_BINDINGS=false');
-          console.log('ROUTE_CHANGES=false | workflow does not create or modify a route');
+          console.log('ROUTE_CHANGES=false | no zone route or custom domain; workers.dev only');
           NODE
 
-      - name: Validate an owner-provided pre-existing HTTPS route
+      - name: Validate the owner-provided workers.dev base URL
         id: route
         env:
           CLEAN_V1_PROD_BASE_URL: ${{ inputs.base_url || vars.CLEAN_V1_PROD_BASE_URL }}
@@ -118,9 +118,11 @@ jobs:
             throw new Error('CLEAN_V1_PROD_BASE_URL must be HTTPS without credentials, query, or fragment');
           }
           const base = url.toString().replace(/\/+$/, '');
+          const expected = 'https://atlas-clean-v1.hosamhosaam5.workers.dev';
+          if (base !== expected) throw new Error('CLEAN_V1_PROD_BASE_URL must be exactly ' + expected);
           appendFileSync(process.env.GITHUB_ENV, 'CLEAN_V1_PROD_BASE_URL=' + base + '\n');
           console.log('PRODUCTION_BASE_URL_VALID=PASS');
-          console.log('ROUTE_PROVISIONING=OWNER_MANAGED | no route is created or changed by this workflow');
+          console.log('ROUTE_PROVISIONING=WORKERS_DEV | enabled by workers_dev = true on deploy; no zone route');
           NODE
 
       - name: Install locked dependencies
