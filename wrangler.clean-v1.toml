@@ -1,7 +1,7 @@
 name = "atlas-clean-v1"
 main = "src/clean-v1/worker.js"
 compatibility_date = "2026-11-01"
-workers_dev = false
+workers_dev = true
 preview_urls = false
 
 [observability]

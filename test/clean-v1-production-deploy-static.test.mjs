@@ -42,9 +42,11 @@ test('production deployment commands use only the dedicated Clean v1 config', ()
   ]);
   assert.equal(/^name = "atlas-clean-v1"$/m.test(config), true);
   assert.equal(/^main = "src\/clean-v1\/worker.js"$/m.test(config), true);
-  assert.match(config, /^workers_dev = false$/m);
+  assert.match(config, /^workers_dev = true$/m);
   assert.match(config, /^preview_urls = false$/m);
   assert.doesNotMatch(config, /d1_databases|atlas_db|routes\s*=|custom_domains/i);
+  assert.match(deployWorkflow, /const expected = 'https:\/\/atlas-clean-v1\.hosamhosaam5\.workers\.dev';/);
+  assert.match(deployWorkflow, /if \(base !== expected\)/);
   assert.doesNotMatch(deployWorkflow, /wrangler\.toml(?!$)/);
   assert.doesNotMatch(deployWorkflow, /atlas-worker/);
 });
