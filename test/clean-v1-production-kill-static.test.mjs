@@ -50,6 +50,8 @@ test('kill operation is restricted to atlas-clean-v1 and explicitly rejects atla
   assert.doesNotThrow(() => assertWorkerAllowlist('atlas-clean-v1'));
   assert.match(killWorkflow, /method: 'DELETE'/);
   assert.ok(killWorkflow.includes("'/workers/scripts/' + encodeURIComponent(targetWorkerName)"));
+  assert.match(killWorkflow, /item\.id === targetWorkerName/);
+  assert.doesNotMatch(killWorkflow, /force[=:]|delete-with-references/i);
 });
 
 test('kill workflow uses only the existing token and verifies Worker absence through a separate read', () => {
@@ -60,6 +62,7 @@ test('kill workflow uses only the existing token and verifies Worker absence thr
   assert.match(killWorkflow, /WORKER_DELETE_VERIFIED=true/);
   assert.match(killWorkflow, /WORKER_DELETE_RESPONSE_RAW=/);
   assert.match(killWorkflow, /WORKER_TARGET_POST_DELETE_RAW=/);
+  assert.match(killWorkflow, /WORKER_SCRIPTS_LIST_RAW=/);
 });
 
 test('kill workflow cannot touch D1, atlas_db, or the shared Wrangler config', () => {
