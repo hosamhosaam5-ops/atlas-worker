@@ -1,0 +1,128 @@
+name: ATLAS Clean v1 production kill switch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ops/triggers/clean-v1-production-kill.trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atlas-clean-v1-production
+  cancel-in-progress: false
+
+jobs:
+  resolve-kill-trigger:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      mode: ${{ steps.resolve.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Resolve exact owner-confirmed kill marker
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const raw = readFileSync('ops/triggers/clean-v1-production-kill.trigger', 'utf8');
+          const lines = raw.split('\n');
+          const armed = lines.length === 3 &&
+            lines[0] === 'KILL' &&
+            lines[1] === 'OWNER_CONFIRMED_CLEAN_V1_KILL' &&
+            lines[2] === '';
+          appendFileSync(process.env.GITHUB_OUTPUT, 'mode=' + (armed ? 'kill' : 'skip') + '\n');
+          if (armed) {
+            console.log('KILL_MARKER=OWNER_CONFIRMED | exact three-line marker accepted');
+          } else {
+            console.log('KILL_MARKER=DISARMED_OR_INVALID | skip without Cloudflare action');
+          }
+          NODE
+
+  delete-only-atlas-clean-v1:
+    needs: resolve-kill-trigger
+    if: github.ref == 'refs/heads/main' && needs.resolve-kill-trigger.outputs.mode == 'kill'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+      - name: Delete only the allowlisted Worker and independently verify absence
+        env:
+          CF_TRIAL_API_TOKEN: ${{ secrets.CF_TRIAL_API_TOKEN }}
+          CF_ACCOUNT_ID: "c46718094ced1f5f75492f4c67c7d390"
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token = process.env.CF_TRIAL_API_TOKEN;
+          const account = process.env.CF_ACCOUNT_ID;
+          const api = 'https://api.cloudflare.com/client/v4';
+          const targetWorkerName = 'atlas-clean-v1';
+          const forbiddenWorkerName = 'atlas-worker';
+
+          if (!token || !account) throw new Error('CF_TRIAL_API_TOKEN or CF_ACCOUNT_ID is missing');
+
+          function assertWorkerAllowlist(name) {
+            if (name === forbiddenWorkerName) throw new Error('Refusing forbidden Worker name atlas-worker');
+            if (name !== 'atlas-clean-v1') throw new Error('Worker name is not allowlisted');
+          }
+          assertWorkerAllowlist(targetWorkerName);
+          console.log('KILL_TARGET_WORKER=' + targetWorkerName);
+          console.log('KILL_TARGET_ALLOWLIST=PASS');
+          console.log('FORBIDDEN_WORKER_NAME=atlas-worker | explicitly rejected');
+
+          async function listTargetWorkers() {
+            const url = api + '/accounts/' + account + '/workers/scripts';
+            const response = await fetch(url, {
+              method: 'GET',
+              headers: { authorization: 'Bearer ' + token, accept: 'application/json' },
+            });
+            const raw = await response.text();
+            let body;
+            try { body = JSON.parse(raw); } catch { body = null; }
+            console.log('WORKER_SCRIPTS_LIST_HTTP=' + response.status);
+            console.log('WORKER_SCRIPTS_LIST_RAW=' + raw);
+            if (!response.ok || body?.success !== true || !Array.isArray(body.result)) {
+              throw new Error('Cloudflare Worker metadata read failed; no deletion attempted');
+            }
+            return body.result.filter((item) => item.id === targetWorkerName);
+          }
+
+          const before = await listTargetWorkers();
+          console.log('WORKER_TARGET_BEFORE_RAW=' + JSON.stringify(before));
+          if (before.length > 1) throw new Error('Multiple exact-name Worker records found; refusing deletion');
+          console.log('workerPresentBefore=' + String(before.length === 1));
+
+          if (before.length === 1) {
+            const deleteUrl = api + '/accounts/' + account + '/workers/scripts/' + encodeURIComponent(targetWorkerName);
+            const response = await fetch(deleteUrl, {
+              method: 'DELETE',
+              headers: { authorization: 'Bearer ' + token, accept: 'application/json' },
+            });
+            const raw = await response.text();
+            let body;
+            try { body = JSON.parse(raw); } catch { body = null; }
+            console.log('WORKER_DELETE_HTTP=' + response.status);
+            console.log('WORKER_DELETE_RESPONSE_RAW=' + raw);
+            if (!response.ok || body?.success !== true) {
+              throw new Error('Cloudflare did not confirm deletion of atlas-clean-v1; stopping without retry');
+            }
+            console.log('WORKER_DELETE_ACTION=CONFIRMED');
+          } else {
+            console.log('WORKER_DELETE_ACTION=SKIPPED_ALREADY_ABSENT');
+          }
+
+          // A new, independent GET request verifies the post-delete state.
+          const after = await listTargetWorkers();
+          console.log('WORKER_TARGET_POST_DELETE_RAW=' + JSON.stringify(after));
+          const workerPresent = after.length > 0;
+          console.log('workerPresent=' + String(workerPresent));
+          if (workerPresent) throw new Error('Independent Cloudflare read still finds atlas-clean-v1');
+          console.log('WORKER_DELETE_VERIFIED=true');
+          NODE
